@@ -1,3 +1,7 @@
+/*
+ * This file is copied from cilk-5.4.6.tar.gz, published under GPL license.
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>

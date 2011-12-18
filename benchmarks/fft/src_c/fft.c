@@ -1,4 +1,8 @@
 /*
+ * This file is copied from cilk-5.4.6.tar.gz, published under GPL license.
+ */
+
+/*
  * this is a cilk FFT code.  Most of the code is machine-generated.
  * We use it to find bugs in cilk2c.
  */

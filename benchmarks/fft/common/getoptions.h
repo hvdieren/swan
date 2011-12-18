@@ -1,4 +1,8 @@
 /*
+ * This file is copied from cilk-5.4.6.tar.gz, published under GPL license.
+ */
+
+/*
  * Function to evaluate argv[]. specs is a 0 terminated array of command 
  * line options and types an array that stores the type as one of 
  */
