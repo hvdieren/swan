@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
- * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.org)
- * Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.org)
+ * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
+ * Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.gr)
  * 
  * This file is part of Swan.
  * 

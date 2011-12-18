@@ -29,8 +29,8 @@ static const char *ident __attribute__((__unused__))
  * This file is copied from cilk-5.4.6.tar.gz and modified.
  * Modifications:
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
- * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.org)
- * Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.org)
+ * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
+ * Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.gr)
  */
 
 #include <stdio.h>
