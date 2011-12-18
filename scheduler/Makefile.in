@@ -1,0 +1,55 @@
+srcdir = @srcdir@
+VPATH = @srcdir@
+builddir = @builddir@
+top_builddir = @top_builddir@
+
+include Makefile.flags
+
+SRCS    = wf_spawn_deque.cc wf_stack_frame.cc wf_worker.cc wf_main.cc debug.cc wf_main_fn.cc wf_leaf_bp.cc object.cc wf_setup_stack.cc
+OBJS    = $(patsubst %.cc,%.o,$(SRCS))
+HDRS    = config.h big_alloc.h wf_spawn_deque.h wf_stack_frame.h platform.h platform_x86_64.h platform_i386.h wf_worker.h wf_interface.h alc_objtraits.h alc_stdpol.h alc_allocator.h alc_mmappol.h alc_flpol.h alc_bflpol.h alc_proxy.h logger.h object.h lfllist.h lock.h debug.h wf_setup_stack.h wf_task.h tickets.h argwalk.h
+
+.PHONY: all
+.SECONDARY: wf_stack_frame.s
+.INTERMEDIATE: 
+
+wf_leaf_bp.o: CXXFLAGS+=-mno-omit-leaf-frame-pointer
+
+all: libschedulers.a
+
+$(OBJS): $(HDRS) $(builddir)/mangled.h
+
+libschedulers.a: $(OBJS)
+	rm -f libschedulers.a
+	ar -q libschedulers.a $(OBJS)
+	ranlib $@
+
+wf_stack_frame.s: $(HDRS)
+
+current_version.h: refresh_version
+
+refresh_version:
+	$(ECHO) if [ ! -f current_version.h ] ; then touch current_version.h ; fi
+	$(ECHO) svnversion | sed -e 's/^/#define SVN_VERSION "/;s/$$/"/' > current_version.h.new
+	$(ECHO) if cmp current_version.h.new current_version.h > /dev/null; then rm current_version.h.new ; else mv current_version.h.new current_version.h ; fi
+
+wf_main.o: current_version.h
+
+%.s: %.cc
+	$(CXX) $(CXXFLAGS) -S $< -o $@
+
+%.o: %.cc
+	@echo $(CXX) $(OPT) $@
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+mangl:
+	$(ECHO) if [ ! -f mangled.h ] ; then $(srcdir)/xfn.sh /dev/null > mangled.h ; fi
+
+mangled.h.new: mangl wf_stack_frame.s
+	$(ECHO) $(srcdir)/xfn.sh $(builddir)/wf_stack_frame.s > mangled.h.new
+
+mangled.h: mangled.h.new wf_stack_frame.h
+	$(ECHO) if cmp mangled.h.new mangled.h > /dev/null; then rm mangled.h.new ; else mv mangled.h.new mangled.h ; fi
+
+clean:
+	rm -f $(OBJS) mangled.h wf_stack_frame.s libschedulers.a

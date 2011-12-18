@@ -1,0 +1,63 @@
+COMPILATION
+===========
+For the moment:
+% make example
+
+Specfying compile flags:
+% OPT="-O0" make example
+
+Supported useful macros (see config.h):
+* MODE
+% OPT="-O0 -DMODE=0" make example
+Verbose debugging mode, no optimization by compiler
+% OPT="-O4 -DMODE=1" make example
+Very fast mode with *all* debugging turned off and aggressive compiler optimizations
+
+* SUPPORT_GDB
+% OPT="-O0 -DSUPPORT_GDB=1" make example
+to replicate parts of stack_frames such that gdb finds its way easier.
+
+# * SYNC_THROW -- this has been removed by renaming sync() to ssync().
+# Some versions of g++ complain about sync() having different throw() signatures in different places.
+# This error messages is sidestepped by:
+# % OPT="-O0 -DSYNC_THROW" make example
+
+* DBG_CONTINUATION
+% OPT="-O0 -DDBG_CONTINUATION=1" make example
+Set to 1 to do additional checking of the continuation. Copies stack stub
+to control space and checks on return that it has not been mutated.
+
+* DBG_VERIFY
+% OPT="-O0 -DDBG_VERIFY=1" make example
+Set to 1 to do additional checking of the sanity of the stack_frame,
+in particular the saved BP and SP and the stack_ptr.
+
+* DBG_WF
+If set, then sets DBG_CONTINUATION and DBG_VERIFY if they are not already set.
+
+* PENDING_FULL_FRAME
+If set, then pending frames are immediately allocated as large (8KB) frames with
+the code set up ready for a resume action. If not set, the frame is first allocated
+as a more compact pending_frame and is converted to a large frame when it's
+execution starts.
+It is not (yet) clear what is the best strategy.
+
+For best performance, use
+% OPT="-O4 -DSUPPORT_GDB=0 -DDBG_CONTINUATION=0 -DBG_VERIFY=0 -DDBG_WF=0 -DNDEBUG" make example
+
+PROGRAMMING INTERFACE
+=====================
+By examples.
+
+* Spawn/sync
+  chandle<int> k;
+  spawn( fib, k, n-1 );
+  ...;
+  ssync();
+  ... = (int)k;
+
+* Call
+  int k = call( fib, n - 1 );
+
+* Leaf-call
+  leaf_call( printf, "if you need more than %d KB stack space", 4 );

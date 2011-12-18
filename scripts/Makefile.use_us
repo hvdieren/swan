@@ -1,0 +1,5 @@
+LIB_DIR=$(SCHEDULERS_DIR)/../benchmarks/lib
+
+CFLAGS+=-I$(LIB_DIR)
+CXXFLAGS+=-I$(LIB_DIR)
+LDLIBS+=$(LIB_DIR)/libtime_us.a

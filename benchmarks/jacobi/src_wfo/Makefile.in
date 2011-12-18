@@ -1,0 +1,17 @@
+srcdir = @srcdir@
+VPATH = @srcdir@
+top_builddir = @top_builddir@
+
+PROG=J_jacobi J_jacobi_unversioned
+
+include ../../Makefile.wf
+include $(top_builddir)/util/Makefile.use_us
+
+all: $(PROG)
+$(PROG): $(SCHEDULER_GOALS)
+
+J_%: J_%.cc
+	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+clean:
+	rm -f getoptions.o $(PROG)

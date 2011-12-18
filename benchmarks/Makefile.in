@@ -1,0 +1,8 @@
+.PHONY: all
+
+benchmarks = fft
+
+all: $(patsubst %,%.dir,$(benchmarks))
+
+%.dir: %
+	make -C $</src_wf

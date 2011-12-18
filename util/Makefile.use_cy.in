@@ -1,0 +1,6 @@
+abs_top_srcdir = @abs_top_srcdir@
+abs_top_builddir = @abs_top_builddir@
+
+CFLAGS += -I$(abs_top_srcdir)/util
+CXXFLAGS += -I$(abs_top_srcdir)/util
+LDLIBS+=$(abs_top_builddir)/util/libtime_cy.a

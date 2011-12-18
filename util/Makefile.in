@@ -1,0 +1,30 @@
+srcdir = @srcdir@
+VPATH = @srcdir@
+
+AR = ar
+RANLIB = @RANLIB@
+
+CFLAGS+=-O4
+
+OBJS=pp_time_cy.o pp_time_us.o
+
+ALL: libtime_us.a libtime_cy.a
+
+pp_time_cy.o: CFLAGS+=-DUSE_RDTSC=1
+
+pp_time_us.o: CFLAGS+=-DUSE_RDTSC=0
+
+pp_time_cy.o pp_time_us.o: pp_time.c pp_time.h
+	$(MAKE) CFLAGS="$(CFLAGS)" pp_time.o
+	mv pp_time.o $@
+
+libtime_cy.a: pp_time_cy.o
+	$(AR) crv libtime_cy.a pp_time_cy.o
+	$(RANLIB) $@
+
+libtime_us.a: pp_time_us.o
+	$(AR) crv libtime_us.a pp_time_us.o
+	$(RANLIB) $@
+
+clean:
+	rm -f libtime_cy.a libtime_us.a *.o

@@ -1,0 +1,17 @@
+.PHONY: all clean
+
+all: util-dir scheduler-dir tests-dir
+
+util-dir:
+	${MAKE} -C util
+
+scheduler-dir:
+	${MAKE} -C scheduler
+
+tests-dir:
+	${MAKE} -C tests
+
+clean:
+	${MAKE} -C util clean
+	${MAKE} -C scheduler clean
+	${MAKE} -C tests clean

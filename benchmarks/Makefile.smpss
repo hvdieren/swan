@@ -1,0 +1,7 @@
+ifndef OPT
+OPT=
+endif
+
+CFLAGS+=-O4 $(OPT) 
+
+CC=$(HOME)/bin/smpss-cc

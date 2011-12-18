@@ -1,0 +1,15 @@
+ifndef SCHEDULERS_DIR
+SCHEDULERS_DIR=$(HOME)/work/schedulers
+endif
+
+RLIBDIR = $(SCHEDULERS_DIR)/../rlib
+
+ifndef OPT
+OPT=
+endif
+
+CXXFLAGS+=-O4 $(OPT) -fno-omit-frame-pointer -pthread
+CFLAGS+=-O4 $(OPT) -fno-omit-frame-pointer -pthread
+LDLIBS+=
+
+CXX=$(HOME)/cilk/bin/cilk++

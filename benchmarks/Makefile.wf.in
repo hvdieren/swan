@@ -1,0 +1,8 @@
+abs_top_srcdir = @abs_top_srcdir@
+abs_top_builddir = @abs_top_builddir@
+
+include $(abs_top_builddir)/scheduler/Makefile.flags
+
+CXXFLAGS += -I$(abs_top_srcdir)/scheduler
+LDLIBS += $(abs_top_builddir)/scheduler/libschedulers.a
+SCHEDULER_GOALS = $(abs_top_builddir)/scheduler/libschedulers.a $(patsubst %,$(abs_top_srcdir)/scheduler/%,$(HDRS))
