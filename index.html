@@ -42,11 +42,16 @@
         <img border="0" width="90" src="https://github.com/images/modules/download/tar.png"></a>
     </div>
 
-    <h1><a href="https://github.com/hvdieren/swan">swan</a>
-      <span class="small">by <a href="https://github.com/hvdieren">hvdieren</a></span></h1>
+    <h1><a href="https://github.com/hvdieren/swan">swan</a></h1>
 
     <div class="description">
-      Data-flow driven work-stealing scheduler
+      Swan is a data-flow driven work-stealing scheduler for multi-core processors. It extends the Cilk/Cilk++/Cilk plus (TM) language by allowing certain inter-dependencies between tasks spawned from the same parent procedure. This way, some tasks are forced to execute serially while others may proceed in parallel. The end result is that the program potentially contains more parallelism and/or is easier to write than an equivalent Cilk program.
+
+      More information can be found in the following publications:
+      <ul>
+	<li>Hans Vandierendonck, George Tzenakis and Dimitrios S. Nikolopoulos. <b>A Unified Scheduler for Recursive and Task Dataflow Parallelism.</b> IEEE Conference on Parallel Architectures and Compilation Techniques (PACT). Accepted for publication. October 2011. <a href="http://www.encore-project.eu/system/files/paper_0.pdf">[PDF]</a>
+	<li>Hans Vandierendonck, Polyvios Pratikakis, Dimitrios S. Nikolopoulos. <b>Parallel programming of general-purpose programs using task-based programming models.</b> In <emph>3rd USENIX Workshop on Hot Topics in Parallelism (HotPar)</emph>, Berkeley, California. May 2011. <a href="http://www.usenix.org/events/hotpar11/tech/final_files/Vandierendonck.pdf">[PDF]</a>
+      </ul>
     </div>
 
     
@@ -57,7 +62,7 @@
 
     
       <h2>License</h2>
-      <p>GPL</p>
+      <p>GPL v3.0</p>
     
 
     
@@ -67,7 +72,7 @@
 
     
       <h2>Contact</h2>
-      <p> (hvandierendonck@acm.org)<br/>      </p>
+      <p> Send suggestions and bug reports to hvandierendonck@acm.org<br/>      </p>
     
 
     <h2>Download</h2>
