@@ -1,1 +1,60 @@
-TODO list
+* count number of times something is renamed, how many in,out,in/out args
+
+* in debugging mode, check that all spawns have finished
+  in split_return - similar to implicit sync, but fail, don't sync.
+
+* consider inout renaming for the benefit of cholesky2 (or critical)
+
+* optimization for ini_ready() check on multiple objects.
+  Observation: head > tail (unless wrap-around)
+  Thus: bool_eval empty() { return (bool_eval*)this; }
+        operator && ( bool_eval e ) { uint64_t b = ( (*(uint64_t)this) + ((uint64_t)e) );
+		return (b >> 32) == b & ((1<<31)-1);
+		OR:
+		return b.hi == b.lo; where struct { lo; hi; } b;
+		}
+  *AND* change wf_arg_ready() to allow non-short-circuit check on readiness
+  ? From what number of arguments on could this be faster?
+  ? What is the potential damage with wrap-around? -> original no problem
+    as #outstanding less than 4G, now could be problem from first wrap-around
+    on!
+
+* Outline for modifcations to object.h
+  + Place XXdep_traits values (tags) on full_frame, not on stack_frame
+    - implies runtime-configured maximum amount of space
+    -> this seems impossible.
+
+* It seems that copying memory arguments in split_stub would have the
+  benefit that we can reuse the separately allocated args and tags
+  when converting from pending to stack by simply copying the pointer.
+  Question is how important the calling convention optimization really is.
+
+* NUMA on internal structures: remember which memory they are comming from and return to a thread close to that memory!
+
+
+* Do not call get_ready_right_child() and do not take lock if !all_children_done()
+
+* Reconsider lock on top in spawn_deque -> Does it harm performance? Can we avoid it somehow?
+* Do profiling on smpss benchmark to determine how frequently rchild_stealing works without
+  having to go through the parent...
+
+* ready state for objects inherited by full_frame, not stack_frame
+  + this does not seem to be helpfull because we will need to arg_grab() in convert_to_full(),
+    and so we'll need the list of objects anyway.
+  + but we could bypass arg_ready() when in a stack_frame - it should always be satisfied.
+    arg_grab() and arg_release() we need to do to avoid the convert.
+  + or, we could make the list but not do arg_grab() nor arg_release() unless if the frame
+    is full.
+* object: replace explicit reference count by deducing from other variables? (compare to above)
+* object: move to arg_grab_if_ready() interface while you're touching it!
+
+* do we need two lists for pending/ready children?
+* can we remove state fs_pending (if we do not need 2 lists)
+* design option: first execute ready postponed before provably-good-stealing parent
+  - non-issue: choices are exclusive
+  - but we could also try to execute ready pending children before continuing on
+    a spawn or a call (or a leaf-call).
+  - in what order pending children stored + executed?
+  - lock-free implementation of pending linked list...
+
+* Make it a compile-time flag to use secure free list for stack_frame or not
