@@ -513,6 +513,59 @@ struct arg_passing_struct2<
     }
 };
 
+// Default case: struct with 3 members, passed by implicit reference.
+// Trigger a compile-time assertion failure. We inherit from arg_passing<>
+// with a scalar to limit compiler errors on non-existing template members.
+// Do not use arg_passing_struct2 on non-structure things!
+template<size_t ireg, size_t freg, size_t loff, typename T, typename M1,
+	 typename M2, typename M3, typename Enable = void>
+struct arg_passing_struct3 : arg_passing<100,100,0,long> {
+    // In general, passing structs (with 1 member) directly is not allowed!
+    static_assert( !std::is_class<T>::value,
+		   "x86-64 calling convention: Should not pass 3-member "
+		   "structs directly as function arguments!" );
+};
+
+// Trivial struct - 3 non-static data members. Does not implement packing
+// small values in single 8-word (e.g. struct { short; short; }).
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename M1, typename M2, typename M3>
+struct arg_passing_struct3<
+    ireg, freg, loff, T, M1, M2, M3,
+    typename std::enable_if<std::is_class<T>::value
+			    && std::has_trivial_default_constructor<T>::value
+			    && std::has_trivial_destructor<T>::value
+			    // What about alignment (e.g. char + long)
+			    && sizeof(T) == sizeof(M1) + sizeof(M2) + sizeof(M3)
+			    >::type > {
+    typedef arg_passing<ireg, freg, loff, M1> arg_pass1;
+    typedef arg_passing<ireg+arg_pass1::ibump, freg+arg_pass1::fbump,
+			loff+arg_pass1::lbump, M2> arg_pass2;
+    typedef arg_passing<ireg+arg_pass2::ibump, freg+arg_pass2::fbump,
+			loff+arg_pass2::lbump, M3> arg_pass3;
+
+    static const bool in_reg = arg_pass1::in_reg && arg_pass2::in_reg
+    && arg_pass3::in_reg;
+    static const size_t ibump =
+	in_reg ? arg_pass1::ibump + arg_pass2::ibump
+	+ arg_pass3::ibump : 0;
+    static const size_t fbump =
+	in_reg ? arg_pass1::fbump + arg_pass2::fbump
+	+ arg_pass3::fbump : 0;
+    static const size_t lbump =
+	in_reg ? arg_pass1::lbump + arg_pass2::lbump
+	+ arg_pass3::lbump : 0;
+
+    static inline void load() __attribute__((always_inline)) {
+	// Only load in registers if both are in registers.
+	if( in_reg ) {
+	    arg_pass1::load();
+	    arg_pass2::load();
+	    arg_pass3::load();
+	}
+    }
+};
+
 // Default case: struct with 4 members, passed by implicit reference.
 // Trigger a compile-time assertion failure. We inherit from arg_passing<>
 // with a scalar to limit compiler errors on non-existing template members.
