@@ -716,7 +716,7 @@ public:
 				 void (*fn_ptr)(void) )
 	__attribute__((returns_twice, noinline, regparm(3)));
     static void sync_stub( stack_frame * fr )
-	__attribute__((returns_twice, noinline, regparm(1)));
+	__attribute__((noinline, regparm(1)));
     static bool split_return( stack_frame * child )
 	__attribute__((noinline, regparm(2)));
     void resume() __attribute__((noinline));
