@@ -20,21 +20,19 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* tickets.h
+/* gtickets.h
  * This file implements a ticket-based task graph where edges between tasks
- * are not explicitly maintained.
+ * are not explicitly maintained. Also, only a (number of) global queue(s) is
+ * maintained to order all tasks.
  *
- * @note
- *   The implementation differs slightly from that described in the PACT'11
- *   paper as both readers and writers are incremented for an outdep. The
- *   reasoning to this is that is cheaper to increment a counter during issue
- *   and release than it is to perform additional control flow during release
- *   to avoid those counter increments.
- *   Furthermore, we propose to remove the increment of the readers counter
- *   for an in/out dep because it is redundant.
+ * This system has a fundamental problem with wrap-around of the counters
+ * because each object has a reference to its last-{writer,reader,...} counter
+ * and we cannot keep track of all such references before allowing reuse.
+ * On the other hand, if we allow aliasing on these counters, then we will
+ * reduce parallelism but not make errors.
  */
-#ifndef TICKETS_H
-#define TICKETS_H
+#ifndef GTICKETS_H
+#define GTICKETS_H
 
 #include <cstdint>
 #include <iostream>
@@ -51,53 +49,104 @@ namespace obj {
 // of max should be used in several dependency action traits.
 typedef uint64_t depth_t;
 
-// ----------------------------------------------------------------------
-// tkt_metadata: dependency-tracking metadata (not versioning)
-// ----------------------------------------------------------------------
-class tkt_metadata {
+class function_tags;
+
+// Current implementation does not allow wrap-around of ctr_t
+namespace gtickets {
+struct rob_type {
+    typedef uint32_t ctr_t;
+private:
+    static const ctr_t size = 256;
+    ctr_t head;
+    ctr_t tail;
+    cas_mutex mutex;
+    bool completed[size];
 public:
-    struct fifo_like {
-	typedef uint32_t ctr_t;
-	ctr_t head;
-	ctr_t tail;
-    public:
-	fifo_like() : head( 0 ), tail( 0 ) { }
+    rob_type() : head( 0 ), tail( 0 ) { }
 
-	ctr_t adv_head() { return __sync_fetch_and_add( &head, 1 ); }
-	// Note: tail increment is covered by parent lock only if we use
-	// hyperobjects intra-procedurally. If we use them "wrongly" then
-	// the tail update must be atomic.
-	// ctr_t adv_tail() { return tail++; } // covered by parent lock
-	ctr_t adv_tail() { return __sync_fetch_and_add( &tail, 1 ); }
-	bool empty() const volatile { return head == tail; }
-	bool chk_tag( ctr_t tag ) const volatile { return head == tag; }
-	ctr_t get_tag() const { return tail; }
+    // Note: tail increment is covered by parent lock only if we use
+    // hyperobjects intra-procedurally. If we use them "wrongly" then
+    // the tail update must be atomic.
+    ctr_t issue() {
+	// Uuurgh - busy waiting - what else can we do in our scheduler?
+	// Even the going deep path (work-first) comes here and requires
+	// the allocation of a tag.
+	while( tail - head >= size );
 
-	friend std::ostream &
-	operator << ( std::ostream & os, const fifo_like & f );
-    };
-    typedef fifo_like::ctr_t tag_t;
+	mutex.lock();
+	completed[tail] = false;
+	ctr_t tag = tail++;
+	mutex.unlock();
+	return tag;
+    }
+
+    void commit( ctr_t tag ) {
+	mutex.lock();
+	completed[tag] = true;
+	if( tag == head ) {
+	    ctr_t max = tail - head;
+	    ctr_t i;
+	    for( i=0; i != max; ++i ) {
+		ctr_t idx = ( head + i ) % size;
+		if( !completed[idx] )
+		    break;
+	    }
+	    head += i;
+	}
+	mutex.unlock();
+    }
+
+    bool is_ready( ctr_t tag ) const volatile {
+	return completed[tag % size];
+    }
+
+    friend std::ostream &
+    operator << ( std::ostream & os, const rob_type & f );
+
+    friend class ::obj::function_tags;
+};
+
+extern rob_type rob;
+
+// Some debugging support
+inline std::ostream &
+operator << ( std::ostream & os, const rob_type & f ) {
+    return os << '{' << f.head << ", " << f.tail << '}';
+}
+
+}
+
+// ----------------------------------------------------------------------
+// gtkt_metadata: dependency-tracking metadata (not versioning)
+// ----------------------------------------------------------------------
+class gtkt_metadata {
+public:
+    typedef gtickets::rob_type::ctr_t ctr_t;
+    typedef ctr_t tag_t;
 
 private:
-    fifo_like writers;            // head and tail counter for writers
-    fifo_like readers;            // head and tail counter for readers
+    ctr_t last_writer;
+    ctr_t last_reader;
 #if OBJECT_COMMUTATIVITY
-    fifo_like commutative;        // head and tail counter for commutative IO
-    cas_mutex mutex;              // ensure exclusion on commutative operations
+    ctr_t last_commutative;
 #endif
 #if OBJECT_REDUCTION
-    fifo_like reductions;         // head and tail counter for readers
+    ctr_t last_reduction;
+#endif
+#if OBJECT_COMMUTATIVITY
+    cas_mutex mutex;              // ensure exclusion on commutative operations
 #endif
     depth_t depth;                // depth in task graph
 
 public:
-    tkt_metadata() : depth( 0 ) { }
-    ~tkt_metadata() {
-	assert( readers.empty()
-		&& "Must have zero readers when destructing obj_version" );
-	assert( writers.empty()
-		&& "Must have zero writers when destructing obj_version" );
-    }
+    gtkt_metadata() : last_writer( 0 ), last_reader( 0 ),
+#if OBJECT_COMMUTATIVITY
+		      last_commutative( 0 ),
+#endif
+#if OBJECT_REDUCTION
+		      last_reduction( 0 ),
+#endif
+		      depth( 0 ) { }
 
     // External interface
     bool rename_is_active() const volatile {
@@ -116,32 +165,28 @@ public:
     }
 
     // Track oustanding readers with a head and tail counter
-    void add_reader() { readers.adv_tail(); }
-    void del_reader() { readers.adv_head(); }
-    bool chk_reader_tag( tag_t w ) const volatile { return readers.chk_tag(w); }
-    bool has_readers() const volatile { return !readers.empty(); }
-    tag_t get_reader_tag() const { return readers.get_tag(); }
+    void set_last_reader( ctr_t w ) { last_reader = w; }
+    bool is_reader_ready( ctr_t w ) const volatile { return gtickets::rob.is_ready( w ); }
+    bool has_readers() const volatile {
+	return !is_reader_ready( last_reader );
+    }
 
-    // Track outstanding writers with a head and tail counter, both adding up.
-    // This organization allows us to easily implement inout dependencies where
-    // the object with an inout dependency is never renamed. Each successive
-    // inout dependency gets a different value of the writers variable, a "tag"
-    // that must be matched for waking up pending children.
-    void add_writer() { writers.adv_tail(); } 
-    void del_writer() { writers.adv_head(); }
-    bool chk_writer_tag( tag_t w ) const volatile { return writers.chk_tag(w); }
-    bool has_writers() const volatile { return !writers.empty(); }
-    tag_t get_writer_tag() const { return writers.get_tag(); }
+    // Track oustanding writers with a head and tail counter
+    void set_last_writer( ctr_t w ) { last_writer = w; }
+    bool is_writer_ready( ctr_t w ) const volatile { return gtickets::rob.is_ready( w ); }
+    bool has_writers() const volatile {
+	return !is_writer_ready( last_writer );
+    }
 
 #if OBJECT_COMMUTATIVITY
-    // Track commutative IO
-    void add_commutative() { commutative.adv_tail(); }
-    void del_commutative() { commutative.adv_head(); }
-    bool chk_commutative_tag( tag_t w ) const volatile {
-	return commutative.chk_tag(w);
+    // Track oustanding commutatives with a head and tail counter
+    void set_last_commutative( ctr_t w ) { last_commutative = w; }
+    bool is_commutative_ready( ctr_t w ) const volatile {
+	return gtickets::rob.is_ready( w );
     }
-    bool has_commutative() const volatile { return !commutative.empty(); }
-    tag_t get_commutative_tag() const { return commutative.get_tag(); }
+    bool has_commutative() const volatile {
+	return !is_commutative_ready( last_commutative );
+    }
 
     // There is no lock operation - because there is no reason to wait...
     bool commutative_try_acquire() { return mutex.try_lock(); }
@@ -149,14 +194,14 @@ public:
 #endif
 
 #if OBJECT_REDUCTION
-    // Track reductions
-    void add_reduction() { reductions.adv_tail(); }
-    void del_reduction() { reductions.adv_head(); }
-    bool chk_reduction_tag( tag_t w ) const volatile {
-	return reductions.chk_tag(w);
+    // Track oustanding reductions with a head and tail counter
+    void set_last_reduction( ctr_t w ) { last_reduction = w; }
+    bool is_reduction_ready( ctr_t w ) const volatile {
+	return gtickets::rob.is_ready( w );
     }
-    bool has_reductions() const volatile { return !reductions.empty(); }
-    tag_t get_reduction_tag() const { return reductions.get_tag(); }
+    bool has_reductions() const volatile {
+	return !is_reduction_ready( last_reduction );
+    }
 #endif
 
     depth_t get_depth() const { return depth; }
@@ -170,27 +215,76 @@ public:
 	depth = d;
     }
 
-    friend std::ostream & operator << ( std::ostream & os, const tkt_metadata & md );
+    friend std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md );
 };
 
 // Some debugging support
-inline std::ostream &
-operator << ( std::ostream & os, const tkt_metadata::fifo_like & f ) {
-    return os << '{' << f.head << ", " << f.tail << '}';
-}
-
-inline std::ostream & operator << ( std::ostream & os, const tkt_metadata & md ) {
-    os << "ticket_md={readers=" << md.readers
-       << ", writers=" << md.writers
+inline std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md ) {
+    os << "ticket_md={readers=" << md.last_reader
+       << ", writers=" << md.last_writer
 #if OBJECT_COMMUTATIVITY
-       << ", commutative=" << md.commutative
+       << ", commutative=" << md.last_commutative
 #endif
 #if OBJECT_REDUCTION
-       << ", reductions=" << md.reductions
+       << ", reductions=" << md.last_reduction
 #endif
        << '}';
     return os;
 }
+
+// ----------------------------------------------------------------------
+// Whole-function dependency tags
+// ----------------------------------------------------------------------
+class function_tags : public function_tags_base {
+public:
+    gtkt_metadata::tag_t get_tag() const { return tag; }
+
+private:
+    gtkt_metadata::tag_t tag; // The current task sequence number
+    // The tag is the max of this type of tags across all args
+    gtkt_metadata::tag_t rd_tag;
+    gtkt_metadata::tag_t wr_tag;
+#if OBJECT_COMMUTATIVITY
+    gtkt_metadata::tag_t c_tag;
+#endif
+#if OBJECT_REDUCTION
+    gtkt_metadata::tag_t r_tag;
+#endif
+
+    pad_multiple<16, sizeof(gtkt_metadata::tag_t)*5> padding;
+
+public:
+    function_tags() : rd_tag( 0 ), wr_tag( 0 )
+#if OBJECT_COMMUTATIVITY
+		    , c_tag( 0 )
+#endif
+#if OBJECT_REDUCTION
+		    , r_tag( 0 )
+#endif
+	{
+	    static_assert( (sizeof(*this) % 16) == 0,
+                           "Padding of gtickets::function_tags failed" );
+	}
+
+    gtkt_metadata::tag_t issue() { return tag = gtickets::rob.issue(); }
+    void commit() const { gtickets::rob.commit( tag ); }
+
+    void wait_reader() { rd_tag = std::max( rd_tag, tag ); }
+    bool is_reader_ready() const { return rd_tag <= gtickets::rob.head; }
+
+    void wait_writer() { wr_tag = std::max( wr_tag, tag ); }
+    bool is_writer_ready() const { return wr_tag <= gtickets::rob.head; }
+
+#if OBJECT_COMMUTATIVITY
+    void wait_commutative() { c_tag = std::max( c_tag, tag ); }
+    bool is_commutative_ready() const { return c_tag <= gtickets::rob.head; }
+#endif
+
+#if OBJECT_REDUCTION
+    void wait_reduction() { r_tag = std::max( r_tag, tag ); }
+    bool is_reduction_ready() const { return r_tag <= gtickets::rob.head; }
+#endif
+};
 
 // ----------------------------------------------------------------------
 // A function to do the first scan over the arguments in the computation
@@ -268,16 +362,25 @@ public:
     // Stubs required for the taskgraph variant, here meaningless.
     template<typename... Tn>
     void start_registration() {
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( get_task_data().get_tags_ptr() );
+	new (fn_tags) function_tags();
+	fn_tags->issue();
+
 #if STORED_ANNOTATIONS
-	arg_update_depth_fn<task_metadata, tkt_metadata>( this, get_task_data() );
+	arg_update_depth_fn<task_metadata, gtkt_metadata>( this, get_task_data() );
 #else
-	arg_update_depth_fn<task_metadata, tkt_metadata, Tn...>(
+	arg_update_depth_fn<task_metadata, gtkt_metadata, Tn...>(
 	    this, get_task_data() );
 #endif
     }
     void stop_registration( bool wakeup = false ) { }
 
-    void start_deregistration() { }
+    void start_deregistration() {
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( get_task_data().get_tags_ptr() );
+	fn_tags->commit();
+    }
     void stop_deregistration() { }
 };
 
@@ -294,95 +397,36 @@ class link_metadata {
 // ----------------------------------------------------------------------
 // Checking readiness of pending_metadata
 // ----------------------------------------------------------------------
-// Ready? functor
+// A "ready function" to check readiness, based on per-function tags
 template<typename MetaData, typename Task>
-struct ready_functor {
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return dep_traits<MetaData, Task, DepTy>::arg_ready( obj, sa );
-    }
-    template<typename T>
-    bool operator () ( truedep<T> & obj, typename truedep<T>::dep_tags & sa ) {
-	return true;
-    }
-
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
+static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
+    function_tags * fn_tags
+	= get_fn_tags<function_tags>( task_data_p.get_tags_ptr() );
+    return fn_tags->is_reader_ready()
 #if OBJECT_COMMUTATIVITY
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
+	& fn_tags->is_commutative_ready()
 #endif
-};
-
-
-// A "ready function" to check readiness with the dep_traits.
-#if STORED_ANNOTATIONS
-template<typename MetaData, typename Task>
-static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
-    ready_functor<MetaData, Task> fn;
-    char * args = task_data_p.get_args_ptr();
-    char * tags = task_data_p.get_tags_ptr();
-    size_t nargs = task_data_p.get_num_args();
-    if( arg_apply_stored_ufn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
-#else
-template<typename MetaData, typename Task, typename... Tn>
-static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
-    ready_functor<MetaData, Task> fn;
-    char * args = task_data_p.get_args_ptr();
-    char * tags = task_data_p.get_tags_ptr();
-    if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
+#if OBJECT_REDUCTION
+	& fn_tags->is_reduction_ready()
 #endif
+	& fn_tags->is_writer_ready();
+}
 
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
 // ----------------------------------------------------------------------
 class pending_metadata : public task_metadata, private link_metadata {
-#if !STORED_ANNOTATIONS
-    typedef bool (*ready_fn_t)( const task_data_t & );
-
-    ready_fn_t ready_fn;
-#endif
-
 protected:
-    pending_metadata()
-#if !STORED_ANNOTATIONS
-	: ready_fn( 0 )
-#endif
-	{ }
+    pending_metadata() { }
 
 public:
     template<typename... Tn>
     void create( full_metadata * ff ) {
-#if !STORED_ANNOTATIONS
-	ready_fn = &arg_ready_fn<tkt_metadata, task_metadata, Tn...>;
-#endif
 	task_metadata::create<Tn...>( ff );
     }
 
     bool is_ready() const {
-#if STORED_ANNOTATIONS
-	return arg_ready_fn<tkt_metadata, task_metadata>( get_task_data() );
-#else
-	return ready_fn && (*ready_fn)( get_task_data() );
-#endif
+	return arg_ready_fn<gtkt_metadata, task_metadata>( get_task_data() );
     }
 
     static obj::link_metadata *
@@ -480,53 +524,31 @@ private:
 // ----------------------------------------------------------------------
 // Generic fully-serial dependency handling traits
 // ----------------------------------------------------------------------
-
 // A fully serialized version
-class serial_dep_tags {
-protected:
-    friend class serial_dep_traits;
-    tkt_metadata::tag_t rd_tag;
-    tkt_metadata::tag_t wr_tag;
-#if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
-#endif
-#if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
-#endif
-};
+class serial_dep_tags { };
 
 struct serial_dep_traits {
     static
     void arg_issue( task_metadata * fr,
-		    obj_instance<tkt_metadata> & obj,
+		    obj_instance<gtkt_metadata> & obj,
 		    serial_dep_tags * tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	tags->rd_tag  = md->get_reader_tag();
-	tags->wr_tag  = md->get_writer_tag();
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( fr->get_tags_ptr() );
+	gtkt_metadata * md = obj.get_version()->get_metadata();
+	fn_tags->wait_reader();
+	fn_tags->wait_writer();
 #if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
+	fn_tags->wait_commutative();
 #endif
 #if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
+	fn_tags->wait_reduction();
 #endif
-	md->add_writer();
+	md->set_last_writer( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
     static
-    bool arg_ready( obj_instance<tkt_metadata> obj, serial_dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	return md->chk_reader_tag( tags.rd_tag )
-#if OBJECT_COMMUTATIVITY
-	    & md->chk_commutative_tag( tags.c_tag )
-#endif
-#if OBJECT_REDUCTION
-	    & md->chk_reduction_tag( tags.r_tag )
-#endif
-	    & md->chk_writer_tag( tags.wr_tag );
-    }
-    static
-    bool arg_ini_ready( const obj_instance<tkt_metadata> obj ) {
-	const tkt_metadata * md = obj.get_version()->get_metadata();
+    bool arg_ini_ready( const obj_instance<gtkt_metadata> obj ) {
+	const gtkt_metadata * md = obj.get_version()->get_metadata();
 	return !md->has_readers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -536,30 +558,15 @@ struct serial_dep_traits {
 #endif
 	    & !md->has_writers();
     }
-    static
-    void arg_release( obj_instance<tkt_metadata> obj ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	md->del_writer();
-    }
 };
 
 //----------------------------------------------------------------------
 // Tags class for each dependency type
 //----------------------------------------------------------------------
-// Whole-function dependency tags
-class function_tags : public function_tags_base { };
-
 // Input dependency tags
 class indep_tags : public indep_tags_base {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
-#if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
-#endif
-#if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
-#endif
 };
 
 // Output dependency tags require fully serialized tags in the worst case
@@ -579,24 +586,14 @@ class inoutdep_tags : public inoutdep_tags_base, public serial_dep_tags {
 class cinoutdep_tags : public cinoutdep_tags_base {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
-    tkt_metadata::tag_t rd_tag;
-#if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
-#endif
 };
 #endif
 
 // Reduction dependency tags
 #if OBJECT_REDUCTION
-class reduction_tags : public reduction_tags_base<tkt_metadata> {
+class reduction_tags : public reduction_tags_base<gtkt_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
-    tkt_metadata::tag_t rd_tag;
-#if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
-#endif
 };
 #endif
 
@@ -605,37 +602,27 @@ class reduction_tags : public reduction_tags_base<tkt_metadata> {
 //----------------------------------------------------------------------
 // indep traits
 template<>
-struct dep_traits<tkt_metadata, task_metadata, indep> {
+struct dep_traits<gtkt_metadata, task_metadata, indep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, indep<T> & obj_ext,
 			   typename indep<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->wr_tag  = md->get_writer_tag();
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
+	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
+	fn_tags->wait_writer();
 #if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
+	fn_tags->wait_commutative();
 #endif
 #if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
+	fn_tags->wait_reduction();
 #endif
-	md->add_reader();
-    }
-    template<typename T>
-    static
-    bool arg_ready( indep<T> & obj_int, typename indep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj_int.get_version()->get_metadata();
-	return md->chk_writer_tag( tags.wr_tag )
-#if OBJECT_COMMUTATIVITY
-	    & md->chk_commutative_tag( tags.c_tag )
-#endif
-#if OBJECT_REDUCTION
-	    & md->chk_reduction_tag( tags.r_tag )
-#endif
-	    ;
+	md->set_last_reader( fn_tags->get_tag() );
+	md->update_depth( fr->get_depth() );
     }
     template<typename T>
     static
     bool arg_ini_ready( const indep<T> & obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	const gtkt_metadata * md = obj_ext.get_version()->get_metadata();
 	return !md->has_writers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -648,26 +635,21 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     template<typename T>
     static
     void arg_release( task_metadata * fr, indep<T> & obj,
-		      typename indep<T>::dep_tags & tags ) {
-	obj.get_version()->get_metadata()->del_reader();
-    }
+		      typename indep<T>::dep_tags & tags ) { }
 };
 
 // output dependency traits
 template<>
-struct dep_traits<tkt_metadata, task_metadata, outdep> {
+struct dep_traits<gtkt_metadata, task_metadata, outdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, outdep<T> & obj_ext,
 		    typename outdep<T>::dep_tags * tags ) {
 	assert( obj_ext.get_version()->is_versionable() ); // enforced by applicators
-	obj_ext.get_version()->get_metadata()->add_writer();
-    }
-    template<typename T>
-    static
-    bool arg_ready( outdep<T> & obj, typename outdep<T>::dep_tags & tags ) {
-	assert( obj.get_version()->is_versionable() ); // enforced by applicators
-	return true;
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
+	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
+	md->set_last_writer( fn_tags->get_tag() );
     }
     template<typename T>
     static
@@ -678,25 +660,17 @@ struct dep_traits<tkt_metadata, task_metadata, outdep> {
     template<typename T>
     static
     void arg_release( task_metadata * fr, outdep<T> & obj,
-		      typename outdep<T>::dep_tags & tags ) {
-	serial_dep_traits::arg_release( obj );
-    }
+		      typename outdep<T>::dep_tags & tags ) { }
 };
 
 // inout dependency traits
 template<>
-struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
+struct dep_traits<gtkt_metadata, task_metadata, inoutdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, inoutdep<T> & obj_ext,
 		    typename inoutdep<T>::dep_tags * tags ) {
 	serial_dep_traits::arg_issue( fr, obj_ext, tags );
-    }
-    template<typename T>
-    static
-    bool arg_ready( inoutdep<T> & obj_ext,
-		    typename inoutdep<T>::dep_tags & tags ) {
-	return serial_dep_traits::arg_ready( obj_ext, tags );
     }
     template<typename T>
     static
@@ -706,46 +680,32 @@ struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     template<typename T>
     static
     void arg_release( task_metadata * fr, inoutdep<T> & obj,
-		      typename inoutdep<T>::dep_tags & tags ) {
-	serial_dep_traits::arg_release( obj );
-    }
+		      typename inoutdep<T>::dep_tags & tags ) { }
 };
 
 // cinout dependency traits
 #if OBJECT_COMMUTATIVITY
 template<>
-struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
+struct dep_traits<gtkt_metadata, task_metadata, cinoutdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, cinoutdep<T> & obj_ext,
 		    typename cinoutdep<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->rd_tag = md->get_reader_tag();
-	tags->wr_tag = md->get_writer_tag();
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
+	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
+	fn_tags->wait_reader();
+	fn_tags->wait_writer();
 #if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
+	fn_tags->wait_reduction();
 #endif
-	md->add_commutative();
+	md->set_last_commutative( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
     template<typename T>
     static
-    bool arg_ready( cinoutdep<T> & obj,
-		    typename cinoutdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	if( md->chk_reader_tag( tags.rd_tag )
-	    & md->chk_writer_tag( tags.wr_tag )
-#if OBJECT_REDUCTION
-	    & md->chk_reduction_tag( tags.r_tag )
-#endif
-	    )
-	    return md->commutative_try_acquire();
-	return false;
-    }
-    template<typename T>
-    static
     bool arg_ini_ready( cinoutdep<T> obj_ext ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
 	if( !md->has_readers() & !md->has_writers()
 #if OBJECT_REDUCTION
 	    & !md->has_reductions()
@@ -763,8 +723,7 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
     static
     void arg_release( task_metadata * fr, cinoutdep<T> obj,
 		      typename cinoutdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	md->del_commutative();
+	gtkt_metadata * md = obj.get_version()->get_metadata();
 	md->commutative_release();
     }
 };
@@ -773,36 +732,26 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
 // reduction dependency traits
 #if OBJECT_REDUCTION
 template<>
-struct dep_traits<tkt_metadata, task_metadata, reduction> {
+struct dep_traits<gtkt_metadata, task_metadata, reduction> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, reduction<T> & obj_ext,
 		    typename reduction<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->rd_tag = md->get_reader_tag();
+	function_tags * fn_tags
+	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
+	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
+	fn_tags->wait_reader();
+	fn_tags->wait_writer();
 #if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
+	fn_tags->wait_commutative();
 #endif
-	tags->wr_tag = md->get_writer_tag();
-	md->add_reduction();
+	md->set_last_reduction( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
     template<typename T>
     static
-    bool arg_ready( reduction<T> & obj_int,
-		    typename reduction<T>::dep_tags & tags ) {
-	tkt_metadata * md = tags.ext_version->get_metadata();
-	return md->chk_reader_tag( tags.rd_tag )
-	    & md->chk_writer_tag( tags.wr_tag )
-#if OBJECT_COMMUTATIVITY
-	    & md->chk_commutative_tag( tags.c_tag )
-#endif
-	    ;
-    }
-    template<typename T>
-    static
     bool arg_ini_ready( reduction<T> obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	const gtkt_metadata * md = obj_ext.get_version()->get_metadata();
 	return !md->has_readers() & !md->has_writers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -812,14 +761,11 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
     template<typename T>
     static
     void arg_release( task_metadata * fr, reduction<T> obj_int,
-		      typename reduction<T>::dep_tags & tags ) {
-	tkt_metadata * md = tags.ext_version->get_metadata();
-	md->del_reduction();
-    }
+		      typename reduction<T>::dep_tags & tags ) { }
 };
 #endif
 
-typedef tkt_metadata obj_metadata;
+typedef gtkt_metadata obj_metadata;
 
 } // end of namespace obj
 

@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /*
  * argwalk.h
  *
@@ -75,10 +75,22 @@ struct arg_stored_size_helper<T, Tn...> : public arg_stored_size_helper<Tn...> {
 	+ arg_stored_size_helper<Tn...>::value;
 };
 
-template<typename... Tn>
+template<typename Tfdep>
+inline size_t
+fn_stored_size() {
+    return std::is_empty<Tfdep>::value ? 0 : sizeof( Tfdep );
+}
+
+template<typename Tfdep, typename... Tn>
 inline size_t
 arg_stored_size() {
-    return arg_stored_size_helper<Tn...>::value;
+    return arg_stored_size_helper<Tn...>::value + fn_stored_size<Tfdep>();
+}
+
+template<typename Tfdep>
+inline Tfdep * get_fn_tags( char * tags ) {
+    return reinterpret_cast<Tfdep *>(
+	std::is_empty<Tfdep>::value ? (char *)0 : (tags - sizeof(Tfdep)) );
 }
 
 // ------------------------------------------------------------------------

@@ -40,4 +40,10 @@ __thread generation_allocator * tls_egtg_allocator = 0;
 __thread generation_allocator * tls_ecgtg_allocator = 0;
 #endif
 
+#if OBJECT_TASKGRAPH == 12
+namespace gtickets {
+rob_type rob;
+}
+#endif
+
 };

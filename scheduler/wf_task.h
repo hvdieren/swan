@@ -158,18 +158,19 @@ public:
 	if( arg_buf )
 	    delete[] arg_buf;
     }
-    void initialize( size_t args_size, size_t tags_size, size_t nargs_ ) {
+    void initialize( size_t args_size, size_t tags_size, size_t fn_tags_size, size_t nargs_ ) {
 	arg_buf = new char[((args_size+15)&~15)+tags_size];
 	args = &arg_buf[0];
 	tags = &arg_buf[(args_size+15)&~15];
+	tags += fn_tags_size;
 #if STORED_ANNOTATIONS
 	nargs = nargs_;
 #endif
 	assert( (intptr_t(args) & 15) == 0 );
 	assert( (intptr_t(tags) & 15) == 0 );
     }
-    void initialize( size_t args_size, size_t tags_size, char * end_of_stack,
-		     size_t nargs_ ) {
+    void initialize( size_t args_size, size_t tags_size, size_t fn_tags_size,
+		     char * end_of_stack, size_t nargs_ ) {
 	arg_buf = 0;
 #if STORED_ANNOTATIONS
 	nargs = nargs_;
@@ -179,6 +180,7 @@ public:
 	    intptr_t(end_of_stack-tags_size) & ~intptr_t(15) );
 	args = reinterpret_cast<char *>(
 	    intptr_t(tags-args_size) & ~intptr_t(15) );
+	tags += fn_tags_size;
 	assert( (intptr_t(args) & 15) == 0 );
 	assert( (intptr_t(tags) & 15) == 0 );
     }

@@ -1830,6 +1830,8 @@ struct all_tags_base : public annotation_tags { };
 struct all_tags_base { };
 #endif
 
+struct function_tags_base { };
+
 struct indep_tags_base : public all_tags_base { };
 struct outdep_tags_base : public all_tags_base { };
 struct inoutdep_tags_base : public all_tags_base { };
@@ -1872,6 +1874,10 @@ struct reduction_tags_base : public all_tags_base {
 #else
 #if OBJECT_TASKGRAPH == 8
 #include "vtickets.h"
+#else
+#if OBJECT_TASKGRAPH == 12
+#include "gtickets.h"
+#endif
 #endif
 #endif
 #endif
@@ -2478,7 +2484,9 @@ struct task_graph_traits {
     }
     template<typename... Tn>
     static size_t
-    arg_stored_size() { return obj::arg_stored_size<Tn...>(); }
+    arg_stored_size() { return obj::arg_stored_size<obj::function_tags,Tn...>(); }
+    static size_t
+    fn_stored_size() { return obj::fn_stored_size<obj::function_tags>(); }
     template<typename... Tn>
     static bool
     arg_introduces_deps() { return obj::count_object<Tn...>::value > 0; }
@@ -2624,6 +2632,8 @@ struct task_graph_traits {
     template<typename... Tn>
     static size_t
     arg_stored_size() { return 0; }
+    static size_t
+    fn_stored_size() { return 0; }
     template<typename... Tn>
     static bool
     arg_introduces_deps() { return false; }

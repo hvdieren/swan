@@ -241,11 +241,12 @@ void stack_frame::invoke( future * cresult,
     // Create child frame and push it on deque
     size_t args_size = arg_size( args... ); // statically computed
     size_t tags_size = the_task_graph_traits::arg_stored_size<Tn...>();
+    size_t fn_tags_size = the_task_graph_traits::fn_stored_size();
     size_t num_args = arg_num<Tn...>(); // statically computed
 
     stack_frame * frame
-	= new stack_frame( args_size, tags_size, num_args, cur_frame,
-			   cresult, false, _is_call );
+	= new stack_frame( args_size, tags_size, fn_tags_size, num_args,
+			   cur_frame, cresult, false, _is_call );
 
     // Copy the arguments to our stack frame
     frame->push_args( args... );
@@ -320,11 +321,12 @@ void stack_frame::create_waiting( full_frame * cur_full, future * cresult,
     // Create child frame
     size_t args_size = arg_size( args... ); // statically computed
     size_t tags_size = the_task_graph_traits::arg_stored_size<Tn...>();
+    size_t fn_tags_size = the_task_graph_traits::fn_stored_size();
     size_t num_args = arg_num<Tn...>(); // statically computed
 
     stack_frame * frame
-	= new stack_frame( args_size, tags_size, num_args, cur_frame, cresult,
-			   true, false );
+	= new stack_frame( args_size, tags_size, fn_tags_size, num_args,
+			   cur_frame, cresult, true, false );
 
     // Copy the arguments to our stack frame
     frame->push_args( args... );
@@ -370,10 +372,11 @@ stack_frame::create_pending( TR (*func)( Tn... ),
 #else
     size_t args_size = arg_size( args... ); // statically computed
     size_t tags_size = the_task_graph_traits::arg_stored_size<Tn...>();
+    size_t fn_tags_size = the_task_graph_traits::fn_stored_size();
     size_t num_args = arg_num<Tn...>(); // statically computed
 
     pending_frame * pnd
-	= new pending_frame( args_size, tags_size, num_args, fut,
+	= new pending_frame( args_size, tags_size, fn_tags_size, num_args, fut,
 			     reinterpret_cast<void (*)(void)>(func),
 			     &stack_frame::split_stub<fc_waiting, TR, Tn...> );
 
