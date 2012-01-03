@@ -1,0 +1,56 @@
+#
+# Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
+# Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
+# Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.gr)
+# 
+# This file is part of Swan.
+# 
+# Swan is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Swan is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with Swan.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+srcdir = @srcdir@
+VPATH = @srcdir@
+top_builddir = @top_builddir@
+
+PROG=matmul_novec_goto matmul_novec_lapack matmul_novec_atlas
+
+all: $(PROG)
+$(PROG): $(SCHEDULER_GOALS)
+$(PROG): clapack_used.h
+
+include ../../Makefile.wf
+include $(top_builddir)/util/Makefile.use_us
+
+#LDLIBS+=-llapack_atlas
+#LDLIBS+=-L$(HOME)/ray/lib -lgoto2
+
+matmul_novec_goto: LDLIBS+=$(HOME)/ray/lib/libgoto2_nehalem-r1.13_T1.a
+
+matmul_novec_goto: matmul_novec.cc
+	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+matmul_novec_lapack: LDLIBS+=-llapack
+
+matmul_novec_lapack: matmul_novec.cc
+	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+matmul_novec_atlas: LDFLAGS+=-L/opt/atlas/lib
+matmul_novec_atlas: LDLIBS+=-llapack -lf77blas -lcblas -latlas -lgfortran
+
+matmul_novec_atlas: matmul_novec.cc
+	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+
+clean:
+	rm -f $(PROG)
