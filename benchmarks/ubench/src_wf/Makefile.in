@@ -1,0 +1,41 @@
+#
+# Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
+# Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
+# Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.gr)
+# 
+# This file is part of Swan.
+# 
+# Swan is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Swan is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with Swan.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+srcdir = @srcdir@
+VPATH = @srcdir@
+top_builddir = @top_builddir@
+
+PROG=data_dep1 data_dep2 data_depN1 data_depN2 data_depN5 data_depN10 data_depN20 data_depN50 data_depN100 data_depN200 data_depN1000 data_depN2000
+
+include ../../Makefile.wf
+include $(top_builddir)/util/Makefile.use_cy
+
+all: $(PROG)
+$(PROG): $(SCHEDULER_GOALS)
+
+data_depN%.cc: data_depN.cc.templ
+	$(srcdir)/gen.pl $* $< > $@
+
+data_dep%: data_dep%.cc
+	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+clean:
+	rm -f $(PROG)
