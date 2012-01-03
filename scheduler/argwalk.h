@@ -75,16 +75,16 @@ struct arg_stored_size_helper<T, Tn...> : public arg_stored_size_helper<Tn...> {
 	+ arg_stored_size_helper<Tn...>::value;
 };
 
+template<typename... Tn>
+inline size_t
+arg_stored_size() {
+    return arg_stored_size_helper<Tn...>::value; // + fn_stored_size<Tfdep>();
+}
+
 template<typename Tfdep>
 inline size_t
 fn_stored_size() {
     return std::is_empty<Tfdep>::value ? 0 : sizeof( Tfdep );
-}
-
-template<typename Tfdep, typename... Tn>
-inline size_t
-arg_stored_size() {
-    return arg_stored_size_helper<Tn...>::value + fn_stored_size<Tfdep>();
 }
 
 template<typename Tfdep>

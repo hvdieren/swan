@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /*
  * object.h
  *
@@ -2484,7 +2484,7 @@ struct task_graph_traits {
     }
     template<typename... Tn>
     static size_t
-    arg_stored_size() { return obj::arg_stored_size<obj::function_tags,Tn...>(); }
+    arg_stored_size() { return obj::arg_stored_size<Tn...>(); }
     static size_t
     fn_stored_size() { return obj::fn_stored_size<obj::function_tags>(); }
     template<typename... Tn>

@@ -1,6 +1,7 @@
 // -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
+ * Copyright (C) 2011 Vassilis Papaefstathiou (papaef@ics.forth.gr)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
  * Copyright (C) 2011 Dimitrios S. Nikolopoulos (dsn@ics.forth.gr)
  * 
@@ -54,15 +55,20 @@ class function_tags;
 // Current implementation does not allow wrap-around of ctr_t
 namespace gtickets {
 struct rob_type {
-    typedef uint32_t ctr_t;
+    typedef int32_t ctr_t;
 private:
-    static const ctr_t size = 256;
-    ctr_t head;
+    static const ctr_t size = 32768;
+    volatile ctr_t head; // unsynchronized read->write dep from commit->issue
     ctr_t tail;
     cas_mutex mutex;
-    bool completed[size];
+    // Entry completed[0] is the completed value for every unreferenced
+    // object, i.e.\ true. The remaining size entries correspond to
+    // variable completed values.
+    bool completed[1+size];
 public:
-    rob_type() : head( 0 ), tail( 0 ) { }
+    rob_type() : head( 0 ), tail( 0 ) {
+	completed[0] = true;
+    }
 
     // Note: tail increment is covered by parent lock only if we use
     // hyperobjects intra-procedurally. If we use them "wrongly" then
@@ -74,7 +80,7 @@ public:
 	while( tail - head >= size );
 
 	mutex.lock();
-	completed[tail] = false;
+	completed[1+(tail % size)] = false;
 	ctr_t tag = tail++;
 	mutex.unlock();
 	return tag;
@@ -82,13 +88,13 @@ public:
 
     void commit( ctr_t tag ) {
 	mutex.lock();
-	completed[tag] = true;
+	completed[1+(tag % size)] = true;
 	if( tag == head ) {
 	    ctr_t max = tail - head;
 	    ctr_t i;
 	    for( i=0; i != max; ++i ) {
 		ctr_t idx = ( head + i ) % size;
-		if( !completed[idx] )
+		if( !completed[1+idx] )
 		    break;
 	    }
 	    head += i;
@@ -97,7 +103,7 @@ public:
     }
 
     bool is_ready( ctr_t tag ) const volatile {
-	return completed[tag % size];
+	return tag < head; // completed[1+(tag % size)];
     }
 
     friend std::ostream &
@@ -106,7 +112,7 @@ public:
     friend class ::obj::function_tags;
 };
 
-extern rob_type rob;
+extern rob_type rob; // TODO: make rob private to get_full() on parent frame
 
 // Some debugging support
 inline std::ostream &
@@ -139,12 +145,12 @@ private:
     depth_t depth;                // depth in task graph
 
 public:
-    gtkt_metadata() : last_writer( 0 ), last_reader( 0 ),
+    gtkt_metadata() : last_writer( -1 ), last_reader( -1 ),
 #if OBJECT_COMMUTATIVITY
-		      last_commutative( 0 ),
+		      last_commutative( -1 ),
 #endif
 #if OBJECT_REDUCTION
-		      last_reduction( 0 ),
+		      last_reduction( -1 ),
 #endif
 		      depth( 0 ) { }
 
@@ -220,13 +226,13 @@ public:
 
 // Some debugging support
 inline std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md ) {
-    os << "ticket_md={readers=" << md.last_reader
-       << ", writers=" << md.last_writer
+    os << "gticket_md={last_rd=" << md.last_reader
+       << ", last_wr=" << md.last_writer
 #if OBJECT_COMMUTATIVITY
-       << ", commutative=" << md.last_commutative
+       << ", last_c=" << md.last_commutative
 #endif
 #if OBJECT_REDUCTION
-       << ", reductions=" << md.last_reduction
+       << ", last_r=" << md.last_reduction
 #endif
        << '}';
     return os;
@@ -246,12 +252,20 @@ private:
     gtkt_metadata::tag_t wr_tag;
 #if OBJECT_COMMUTATIVITY
     gtkt_metadata::tag_t c_tag;
+#define NUM_OC 1
+#else
+#define NUM_OC 0
 #endif
 #if OBJECT_REDUCTION
     gtkt_metadata::tag_t r_tag;
+#define NUM_OR 1
+#else
+#define NUM_OR 0
 #endif
 
-    pad_multiple<16, sizeof(gtkt_metadata::tag_t)*5> padding;
+    pad_multiple<16, sizeof(gtkt_metadata::tag_t)*(3+NUM_OC+NUM_OR)> padding;
+#undef NUM_OC
+#undef NUM_OR
 
 public:
     function_tags() : rd_tag( 0 ), wr_tag( 0 )
