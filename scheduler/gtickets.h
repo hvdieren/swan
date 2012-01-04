@@ -300,6 +300,8 @@ inline std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md 
 // ----------------------------------------------------------------------
 // Whole-function dependency tags
 // ----------------------------------------------------------------------
+// TODO: the whole concept of function_tags could be removed by storing
+// this information in the full_metadata.
 class function_tags : public function_tags_base {
 public:
     gtkt_metadata::tag_t get_tag() const { return tag; }
