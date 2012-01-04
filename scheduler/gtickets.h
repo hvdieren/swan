@@ -54,33 +54,93 @@ class function_tags;
 
 // Current implementation does not allow wrap-around of ctr_t
 namespace gtickets {
+struct rob_range {
+    int from, to;
+    rob_range( int f, int t ) : from( f ), to( t ) { }
+};
+struct rob_shrink : public rob_range {
+    rob_shrink( int f, int t ) : rob_range( f, t ) { }
+};
+struct rob_grow : public rob_range {
+    rob_grow( int f, int t ) : rob_range( f, t ) { }
+};
+
+class rob_store {
+    unsigned logsz;
+    unsigned mask;
+    bool * array;
+
+    static constexpr unsigned make_mask( unsigned lsz ) {
+	return ( unsigned(1)<<lsz ) - unsigned(1);
+    }
+
+public:
+    rob_store() : logsz( 6 ), mask( make_mask( logsz ) ) {
+	array = new bool[1<<logsz];
+    }
+    rob_store( const rob_store & s, rob_shrink a )
+	: logsz( s.shrinkable() ? s.logsz-2 : s.logsz ),
+	  mask( make_mask( logsz ) ) {
+	// errs() << "shrink from " << s.size() << " to " << size() << "\n";
+	array = new bool[1<<logsz];
+	copy_range( s, a.from, a.to );
+    }
+    rob_store( const rob_store & s, rob_grow a )
+	: logsz( s.logsz+1 ), mask( make_mask( logsz ) ) {
+	// errs() << "grow from " << s.size() << " to " << size() << "\n";
+	array = new bool[1<<logsz];
+	copy_range( s, a.from, a.to );
+    }
+    ~rob_store() {
+	delete[] array;
+    }
+
+    rob_store & operator = ( rob_store && s ) {
+	std::swap( logsz, s.logsz );
+	std::swap( mask, s.mask );
+	std::swap( array, s.array );
+	return *this;
+    }
+
+    bool & operator [] ( int idx ) { return array[idx & mask]; }
+    bool operator [] ( int idx ) const { return array[idx & mask]; }
+
+    bool shrinkable() const { return logsz > 2; }
+
+    unsigned size() const { return unsigned(1)<<logsz; }
+
+private:
+    void copy_range( const rob_store & s, int from, int to ) {
+	for( int i=from; i != to; ++i )
+	    (*this)[i] = s[i];
+    }
+};
+
 struct rob_type {
     typedef int32_t ctr_t;
 private:
-    static const ctr_t size = 32768;
     volatile ctr_t head; // unsynchronized read->write dep from commit->issue
     ctr_t tail;
     cas_mutex mutex;
-    // Entry completed[0] is the completed value for every unreferenced
-    // object, i.e.\ true. The remaining size entries correspond to
-    // variable completed values.
-    bool completed[1+size];
+    rob_store store;
 public:
-    rob_type() : head( 0 ), tail( 0 ) {
-	completed[0] = true;
-    }
+    rob_type() : head( 0 ), tail( 0 ) { }
 
     // Note: tail increment is covered by parent lock only if we use
     // hyperobjects intra-procedurally. If we use them "wrongly" then
     // the tail update must be atomic.
     ctr_t issue() {
-	// Uuurgh - busy waiting - what else can we do in our scheduler?
-	// Even the going deep path (work-first) comes here and requires
-	// the allocation of a tag.
-	while( tail - head >= size );
-
 	mutex.lock();
-	completed[1+(tail % size)] = false;
+	if( tail - head < (ctr_t)store.size()/4  ) {
+	    // Shrink array if useful.
+	    if( store.shrinkable() )
+		store = rob_store( store, rob_shrink( head, tail ) );
+	} else if( tail - head >= (ctr_t)store.size() ) {
+	    // Grow array if needed.
+	    store = rob_store( store, rob_grow( head, tail ) );
+	}
+
+	store[tail] = false;
 	ctr_t tag = tail++;
 	mutex.unlock();
 	return tag;
@@ -88,13 +148,12 @@ public:
 
     void commit( ctr_t tag ) {
 	mutex.lock();
-	completed[1+(tag % size)] = true;
+	store[tag] = true;
 	if( tag == head ) {
 	    ctr_t max = tail - head;
 	    ctr_t i;
 	    for( i=0; i != max; ++i ) {
-		ctr_t idx = ( head + i ) % size;
-		if( !completed[1+idx] )
+		if( !store[head+i] )
 		    break;
 	    }
 	    head += i;
@@ -103,7 +162,7 @@ public:
     }
 
     bool is_ready( ctr_t tag ) const volatile {
-	return tag < head; // completed[1+(tag % size)];
+	return tag < head;
     }
 
     friend std::ostream &
