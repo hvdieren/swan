@@ -739,6 +739,8 @@ task_metadata::add_to_graph() {
 // ----------------------------------------------------------------------
 // Dependency handling traits
 // ----------------------------------------------------------------------
+// Whole-function dependency tags
+class function_tags : public function_tags_base { };
 
 // A fully serialized version
 class serial_dep_tags : public gen_tags { };
