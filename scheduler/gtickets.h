@@ -441,28 +441,71 @@ class link_metadata {
 // Checking readiness of pending_metadata
 // ----------------------------------------------------------------------
 // A "ready function" to check readiness, based on per-function tags
+#if STORED_ANNOTATIONS
 template<typename MetaData, typename Task>
 static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
-    function_tags * fn_tags
-	= get_fn_tags<function_tags>( task_data_p.get_tags_ptr() );
-    return fn_tags->is_ready();
+    char * tags = task_data_p.get_tags_ptr();
+    function_tags * fn_tags = get_fn_tags<function_tags>( tags );
+    if( fn_tags->is_ready() ) {
+	char * args = task_data_p.get_args_ptr();
+	size_t nargs = task_data_p.get_num_args();
+	finalize_functor<MetaData> ffn;
+	arg_apply_stored_ufn( ffn, nargs, args, tags );
+	privatize_functor<MetaData> pfn;
+	arg_apply_stored_ufn( pfn, nargs, args, tags );
+	return true;
+    }
+    return false;
 }
+#else
+template<typename MetaData, typename Task, typename... Tn>
+static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
+    char * tags = task_data_p.get_tags_ptr();
+    function_tags * fn_tags = get_fn_tags<function_tags>( tags );
+    if( fn_tags->is_ready() ) {
+	char * args = task_data_p.get_args_ptr();
+	finalize_functor<MetaData> ffn;
+	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
+	privatize_functor<MetaData> pfn;
+	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
+	return true;
+    }
+    return false;
+}
+#endif
 
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
 // ----------------------------------------------------------------------
 class pending_metadata : public task_metadata, private link_metadata {
+#if !STORED_ANNOTATIONS
+    typedef bool (*ready_fn_t)( const task_data_t & );
+
+    ready_fn_t ready_fn;
+#endif
+
 protected:
-    pending_metadata() { }
+    pending_metadata()
+#if !STORED_ANNOTATIONS
+	: ready_fn( 0 )
+#endif
+	{ }
 
 public:
     template<typename... Tn>
     void create( full_metadata * ff ) {
+#if !STORED_ANNOTATIONS
+	ready_fn = &arg_ready_fn<gtkt_metadata, task_metadata, Tn...>;
+#endif
 	task_metadata::create<Tn...>( ff );
     }
 
     bool is_ready() const {
+#if STORED_ANNOTATIONS
 	return arg_ready_fn<gtkt_metadata, task_metadata>( get_task_data() );
+#else
+	return ready_fn && (*ready_fn)( get_task_data() );
+#endif
     }
 
     static obj::link_metadata *
