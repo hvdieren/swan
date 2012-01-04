@@ -167,8 +167,6 @@ public:
 
     friend std::ostream &
     operator << ( std::ostream & os, const rob_type & f );
-
-    friend class ::obj::function_tags;
 };
 
 extern rob_type rob; // TODO: make rob private to get_full() on parent frame
@@ -231,26 +229,24 @@ public:
 
     // Track oustanding readers with a head and tail counter
     void set_last_reader( ctr_t w ) { last_reader = w; }
-    bool is_reader_ready( ctr_t w ) const volatile { return gtickets::rob.is_ready( w ); }
+    ctr_t get_last_reader() const { return last_reader; }
     bool has_readers() const volatile {
-	return !is_reader_ready( last_reader );
+	return !gtickets::rob.is_ready( last_reader );
     }
 
     // Track oustanding writers with a head and tail counter
     void set_last_writer( ctr_t w ) { last_writer = w; }
-    bool is_writer_ready( ctr_t w ) const volatile { return gtickets::rob.is_ready( w ); }
+    ctr_t get_last_writer() const { return last_writer; }
     bool has_writers() const volatile {
-	return !is_writer_ready( last_writer );
+	return !gtickets::rob.is_ready( last_writer );
     }
 
 #if OBJECT_COMMUTATIVITY
     // Track oustanding commutatives with a head and tail counter
     void set_last_commutative( ctr_t w ) { last_commutative = w; }
-    bool is_commutative_ready( ctr_t w ) const volatile {
-	return gtickets::rob.is_ready( w );
-    }
+    ctr_t get_last_commutative() const { return last_commutative; }
     bool has_commutative() const volatile {
-	return !is_commutative_ready( last_commutative );
+	return !gtickets::rob.is_ready( last_commutative );
     }
 
     // There is no lock operation - because there is no reason to wait...
@@ -261,11 +257,9 @@ public:
 #if OBJECT_REDUCTION
     // Track oustanding reductions with a head and tail counter
     void set_last_reduction( ctr_t w ) { last_reduction = w; }
-    bool is_reduction_ready( ctr_t w ) const volatile {
-	return gtickets::rob.is_ready( w );
-    }
+    ctr_t get_last_reduction() const { return last_reduction; }
     bool has_reductions() const volatile {
-	return !is_reduction_ready( last_reduction );
+	return !gtickets::rob.is_ready( last_reduction );
     }
 #endif
 
@@ -300,62 +294,38 @@ inline std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md 
 // ----------------------------------------------------------------------
 // Whole-function dependency tags
 // ----------------------------------------------------------------------
+// TODO: the whole concept of function_tags could be removed by storing
+// this information in the full_metadata.
 class function_tags : public function_tags_base {
 public:
-    gtkt_metadata::tag_t get_tag() const { return tag; }
+    typedef gtkt_metadata::tag_t tag_t;
 
 private:
-    gtkt_metadata::tag_t tag; // The current task sequence number
-    // The tag is the max of this type of tags across all args
-    gtkt_metadata::tag_t rd_tag;
-    gtkt_metadata::tag_t wr_tag;
-#if OBJECT_COMMUTATIVITY
-    gtkt_metadata::tag_t c_tag;
-#define NUM_OC 1
-#else
-#define NUM_OC 0
-#endif
-#if OBJECT_REDUCTION
-    gtkt_metadata::tag_t r_tag;
-#define NUM_OR 1
-#else
-#define NUM_OR 0
-#endif
+    tag_t tag; // The current task sequence number
+    // Last index to wait for
+    tag_t wait_tag;
 
-    pad_multiple<16, sizeof(gtkt_metadata::tag_t)*(3+NUM_OC+NUM_OR)> padding;
-#undef NUM_OC
-#undef NUM_OR
+    pad_multiple<16, sizeof(tag_t)*2> padding;
 
 public:
-    function_tags() : rd_tag( 0 ), wr_tag( 0 )
-#if OBJECT_COMMUTATIVITY
-		    , c_tag( 0 )
-#endif
-#if OBJECT_REDUCTION
-		    , r_tag( 0 )
-#endif
-	{
-	    static_assert( (sizeof(*this) % 16) == 0,
-                           "Padding of gtickets::function_tags failed" );
-	}
+    function_tags() : wait_tag( -1 ) {
+	static_assert( (sizeof(*this) % 16) == 0,
+		       "Padding of gtickets::function_tags failed" );
+    }
 
-    gtkt_metadata::tag_t issue() { return tag = gtickets::rob.issue(); }
+    tag_t issue() { return tag = gtickets::rob.issue(); }
     void commit() const { gtickets::rob.commit( tag ); }
+    bool is_ready() const { return gtickets::rob.is_ready( wait_tag ); }
 
-    void wait_reader() { rd_tag = std::max( rd_tag, tag ); }
-    bool is_reader_ready() const { return rd_tag <= gtickets::rob.head; }
+    tag_t get_tag() const { return tag; }
 
-    void wait_writer() { wr_tag = std::max( wr_tag, tag ); }
-    bool is_writer_ready() const { return wr_tag <= gtickets::rob.head; }
-
+    void wait_reader( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
+    void wait_writer( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
 #if OBJECT_COMMUTATIVITY
-    void wait_commutative() { c_tag = std::max( c_tag, tag ); }
-    bool is_commutative_ready() const { return c_tag <= gtickets::rob.head; }
+    void wait_commutative( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
 #endif
-
 #if OBJECT_REDUCTION
-    void wait_reduction() { r_tag = std::max( r_tag, tag ); }
-    bool is_reduction_ready() const { return r_tag <= gtickets::rob.head; }
+    void wait_reduction( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
 #endif
 };
 
@@ -475,14 +445,7 @@ template<typename MetaData, typename Task>
 static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
     function_tags * fn_tags
 	= get_fn_tags<function_tags>( task_data_p.get_tags_ptr() );
-    return fn_tags->is_reader_ready()
-#if OBJECT_COMMUTATIVITY
-	& fn_tags->is_commutative_ready()
-#endif
-#if OBJECT_REDUCTION
-	& fn_tags->is_reduction_ready()
-#endif
-	& fn_tags->is_writer_ready();
+    return fn_tags->is_ready();
 }
 
 // ----------------------------------------------------------------------
@@ -608,13 +571,13 @@ struct serial_dep_traits {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_tags_ptr() );
 	gtkt_metadata * md = obj.get_version()->get_metadata();
-	fn_tags->wait_reader();
-	fn_tags->wait_writer();
+	fn_tags->wait_reader( md->get_last_reader() );
+	fn_tags->wait_writer( md->get_last_writer() );
 #if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative();
+	fn_tags->wait_commutative( md->get_last_commutative() );
 #endif
 #if OBJECT_REDUCTION
-	fn_tags->wait_reduction();
+	fn_tags->wait_reduction( md->get_last_reduction() );
 #endif
 	md->set_last_writer( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
@@ -682,12 +645,12 @@ struct dep_traits<gtkt_metadata, task_metadata, indep> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_writer();
+	fn_tags->wait_writer( md->get_last_writer() );
 #if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative();
+	fn_tags->wait_commutative( md->get_last_commutative() );
 #endif
 #if OBJECT_REDUCTION
-	fn_tags->wait_reduction();
+	fn_tags->wait_reduction( md->get_last_reduction() );
 #endif
 	md->set_last_reader( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
@@ -767,10 +730,10 @@ struct dep_traits<gtkt_metadata, task_metadata, cinoutdep> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_reader();
-	fn_tags->wait_writer();
+	fn_tags->wait_reader( md->get_last_reader() );
+	fn_tags->wait_writer( md->get_last_writer() );
 #if OBJECT_REDUCTION
-	fn_tags->wait_reduction();
+	fn_tags->wait_reduction( md->get_last_reduction() );
 #endif
 	md->set_last_commutative( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
@@ -813,10 +776,10 @@ struct dep_traits<gtkt_metadata, task_metadata, reduction> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_reader();
-	fn_tags->wait_writer();
+	fn_tags->wait_reader( md->get_last_reader() );
+	fn_tags->wait_writer( md->get_last_writer() );
 #if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative();
+	fn_tags->wait_commutative( md->get_last_commutative() );
 #endif
 	md->set_last_reduction( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
