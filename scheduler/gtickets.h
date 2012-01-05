@@ -105,7 +105,7 @@ public:
     bool & operator [] ( int idx ) { return array[idx & mask]; }
     bool operator [] ( int idx ) const { return array[idx & mask]; }
 
-    bool shrinkable() const { return logsz > 2; }
+    bool shrinkable() const { return logsz > 7; }
 
     unsigned size() const { return unsigned(1)<<logsz; }
 
