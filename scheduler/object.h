@@ -691,6 +691,8 @@ public:
     obj_reduction_md<MetaData> * get_reduction()  {
 	return reduc;
     }
+
+    bool is_initialized() const { return reduc != 0; }
 };
 
 // obj_version: versioning of data objects + tracking readers/writer
@@ -836,18 +838,6 @@ public:
 		expensive_reduction_tag>::value;
 	    odt->add_finalize_version( this, do_expand );
 	}
-/*
-	if( std::is_same<typename Monad::reduction_tag,
-	    expensive_reduction_tag>::value ) {
-	    // Force initialization for all threads
-	    if( reduc.template initialize<Monad>( size, this ) )
-		odt->add_finalize_version( this, true );
-	} else {
-	    // Force initialization for all threads
-	    if( reduc.template initialize<Monad>( size, this ) )
-		odt->add_finalize_version( this, false );
-	}
-*/
     }
 
     template<typename Monad>
@@ -859,6 +849,8 @@ public:
     obj_reduction_md<MetaData> * get_reduction()  {
 	return reduc.get_reduction<Monad>();
     }
+
+    bool is_used_in_reduction() const { return reduc.is_initialized(); }
 
     // Some computations may not be complete (eg reductions). Finalize them
     // now or expand them, depending on the complexity of the reduction
@@ -1304,9 +1296,10 @@ struct release_functor {
 
 // Grab functor
 template<typename MetaData, typename Task>
-struct grab_functor {
+class grab_functor {
     Task * fr;
     obj_dep_traits * odt;
+public:
     grab_functor( Task * fr_, obj_dep_traits * odt_ )
 	: fr( fr_ ), odt( odt_ ) { }
     
@@ -1318,6 +1311,10 @@ struct grab_functor {
 	// rename<MetaData, T>( obj_ext, obj_int, tags );
 	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
 	obj_ext.get_version()->add_ref();
+	if( !is_outdep< DepTy<T> >::value
+	    && !is_truedep< DepTy<T> >::value // static checks
+	    && obj_ext.get_version()->is_used_in_reduction() )
+	    fr->get_task_data().set_finalization_required();
 	return true;
     }
 
@@ -1328,6 +1325,8 @@ struct grab_functor {
 	indep<T> obj_ext = indep<T>::create( obj_int.get_version() );
 	obj_ext.get_version()->add_ref(); // do this first
 	dep_traits<MetaData, Task, indep>::template arg_issue( fr, obj_ext, &tags );
+	if( obj_ext.get_version()->is_used_in_reduction() )
+	    fr->get_task_data().set_finalization_required();
 	return true;
     }
 
@@ -1490,10 +1489,17 @@ struct privatize_functor {
 };
 
 template<typename MetaData>
-struct finalize_functor {
+class finalize_functor {
+private:
+    bool do_finalize;
+public:
+    finalize_functor( const task_data_t & task_data )
+	: do_finalize( task_data.is_finalization_required() ) { }
+
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & tags ) {
-	obj.get_version()->finalize();
+	if( do_finalize )
+	    obj.get_version()->finalize();
 	return true;
     }
     template<typename T>
@@ -1516,26 +1522,6 @@ struct finalize_functor {
     template<typename T, template<typename U> class DepTy>
     void undo( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) { }
 };
-
-// A finalize reduction function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_finalize_fn( task_data_t & td ) {
-    finalize_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    return arg_apply_stored_fn( fn, nargs, args, tags );
-}
-#else
-template<typename MetaData, typename... Tn>
-static inline void arg_finalize_fn( task_data_t & td ) {
-    finalize_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    arg_apply_fn<finalize_functor<MetaData>,Tn...>( fn, args, tags );
-}
-#endif
 
 // Initial ready? functor
 template<typename MetaData, typename Task>

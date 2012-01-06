@@ -320,11 +320,11 @@ struct ready_functor {
 // A "ready function" to check readiness with the dep_traits.
 #if STORED_ANNOTATIONS
 template<typename MetaData, typename Task>
-static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
+static inline bool arg_ready_fn( const task_data_t & task_data ) {
     ready_functor<MetaData, Task> fn;
-    char * args = task_data_p.get_args_ptr();
-    char * tags = task_data_p.get_tags_ptr();
-    size_t nargs = task_data_p.get_num_args();
+    char * args = task_data.get_args_ptr();
+    char * tags = task_data.get_tags_ptr();
+    size_t nargs = task_data.get_num_args();
     if( arg_apply_stored_ufn( fn, nargs, args, tags ) ) {
 	finalize_functor<MetaData> ffn;
 	arg_apply_stored_ufn( ffn, nargs, args, tags );
@@ -336,13 +336,16 @@ static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
 }
 #else
 template<typename MetaData, typename Task, typename... Tn>
-static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
+static inline bool arg_ready_fn( const task_data_t & task_data ) {
     ready_functor<MetaData, Task> fn;
-    char * args = task_data_p.get_args_ptr();
-    char * tags = task_data_p.get_tags_ptr();
+    char * args = task_data.get_args_ptr();
+    char * tags = task_data.get_tags_ptr();
     if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
+	// The finalization is not performed if task_data indicates that none
+	// of the arguments are the result of a non-finalized reduction.
+	finalize_functor<MetaData> ffn( task_data );
 	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
+	// The privatization code optimizes to a no-op if it is not required
 	privatize_functor<MetaData> pfn;
 	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
 	return true;
