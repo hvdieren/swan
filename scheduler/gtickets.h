@@ -504,7 +504,7 @@ static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
     if( fn_tags->is_ready() ) {
 	char * args = task_data_p.get_args_ptr();
 	size_t nargs = task_data_p.get_num_args();
-	finalize_functor<MetaData> ffn;
+	finalize_functor<MetaData> ffn( task_data_p );
 	arg_apply_stored_ufn( ffn, nargs, args, tags );
 	privatize_functor<MetaData> pfn;
 	arg_apply_stored_ufn( pfn, nargs, args, tags );
@@ -519,7 +519,7 @@ static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
     function_tags * fn_tags = get_fn_tags<function_tags>( tags );
     if( fn_tags->is_ready() ) {
 	char * args = task_data_p.get_args_ptr();
-	finalize_functor<MetaData> ffn;
+	finalize_functor<MetaData> ffn( task_data_p );
 	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
 	privatize_functor<MetaData> pfn;
 	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
