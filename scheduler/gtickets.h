@@ -292,6 +292,25 @@ inline std::ostream & operator << ( std::ostream & os, const gtkt_metadata & md 
 }
 
 // ----------------------------------------------------------------------
+// Helper function
+// ----------------------------------------------------------------------
+template<typename T>
+T varmax( T a, T b ) { return std::max( a, b ); }
+
+template<typename T>
+T varmax( T a, T b, T c ) { return std::max( a, std::max( b, c ) ); }
+
+template<typename T>
+T varmax( T a, T b, T c, T d ) {
+    return std::max( std::max( a, b ), std::max( c, d ) );
+}
+
+template<typename T>
+T varmax( T a, T b, T c, T d, T e ) {
+    return std::max( std::max( a, b ), std::max( std::max( c, d ), e ) );
+}
+
+// ----------------------------------------------------------------------
 // Whole-function dependency tags
 // ----------------------------------------------------------------------
 // TODO: the whole concept of function_tags could be removed by storing
@@ -312,20 +331,57 @@ public:
 	static_assert( (sizeof(*this) % 16) == 0,
 		       "Padding of gtickets::function_tags failed" );
     }
+    void init() { wait_tag = -1; } // avoids if(p!=0) in new(p) function_tags();
 
-    tag_t issue() { return tag = gtickets::rob.issue(); }
+    void issue() {
+	tag = gtickets::rob.issue();
+	wait_tag = -1;
+    }
     void commit() const { gtickets::rob.commit( tag ); }
     bool is_ready() const { return gtickets::rob.is_ready( wait_tag ); }
 
     tag_t get_tag() const { return tag; }
 
-    void wait_reader( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
-    void wait_writer( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
+    void wait_reader( gtkt_metadata * md ) {
+	wait_tag = varmax( wait_tag,
 #if OBJECT_COMMUTATIVITY
-    void wait_commutative( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
+			   md->get_last_commutative(),
 #endif
 #if OBJECT_REDUCTION
-    void wait_reduction( tag_t t ) { wait_tag = std::max( wait_tag, t ); }
+			   md->get_last_reduction(),
+#endif
+			   md->get_last_writer() );
+    }
+    void wait_writer( gtkt_metadata * md ) {
+	wait_tag = varmax( wait_tag,
+			   md->get_last_reader(),
+#if OBJECT_COMMUTATIVITY
+			   md->get_last_commutative(),
+#endif
+#if OBJECT_REDUCTION
+			   md->get_last_reduction(),
+#endif
+			   md->get_last_writer() );
+    }
+#if OBJECT_COMMUTATIVITY
+    void wait_commutative( gtkt_metadata * md ) {
+	wait_tag = varmax( wait_tag,
+			   md->get_last_reader(),
+#if OBJECT_REDUCTION
+			   md->get_last_reduction(),
+#endif
+			   md->get_last_writer() );
+    }
+#endif
+#if OBJECT_REDUCTION
+    void wait_reduction( gtkt_metadata * md ) {
+	wait_tag = varmax( wait_tag,
+			   md->get_last_reader(),
+#if OBJECT_COMMUTATIVITY
+			   md->get_last_commutative(),
+#endif
+			   md->get_last_writer() );
+    }
 #endif
 };
 
@@ -407,7 +463,6 @@ public:
     void start_registration() {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( get_task_data().get_tags_ptr() );
-	new (fn_tags) function_tags();
 	fn_tags->issue();
 
 #if STORED_ANNOTATIONS
@@ -614,14 +669,7 @@ struct serial_dep_traits {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_tags_ptr() );
 	gtkt_metadata * md = obj.get_version()->get_metadata();
-	fn_tags->wait_reader( md->get_last_reader() );
-	fn_tags->wait_writer( md->get_last_writer() );
-#if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative( md->get_last_commutative() );
-#endif
-#if OBJECT_REDUCTION
-	fn_tags->wait_reduction( md->get_last_reduction() );
-#endif
+	fn_tags->wait_writer( md );
 	md->set_last_writer( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
@@ -688,13 +736,7 @@ struct dep_traits<gtkt_metadata, task_metadata, indep> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_writer( md->get_last_writer() );
-#if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative( md->get_last_commutative() );
-#endif
-#if OBJECT_REDUCTION
-	fn_tags->wait_reduction( md->get_last_reduction() );
-#endif
+	fn_tags->wait_reader( md );
 	md->set_last_reader( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
@@ -773,11 +815,7 @@ struct dep_traits<gtkt_metadata, task_metadata, cinoutdep> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_reader( md->get_last_reader() );
-	fn_tags->wait_writer( md->get_last_writer() );
-#if OBJECT_REDUCTION
-	fn_tags->wait_reduction( md->get_last_reduction() );
-#endif
+	fn_tags->wait_commutative( md );
 	md->set_last_commutative( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
@@ -819,11 +857,7 @@ struct dep_traits<gtkt_metadata, task_metadata, reduction> {
 	function_tags * fn_tags
 	    = get_fn_tags<function_tags>( fr->get_task_data().get_tags_ptr() );
 	gtkt_metadata * md = obj_ext.get_version()->get_metadata();
-	fn_tags->wait_reader( md->get_last_reader() );
-	fn_tags->wait_writer( md->get_last_writer() );
-#if OBJECT_COMMUTATIVITY
-	fn_tags->wait_commutative( md->get_last_commutative() );
-#endif
+	fn_tags->wait_reduction( md );
 	md->set_last_reduction( fn_tags->get_tag() );
 	md->update_depth( fr->get_depth() );
     }
