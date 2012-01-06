@@ -1,0 +1,21 @@
+#!/bin/bash
+
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+
+target_name_ubench()
+{
+    local file=$1
+    local tgt=$2
+
+    local tg=$(echo "$tgt" | cut -d- -f2)
+    echo ${file}_$(taskgraph_name $tg)
+}
+
+. $top_builddir/scripts/create.sh
+
+( for tg in 1 8 9 10 12 ; do
+	for d in 1 N1 N2 N5 N10 N20 N50 N100 N200 ; do
+	    echo "ubench data_dep$d wf-$tg"
+	done
+	done ) | create_benchmarks exec 

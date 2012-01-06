@@ -4445,7 +4445,11 @@ done
 # Variables
 
 
-ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/ubench/src_wf/Makefile benchmarks/matmul2/src_wfo/Makefile util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+
+ac_config_commands="$ac_config_commands exec-scripts-create.sh"
+
+ac_config_commands="$ac_config_commands exec-benchmarks-ubench-src_wf-create.sh"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -4992,6 +4996,7 @@ cat >>$CONFIG_STATUS <<_ACEOF || ac_write_fail=1
 # Files that config.status was made for.
 config_files="$ac_config_files"
 config_headers="$ac_config_headers"
+config_commands="$ac_config_commands"
 
 _ACEOF
 
@@ -5020,6 +5025,9 @@ $config_files
 
 Configuration headers:
 $config_headers
+
+Configuration commands:
+$config_commands
 
 Report bugs to <BUG-REPORT-ADDRESS>."
 
@@ -5157,10 +5165,14 @@ do
     "benchmarks/fft/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/fft/src_wf/Makefile" ;;
     "benchmarks/jacobi/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/jacobi/src_wfo/Makefile" ;;
     "benchmarks/ubench/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/ubench/src_wf/Makefile" ;;
+    "benchmarks/ubench/src_wf/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/ubench/src_wf/create.sh" ;;
     "benchmarks/matmul2/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/matmul2/src_wfo/Makefile" ;;
+    "scripts/create.sh") CONFIG_FILES="$CONFIG_FILES scripts/create.sh" ;;
     "util/Makefile") CONFIG_FILES="$CONFIG_FILES util/Makefile" ;;
     "util/Makefile.use_us") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_us" ;;
     "util/Makefile.use_cy") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_cy" ;;
+    "exec-scripts-create.sh") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-scripts-create.sh" ;;
+    "exec-benchmarks-ubench-src_wf-create.sh") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-benchmarks-ubench-src_wf-create.sh" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
   esac
@@ -5174,6 +5186,7 @@ done
 if $ac_need_defaults; then
   test "${CONFIG_FILES+set}" = set || CONFIG_FILES=$config_files
   test "${CONFIG_HEADERS+set}" = set || CONFIG_HEADERS=$config_headers
+  test "${CONFIG_COMMANDS+set}" = set || CONFIG_COMMANDS=$config_commands
 fi
 
 # Have a temporary directory for convenience.  Make it in the build tree
@@ -5470,7 +5483,7 @@ cat >>$CONFIG_STATUS <<\_ACEOF || ac_write_fail=1
 fi # test -n "$CONFIG_HEADERS"
 
 
-eval set X "  :F $CONFIG_FILES  :H $CONFIG_HEADERS    "
+eval set X "  :F $CONFIG_FILES  :H $CONFIG_HEADERS    :C $CONFIG_COMMANDS"
 shift
 for ac_tag
 do
@@ -5703,9 +5716,17 @@ $as_echo "$as_me: $ac_file is unchanged" >&6;}
   fi
  ;;
 
-
+  :C)  { $as_echo "$as_me:${as_lineno-$LINENO}: executing $ac_file commands" >&5
+$as_echo "$as_me: executing $ac_file commands" >&6;}
+ ;;
   esac
 
+
+  case $ac_file$ac_mode in
+    "exec-scripts-create.sh":C) chmod u+x scripts/create.sh ;;
+    "exec-benchmarks-ubench-src_wf-create.sh":C) chmod u+x benchmarks/ubench/src_wf/create.sh ;;
+
+  esac
 done # for ac_tag
 
 
