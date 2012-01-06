@@ -694,7 +694,7 @@ arg_apply3_fnr( Fn & fn, AL al,
 
 template<typename Fn, typename... Tn>
 static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restrict__ argp, char * __restrict__ tagp, Tn & ... an ) {
-    return arg_apply3_fnr( fn, arg_locator<0,0>(), argp, tagp, an... );
+    return arg_apply3_fnr( fn, create_arg_locator<Tn...>(), argp, tagp, an... );
 }
 
 // ------------------------------------------------------------------------
@@ -719,7 +719,7 @@ static inline bool arg_apply_fnr( Fn & fn, AL al, char * __restrict__ a, char * 
 
 template<typename Fn, typename... Tn>
 static inline bool arg_apply_fn( Fn & fn, char * __restrict__ a, char * __restrict__ s ) {
-    return arg_apply_fnr<Fn,arg_locator<0,0>,Tn...>( fn, arg_locator<0,0>(), a, s );
+    return arg_apply_fnr<Fn,arg_locator<0,0>,Tn...>( fn, create_arg_locator<Tn...>(), a, s );
 }
 
 // ------------------------------------------------------------------------
@@ -749,7 +749,7 @@ static inline bool arg_apply_ufnr( Fn & fn, AL al, char * __restrict__ a, char *
 
 template<typename Fn, typename... Tn>
 static inline bool arg_apply_ufn( Fn & fn, char * __restrict__ a, char * __restrict__ s ) {
-    return arg_apply_ufnr<Fn,arg_locator<0,0>,Tn...>( fn, arg_locator<0,0>(), a, s );
+    return arg_apply_ufnr<Fn,arg_locator<0,0>,Tn...>( fn, create_arg_locator<Tn...>(), a, s );
 }
 
 // ------------------------------------------------------------------------

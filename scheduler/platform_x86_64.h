@@ -845,9 +845,16 @@ struct arg_locator {
     template<typename T>
     size_t get() const {
 	typedef platform_x86_64::arg_passing<ireg, freg, 0, T> arg_pass;
-	return arg_pass::in_reg ? reg_off : mem_off;
+	size_t off = arg_pass::in_reg ? reg_off : mem_off;
+	return off;
     }
 };
+
+template<typename... Tn>
+static inline arg_locator<0,0> create_arg_locator() {
+    var_constexpr size_t mem_words = platform_x86_64::count_mem_words<Tn...>();
+    return arg_locator<0,0>( mem_words, 0 );
+}
 
 
 #endif // PLATFORM_X86_64_H
