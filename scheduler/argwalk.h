@@ -673,15 +673,28 @@ static inline bool arg_apply_stored_ufn( Fn & fn, size_t nargs,
 // Allows building all kinds of functors to build callee-specific functions
 // that access all three of copied arguments, tags and real arguments.
 // ------------------------------------------------------------------------
-template<typename Fn, size_t argnum>
-static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restrict__ argp, char * __restrict__ tagp ) {
+template<typename Fn, typename AL>
+static inline bool
+arg_apply3_fnr( Fn & fn, AL al,
+		char * __restrict__ argp, char * __restrict__ tagp ) {
     return true;
 }
 
-template<typename Fn, size_t argnum, typename T, typename... Tn>
-static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restrict__ argp, char * __restrict__ tagp, T & a0, Tn & ... an ) {
-    return apply3_functor<Fn,T>( fn, argp+(*off)(argnum), tagp, a0 )
-	&& arg_apply3_fn<Fn,argnum+1,Tn...>( fn, off, argp, tagp+arg_stored_size<T>(), an... );
+template<typename Fn, typename AL, typename T, typename... Tn>
+static inline bool
+arg_apply3_fnr( Fn & fn, AL al,
+		char * __restrict__ argp, char * __restrict__ tagp,
+		T & a0, Tn & ... an ) {
+    typedef typename AL::template arg_locator_next<T>::type AL_next;
+    return apply3_functor<Fn,T>( fn, argp+al.template get<T>(), tagp, a0 )
+	&& arg_apply3_fnr<Fn,AL_next,Tn...>( fn, al.template step<T>(),
+					     argp, tagp+arg_stored_size<T>(),
+					     an... );
+}
+
+template<typename Fn, typename... Tn>
+static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restrict__ argp, char * __restrict__ tagp, Tn & ... an ) {
+    return arg_apply3_fnr( fn, arg_locator<0,0>(), argp, tagp, an... );
 }
 
 // ------------------------------------------------------------------------
@@ -692,21 +705,21 @@ static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restr
 // These functors step over a list of stack-stored arguments and a list
 // of stack-stored dep_tags.
 // ------------------------------------------------------------------------
-template<typename Fn, size_t argnum, typename T>
-static inline bool arg_apply_fnr( Fn & fn, size_t (*off)(size_t), char * __restrict__ a, char * __restrict__ s ) {
-    return apply_functor<Fn,T>( fn, a+(*off)(argnum), s );
+template<typename Fn, typename AL, typename T>
+static inline bool arg_apply_fnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
+    return apply_functor<Fn,T>( fn, a+al.template get<T>(), s );
 }
 
-template<typename Fn, size_t argnum, typename T, typename T1, typename... Tn>
-static inline bool arg_apply_fnr( Fn & fn, size_t (*off)(size_t), char * __restrict__ a, char * __restrict__ s ) {
-    return apply_functor<Fn,T>( fn, a+(*off)(argnum), s )
-	&& arg_apply_fnr<Fn,argnum+1,T1,Tn...>( fn, off, a, s+arg_stored_size<T>() );
+template<typename Fn, typename AL, typename T, typename T1, typename... Tn>
+static inline bool arg_apply_fnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
+    typedef typename AL::template arg_locator_next<T>::type AL_next;
+    return apply_functor<Fn,T>( fn, a+al.template get<T>(), s )
+	&& arg_apply_fnr<Fn,AL_next,T1,Tn...>( fn, al.template step<T>(), a, s+arg_stored_size<T>() );
 }
 
 template<typename Fn, typename... Tn>
 static inline bool arg_apply_fn( Fn & fn, char * __restrict__ a, char * __restrict__ s ) {
-    size_t (*off)(size_t) = &offset_of<Tn...>;
-    return arg_apply_fnr<Fn,0,Tn...>( fn, off, a, s );
+    return arg_apply_fnr<Fn,arg_locator<0,0>,Tn...>( fn, arg_locator<0,0>(), a, s );
 }
 
 // ------------------------------------------------------------------------
@@ -718,25 +731,25 @@ static inline bool arg_apply_fn( Fn & fn, char * __restrict__ a, char * __restri
 // These functors step over a list of stack-stored arguments and a list
 // of stack-stored dep_tags.
 // ------------------------------------------------------------------------
-template<typename Fn, size_t argnum, typename T>
-static inline bool arg_apply_ufnr( Fn & fn, size_t (*off)(size_t), char * __restrict__ a, char * __restrict__ s ) {
-    return apply_functor<Fn,T>( fn, a+(*off)(argnum), s );
+template<typename Fn, typename AL, typename T>
+static inline bool arg_apply_ufnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
+    return apply_functor<Fn,T>( fn, a+al.template get<T>(), s );
 }
 
-template<typename Fn, size_t argnum, typename T, typename T1, typename... Tn>
-static inline bool arg_apply_ufnr( Fn & fn, size_t (*off)(size_t), char * __restrict__ a, char * __restrict__ s ) {
-    if( apply_functor<Fn,T>( fn, a+(*off)(argnum), s ) ) {
-	if( arg_apply_ufnr<Fn,argnum+1,T1,Tn...>( fn, off, a, s+arg_stored_size<T>() ) )
+template<typename Fn, typename AL, typename T, typename T1, typename... Tn>
+static inline bool arg_apply_ufnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
+    if( apply_functor<Fn,T>( fn, a+al.template get<T>(), s ) ) {
+	typedef typename AL::template arg_locator_next<T>::type AL_next;
+	if( arg_apply_ufnr<Fn,AL_next,T1,Tn...>( fn, al.template step<T>(), a, s+arg_stored_size<T>() ) )
 	    return true;
-	apply_undo<Fn,T>( fn, a+(*off)(argnum), s );
+	apply_undo<Fn,T>( fn, a+al.template get<T>(), s );
     }
     return false;
 }
 
 template<typename Fn, typename... Tn>
 static inline bool arg_apply_ufn( Fn & fn, char * __restrict__ a, char * __restrict__ s ) {
-    size_t (*off)(size_t) = &offset_of<Tn...>;
-    return arg_apply_ufnr<Fn,0,Tn...>( fn, off, a, s );
+    return arg_apply_ufnr<Fn,arg_locator<0,0>,Tn...>( fn, arg_locator<0,0>(), a, s );
 }
 
 // ------------------------------------------------------------------------

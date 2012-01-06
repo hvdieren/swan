@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 #ifndef PLATFORM_X86_64_H
 #define PLATFORM_X86_64_H
 
@@ -298,18 +298,18 @@ get_value_from_regs() {
 template<typename T>
 fun_constexpr
 typename std::enable_if<!std::is_floating_point<T>::value, size_t>::type
-stored_arg_size();
+abi_arg_size();
 
 template<typename T>
 fun_constexpr
 typename std::enable_if<std::is_floating_point<T>::value, size_t>::type
-stored_arg_size();
+abi_arg_size();
 
 // Round natural size up to a multiple of 8
 template<typename T>
 fun_constexpr
 typename std::enable_if<!std::is_floating_point<T>::value, size_t>::type
-stored_arg_size() {
+abi_arg_size() {
     return (sizeof(T)+size_t(7)) & ~size_t(7);
 }
 
@@ -318,7 +318,7 @@ stored_arg_size() {
 template<typename T>
 fun_constexpr
 typename std::enable_if<std::is_floating_point<T>::value, size_t>::type
-stored_arg_size() {
+abi_arg_size() {
     return 16; // SSE class
 }
 
@@ -327,7 +327,7 @@ inline size_t arg_size() { return 0; }
 
 template<typename T, typename... Tn>
 inline size_t arg_size(T a0, Tn... an) {
-    return stored_arg_size<T>() + arg_size( an... );
+    return abi_arg_size<T>() + arg_size( an... );
 }
 
 template<typename... Tn>
@@ -636,10 +636,10 @@ fun_constexpr size_t count_mem_words() { return 0; }
 
 template<size_t ireg, size_t freg, typename T0, typename... Tn>
 fun_constexpr size_t count_mem_words() {
-    return ( arg_passing<ireg, freg, 0, T0>::in_reg ? 0 : stored_arg_size<T0>() )
+    return ( arg_passing<ireg, freg, 0, T0>::in_reg ? 0 : abi_arg_size<T0>() )
 	+ count_mem_words<ireg+arg_passing<ireg, freg, 0, T0>::ibump, freg+arg_passing<ireg, freg, 0, T0>::fbump, Tn...>();
     // typedef arg_passing<ireg, freg, 0, T0> arg_pass;
-    // return ( arg_pass::in_reg ? 0 : stored_arg_size<T0>() )
+    // return ( arg_pass::in_reg ? 0 : abi_arg_size<T0>() )
 	// + count_mem_words<ireg+arg_pass::ibump, freg+arg_pass::fbump, Tn...>();
 }
 
@@ -653,7 +653,7 @@ fun_constexpr size_t count_mem_words() {
 // Note: little-endian assumptions
 template<typename T>
 inline void copy( char *& tgt, T t ) {
-    size_t size = stored_arg_size<T>();
+    size_t size = abi_arg_size<T>();
     *reinterpret_cast<T *>(tgt) = t;
     tgt += size;
 }
@@ -775,7 +775,7 @@ static inline size_t offset_of2( size_t & reg_off, size_t & mem_off,
     typedef arg_passing<ireg, freg, 0, T0> arg_pass;
     if( argnum == 0 )
 	return arg_pass::in_reg ? reg_off : mem_off;
-    size_t size = stored_arg_size<T0>();
+    size_t size = abi_arg_size<T0>();
     if( arg_pass::in_reg )
 	reg_off += size;
     else
@@ -791,7 +791,8 @@ static inline size_t offset_of( size_t argnum ) {
     return offset_of2<0, 0, Tn...>( reg_off, mem_off, argnum );
 }
 
-};
+
+} // namespace x86_64
 
 //
 // Public interfaces
@@ -816,5 +817,37 @@ template<typename... Tn>
 static inline size_t offset_of( size_t argnum ) {
     return platform_x86_64::offset_of<Tn...>( argnum );
 }
+
+template<size_t ireg, size_t freg>
+struct arg_locator {
+    size_t reg_off, mem_off;
+
+    // TODO: create argument-less public constructor and
+    // with-argument private/friend constructor
+    arg_locator( size_t reg_off_ = 0, size_t mem_off_ = 0 )
+	: reg_off( reg_off_ ), mem_off( mem_off_ ) { }
+
+    template<typename T>
+    struct arg_locator_next {
+	typedef platform_x86_64::arg_passing<ireg, freg, 0, T> arg_pass;
+	typedef arg_locator<ireg+arg_pass::ibump, freg+arg_pass::fbump> type;
+    };
+
+    template<typename T>
+    typename arg_locator_next<T>::type
+    step() const {
+	var_constexpr size_t size = abi_arg_size<T>();
+	return arg_locator_next<T>::arg_pass::in_reg
+	    ? typename arg_locator_next<T>::type( reg_off+size, mem_off )
+	    : typename arg_locator_next<T>::type( reg_off, mem_off+size );
+    }
+
+    template<typename T>
+    size_t get() const {
+	typedef platform_x86_64::arg_passing<ireg, freg, 0, T> arg_pass;
+	return arg_pass::in_reg ? reg_off : mem_off;
+    }
+};
+
 
 #endif // PLATFORM_X86_64_H

@@ -1631,7 +1631,7 @@ static inline void arg_dgrab_fn( Task * fr, obj_dep_traits * odt, bool wakeup, T
 	gfn, nargs, args, tags, an... );
 #else
     size_t (*off)(size_t) = &offset_of<Tn...>;
-    arg_apply3_fn<dgrab_functor<MetaData, Task>,0,Tn...>(
+    arg_apply3_fn<dgrab_functor<MetaData, Task>,Tn...>(
 	gfn, off, args, tags, an... );
 #endif
     fr->stop_registration( wakeup );
