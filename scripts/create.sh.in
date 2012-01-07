@@ -198,7 +198,9 @@ create()
     shift 2
 
     local dir=$root_dir/$bench
-    mkdir $dir
+    if [ ! -d $dir ] ; then
+	mkdir $dir
+    fi
 
     save_cd $bench || return 0
     for tgt in $* ; do
