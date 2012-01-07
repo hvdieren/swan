@@ -47,5 +47,7 @@ libtime_us.a: pp_time_us.o
 	$(AR) crv libtime_us.a pp_time_us.o
 	$(RANLIB) $@
 
+getoptions.o: getoptions.c getoptions.h
+
 clean:
 	rm -f libtime_cy.a libtime_us.a *.o
