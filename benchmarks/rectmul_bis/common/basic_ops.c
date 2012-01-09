@@ -4,8 +4,8 @@ long long
 mult_add_block(block *A, block *B, block *R)
 #if ALGO == 0
 {
-    const double * pA = A[0];
-    const double * pB = B[0];
+    double * pA = A[0];
+    double * pB = B[0];
     double * pC = R[0];
 
  // using CBLAS
@@ -135,8 +135,8 @@ long long
 multiply_block(block *A, block *B, block *R)
 #if ALGO == 0
 {
-    const double * pA = A[0];
-    const double * pB = B[0];
+    double * pA = A[0];
+    double * pB = B[0];
     double * pC = R[0];
 
  // using CBLAS

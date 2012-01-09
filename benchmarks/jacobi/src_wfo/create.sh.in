@@ -3,7 +3,7 @@
 top_srcdir=@top_srcdir@
 top_builddir=@top_builddir@
 
-target_name_ubench()
+target_name_jacobi()
 {
     local file=$1
     local tgt=$2
@@ -14,8 +14,6 @@ target_name_ubench()
 
 . $top_builddir/scripts/create.sh
 
-( for tg in 1 8 9 10 12 ; do
-	for d in 1 N1 N2 N5 N10 N20 N50 N100 N200 ; do
-	    echo "ubench data_dep$d wf-$tg"
-	done
+( for tg in 1 8 9 10 11 12 ; do
+	echo "jacobi J_jacobi3 wfo-$tg"
 	done ) | create_benchmarks exec 

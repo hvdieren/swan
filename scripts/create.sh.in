@@ -74,14 +74,14 @@ get_options()
 
     case "$tgt" in
     smpss|cilk++)
-	echo -static
+	echo "-static $OPT"
 	;;
     wf*|wfo*|wfod*)
 	local tg=$(echo "$tgt" | cut -d- -f2)
-	echo "-O4 -DMODE=1 -DOBJECT_TASKGRAPH=$tg"
+	echo "-O4 -DMODE=1 -DOBJECT_TASKGRAPH=$tg $OPT"
 	;;
     c)
-	echo "-O4 -static"
+	echo "-O4 -static $OPT"
 	;;
     esac
 }
@@ -108,7 +108,8 @@ create_target_bzip2f()
     local tgt=$2
     local dir=$3
 
-    save_cd src_$tgt || return 0
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    generic_compile "$maketgt" "`get_options $tgt`" "$tgt"
     local opt=`get_options $tgt`
     case $tgt in
     cilk++)
@@ -176,20 +177,21 @@ postprocess_crc32()
     done
 }
 
-create_target_rectmul_bis()
-{
-    local maketgt=$1
-    local tgt=$2
-    local dir=$3
-
-    save_cd src_$tgt || return 0
-    local opt=`get_options $tgt`
-    for block in 16 32 64 ; do
-	generic_compile "$maketgt" "$opt -DALGO=0 -DBLOCK_EDGE=$block" "$tgt"
-	cp $maketgt $dir/${maketgt}_${tgt}_a0_b$block
-    done
-    save_cd ..
-}
+#create_target_rectmul_bis()
+#{
+#    local maketgt=$1
+#    local tgt=$2
+#    local dir=$3
+#
+#    local tg=$(echo src_$tgt | cut -d- -f2)
+#    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+#    local opt=`get_options $tgt`
+#    for block in 16 32 64 ; do
+#	generic_compile "$maketgt" "$opt -DALGO=1 -DBLOCK_EDGE=$block" "$tgt"
+#	cp $maketgt $dir/${maketgt}_$(taskgraph_name $tg)_a1_b$block
+#    done
+#    save_cd ..
+#}
 
 create()
 {

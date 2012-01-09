@@ -42,6 +42,12 @@ static const char *ident __attribute__((__unused__))
 #include "cblas.h"
 #endif
 
+#define JIK 0
+#define KJI 1
+#ifndef LOOP_ORDER
+#define LOOP_ORDER JIK
+#endif
+
 #ifndef BLOCK_EDGE
 #define BLOCK_EDGE 16
 #endif
@@ -207,14 +213,23 @@ multiply_matrix_ooo(block *A, long oa, block *B, long ob, long x, long y, long z
     else {
 	chandle<long long> flops1, flops2;
 	long long sflops = 0ULL;
-	for( unsigned j=0; j < y; ++j ) {
-	    for( unsigned i=0; i < x; ++i ) {
-		for( unsigned k=0; k < z; ++k ) {
+#if LOOP_ORDER == JIK
+	for( unsigned j=0; j < y; ++j )
+	    for( unsigned i=0; i < x; ++i )
+		for( unsigned k=0; k < z; ++k )
 		    spawn(mult_add_block_dep, (A+i*oa+j),
 			  (B+j*ob+k), (binout)*(R+i*or_+k));
-		}
-	    }
-	}
+#else
+#if LOOP_ORDER == KJI
+	for( unsigned k=0; k < z; ++k )
+	    for( unsigned j=0; j < y; ++j )
+		for( unsigned i=0; i < x; ++i )
+		    spawn(mult_add_block_dep, (A+i*oa+j),
+			  (B+j*ob+k), (binout)*(R+i*or_+k));
+#else
+#error Unknown LOOP_ORDER
+#endif
+#endif
 	ssync();
 	return sflops;
     }
