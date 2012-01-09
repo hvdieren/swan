@@ -275,7 +275,7 @@ static inline bool arg_acquire_fn( task_data_t & td ) {
     char * tags = td.get_tags_ptr();
     size_t nargs = td.get_num_args();
     if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
+	finalize_functor<MetaData> ffn( td );
 	arg_apply_stored_ufn( ffn, nargs, args, tags );
 	privatize_functor<MetaData> pfn;
 	arg_apply_stored_ufn( pfn, nargs, args, tags );
@@ -290,7 +290,7 @@ static inline bool arg_acquire_fn( task_data_t & td ) {
     char * args = td.get_args_ptr();
     char * tags = td.get_tags_ptr();
     if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
+	finalize_functor<MetaData> ffn( td );
 	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
 	privatize_functor<MetaData> pfn;
 	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
