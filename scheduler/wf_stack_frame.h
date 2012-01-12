@@ -372,7 +372,7 @@ protected:
     dbg_continuation dbgc;
 
     pad_multiple<8, 5*sizeof(void*)+sizeof(frame_state_t)+4*sizeof(bool)
-		 + sizeof(intptr_t) + sizeof(picptr_t)
+		 + sizeof(intptr_t) + (sizeof(picptr_t)<8?8:sizeof(picptr_t))
 		 + inherited_size<obj::stack_frame_base_obj>::value
 		 + sizeof(dbg_continuation) > pad0;
 
