@@ -1,0 +1,29 @@
+#!/bin/bash
+
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+
+create_target_rectmul_bis()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    local tg=$(echo src_$tgt | cut -d- -f2)
+    local bs=$(echo src_$tgt | cut -d- -f3)
+    local nb=$(echo src_$tgt | cut -d- -f4)
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    local opt=`get_options $tgt`
+    generic_compile "$maketgt" "$opt -DBS=$bs -DND=$nb" "$tgt"
+    cp $maketgt $dir/${maketgt}_$(taskgraph_name $tg)_${bs}_${nb}
+    save_cd ..
+}
+
+
+. $top_builddir/scripts/create.sh
+
+( for bs in 32 ; do
+    for nb in 100 ; do
+	echo "sparse_lu sparse_lu wfo-$tg-$bs-$nb"
+    done
+    done ) | create_benchmarks exec 

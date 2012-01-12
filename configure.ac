@@ -73,6 +73,8 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/rectmul_bis/src_wfo/create.sh
 		 benchmarks/cholesky2/src_wfo/Makefile
 		 benchmarks/cholesky2/src_wfo/create.sh
+		 benchmarks/sparse_lu/src_wfo/Makefile
+		 benchmarks/sparse_lu/src_wfo/create.sh
                  scripts/create.sh
                  util/Makefile
                  util/Makefile.use_us
