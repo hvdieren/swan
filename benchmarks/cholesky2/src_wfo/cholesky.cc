@@ -82,18 +82,18 @@ void smpSs_sgemm_tile(bin Adep, bin Bdep, binout Cdep, unsigned long NB)
 //           &DONE,           /* BETA           */
 //           C, &NB);         /* C, LDC         */
 
-    const float * A = (block_t)Adep;
-    const float * B = (block_t)Bdep;
+    float * A = (block_t)Adep;
+    float * B = (block_t)Bdep;
     float * C = (block_t)Cdep;
 
  // using CBLAS
     leaf_call(cblas_sgemm,
         CblasColMajor,
         CblasNoTrans, CblasTrans,
-	      (int)NB, (int)NB, (int)NB,
-	      (float)-1.0, A, (int)NB,
+	      (blasint)NB, (blasint)NB, (blasint)NB,
+	      (float)-1.0, A, (blasint)NB,
               B, (int)NB,
-	      (float)1.0, C, (int)NB);
+	      (float)1.0, C, (blasint)NB);
 
 
 }
@@ -101,8 +101,8 @@ void smpSs_sgemm_tile(bin Adep, bin Bdep, binout Cdep, unsigned long NB)
 //#pragma css task input(T[NB][NB], NB) inout(B[NB][NB])
 void smpSs_strsm_tile(bin Tdep, binout Bdep, unsigned long NB)
 {
-unsigned char LO='L', TR='T', NU='N', RI='R';
-float DONE=1.0;
+//unsigned char LO='L', TR='T', NU='N', RI='R';
+//float DONE=1.0;
 
 //  strsm_2(&RI, &LO, &TR, &NU,  /* SIDE, UPLO, TRANSA, DIAG */
 //          &NB, &NB,             /* M, N                     */
@@ -110,24 +110,24 @@ float DONE=1.0;
 //         T, &NB,               /* A, LDA                   */
 //         B, &NB);              /* B, LDB                   */
 
-const float * T = (block_t)Tdep;
+float * T = (block_t)Tdep;
 float * B = (block_t)Bdep;
 
  // using CBLAS
 leaf_call(cblas_strsm,
         CblasColMajor,
         CblasRight, CblasLower, CblasTrans, CblasNonUnit,
-	  (int)NB, (int)NB,
-	  (float)1.0, T, (int)NB,
-             B, (int)NB);
+	  (blasint)NB, (blasint)NB,
+	  (float)1.0, T, (blasint)NB,
+             B, (blasint)NB);
 
 }
 
 //#pragma css task input(A[NB][NB], NB) inout(C[NB][NB])
 void smpSs_ssyrk_tile( bin Adep, binout Cdep, unsigned long NB)
 {
-unsigned char LO='L', NT='N';
-float DONE=1.0, DMONE=-1.0;
+//unsigned char LO='L', NT='N';
+//float DONE=1.0, DMONE=-1.0;
 
 //    ssyrk_2(&LO, &NT,          /* UPLO, TRANSA */
 //           &NB, &NB,           /* M, N         */
@@ -136,16 +136,16 @@ float DONE=1.0, DMONE=-1.0;
 //           &DONE,              /* BETA         */
 //           C, &NB);            /* C, LDC       */
 
-const float * A = (block_t)Adep;
+float * A = (block_t)Adep;
 float * C = (block_t)Cdep;
 
  // using CBLAS
 leaf_call(cblas_ssyrk,
         CblasColMajor,
         CblasLower,CblasNoTrans,
-	    (int)NB, (int)NB,
-	  (float)-1.0, A, (int)NB,
-	  (float)1.0, C, (int)NB);
+	    (blasint)NB, (blasint)NB,
+	  (float)-1.0, A, (blasint)NB,
+	  (float)1.0, C, (blasint)NB);
 
 
 }
@@ -208,8 +208,8 @@ main(int argc, char *argv[])
 {
   // local vars
  
-unsigned char LO='L';
-int  INFO;
+// unsigned char LO='L';
+// int  INFO;
  
   pp_time_t timer;
   unsigned long elapsed;
@@ -222,7 +222,7 @@ int  INFO;
 
   run(compute, &timer, NB, (long)DIM, A);
 
-int nn=N;
+// int nn=N;
 // compute with library
   
 //  spotrf(&LO, &nn, Alin, &nn, &INFO);
@@ -266,8 +266,8 @@ void fill_random(float *Alin, int NN)
 
 static void init(int argc, char **argv, unsigned long *NB_p, unsigned long *N_p, unsigned long *DIM_p)
 {
-  long ISEED[4] = {0,0,0,1};
-  long IONE=1;
+  // long ISEED[4] = {0,0,0,1};
+  // long IONE=1;
   long DIM;
   long NB;
 
