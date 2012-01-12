@@ -31,31 +31,14 @@ repeat=10
 #    done
 #done
 
-flags="-x 4096 -y 4096 -z 4096"
-
 var=NUM_THREADS
-for lo in jik ; do # kji
-    for bs in 32 64 16 ; do
-	for tg in tkt cs cg ecg gtkt ; do
-	    for nproc in 1 `seq 8 8 $THREADS` ; do
-		for run in `seq $repeat` ; do
-		    prog=rectmul_${lo}_${tg}_a1_b${bs}
-		    run $prog "$flags" "$input" $var $nproc
-		done
+for tg in tkt cs cg ecg gtkt ; do
+    prog=cholesky_$tg
+    for nproc in `seq 1 $THREADS` ; do
+	for run in `seq $repeat` ; do
+	    for flags in "32 256" "64 128" "128 64" "256 32" "512 16" ; do
+		run $prog "$flags" "$input" $var $nproc
 	    done
 	done
     done
 done
-
-#for lo in jik ; do
-#    for bs in 32 ; do
-#	for tg in tkt cs cg ecg gtkt ; do
-#	    for nproc in $THREADS ; do
-#		for run in `seq $repeat` ; do
-#		    prog=rectmul_${lo}_${tg}_a1_b${bs}
-#		    run $prog "$flags" "$input" $var $nproc
-#		done
-#	    done
-#	done
-#    done
-#done
