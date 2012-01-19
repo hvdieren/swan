@@ -33,8 +33,13 @@
 #include "wf_interface.h"
 #include "pp_time.h"
 
+#ifndef NB
 #define NB 32
+#endif
+#ifndef B
 #define B 128
+#endif
+
 #define FALSE (0)
 #define TRUE (1)
 

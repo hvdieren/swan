@@ -9,11 +9,16 @@ target_name_jacobi()
     local tgt=$2
 
     local tg=$(echo "$tgt" | cut -d- -f2)
-    echo ${file}_$(taskgraph_name $tg)
+    local B=$(echo "$tgt" | cut -d- -f3)
+    local NB=$(echo "$tgt" | cut -d- -f4)
+    echo ${file}_$(taskgraph_name $tg)_${B}_${NB}
 }
 
 . $top_builddir/scripts/create.sh
 
 ( for tg in 1 9 10 11 12 ; do
-	echo "jacobi J_jacobi4 wfo-$tg"
+	for B in 32 64 128 256 ; do
+	    NB=$[8192/$B]
+	    echo "jacobi J_jacobi4 wfo-$tg-$B-$NB"
+	done
 	done ) | create_benchmarks exec 
