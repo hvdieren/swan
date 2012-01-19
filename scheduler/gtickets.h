@@ -152,7 +152,7 @@ public:
 	if( tag == head ) {
 	    ctr_t max = tail - head;
 	    ctr_t i;
-	    for( i=0; i != max; ++i ) {
+	    for( i=1; i != max; ++i ) {
 		if( !store[head+i] )
 		    break;
 	    }
