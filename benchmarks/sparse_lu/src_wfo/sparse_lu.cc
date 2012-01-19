@@ -108,7 +108,7 @@ void  print_pointer_structure(char *s, p_block_t A[NB][NB])
    for (ii = 0; ii < NB; ii++) {
      for (jj = 0; jj < NB; jj++) {
         p =  A[ii][jj];
-        if (p!=NULL) printf ("%x ",p);
+        if (p!=NULL) printf ("%p ",p);
         else printf ("    *    ");
      }
      printf ("\n");
@@ -134,13 +134,13 @@ void  print_structure(char *s, p_block_t A[NB][NB])
 
 void print_mat (char *s, p_block_t mat[NB][NB])
 {
-   int ii, jj, i, j, maxNB=NB;
-   p_block_t p;
-
    if (NB<14) print_pointer_structure (s, mat);
    else print_structure (s, mat);
 
 #ifdef PRINT_VALUES
+   int ii, jj, i, j, maxNB=NB;
+   p_block_t p;
+
    printf ("values of matrix %s\n", s);
    if (NB*BS>FLOATS_PER_LINE) {
        maxNB=FLOATS_PER_LINE/BS;
@@ -250,7 +250,7 @@ void compare_mat (p_block_t X[NB][NB], p_block_t Y[NB][NB])
 
 /* Alternative to put wait on */
 #pragma css finish 
-   printf ("\nComparison of matrices at %x and %x\n",X,Y);
+   printf ("\nComparison of matrices at %p and %p\n",X,Y);
    for (ii = 0; ii < NB; ii++) 
      for (jj = 0; jj < NB; jj++) 
 //#pragma css wait on (&sq_error[ii][jj])
@@ -347,7 +347,7 @@ void split_block (bin Adep, bout Ldep, bout Udep)
     block_t A = (block_t)Adep;
     block_t L = (block_t)Ldep;
     block_t U = (block_t)Udep;
-  int i, j, k;
+  int i, j;
 
   for (i=0; i<BS; i++)
      for (j=0; j<BS; j++) {
