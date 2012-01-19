@@ -333,7 +333,7 @@ private:
     template<typename MetaData>
     friend class obj_version;
 
-    obj_payload() : refcnt( 1 ) {
+    obj_payload( int refcnt_init=1 ) : refcnt( refcnt_init ) {
 	// std::cerr << "Create obj_payload " << this << "\n";
     }
     ~obj_payload() {
@@ -343,10 +343,18 @@ private:
     }
 
 public:
+    // Dynamic memory allocation create function
     static obj_payload *
     create( size_t n ) {
 	char * p = new char[sizeof(obj_payload)+n];
 	return new (p) obj_payload();
+    }
+
+    // In-place create function for unversioned objects
+    static constexpr size_t size( size_t n ) { return sizeof(obj_payload)+n; }
+    static obj_payload *
+    create( char * p ) {
+	return new (p) obj_payload(2); // refcnt initialized to 2 to avoid free
     }
 
     // First byte after payload, allocated in one go with refcnt
@@ -725,6 +733,13 @@ private:
 	payload = obj_payload::create( sz );
 	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
     }
+    // First-create constructor for unversioned objects
+    obj_version( size_t sz, char * payload_ptr,
+		 obj_instance<metadata_t> * obj_ )
+	: refcnt( 1 ), size( sz ), obj( obj_ ) {
+	payload = obj_payload::create( payload_ptr );
+	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
+    }
     // Constructor for nesting
     obj_version( size_t sz, obj_instance<metadata_t> * obj_,
 		 obj_payload * payload_ )
@@ -947,10 +962,11 @@ template<typename MetaData, size_t DataSize>
 class obj_unv_instance : public obj_version<MetaData> {
     typedef MetaData metadata_t;
 
-    char data[DataSize];
+    char data[obj_payload::size(DataSize)];
 public:
     obj_unv_instance()
-	: obj_version<metadata_t>( DataSize, (obj_instance<metadata_t> *)0 ) { }
+	: obj_version<metadata_t>( DataSize, data,
+				   (obj_instance<metadata_t> *)0 ) { }
 
     const obj_version<metadata_t> * get_version() const { return this; }
     obj_version<metadata_t> * get_version() { return this; }
