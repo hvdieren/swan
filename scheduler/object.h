@@ -726,11 +726,11 @@ private:
     obj_instance<metadata_t> * obj; // pointer to the object for renaming purposes
     reduction_md<metadata_t> reduc; // hook for reduction-specific information
 
-    template<typename T, typename MetaData_, obj_modifiers_t OMod>
-    friend class versioned_base;
+    template<typename T, obj_modifiers_t OMod>
+    friend class object_t; // versioned;
 
-    template<typename T, typename MetaData_, obj_modifiers_t OMod>
-    friend class unversioned_base;
+    template<typename T, obj_modifiers_t OMod>
+    friend class unversioned;
 
     template<typename MetaData_, size_t DataSize>
     friend class obj_unv_instance; // for constructor
@@ -825,7 +825,8 @@ private:
     // but not on Intel (Core i7).
     void del_ref_delete() __attribute__((noinline));
 
-protected:
+// protected:
+public:
     void nonfreeing_del_ref() {
 	assert( refcnt > 0 );
 	__sync_fetch_and_add( &refcnt, -1 ); // atomic!
@@ -1036,112 +1037,6 @@ public:
 // Intermediate definitions of objects used, making it easy to instantiate
 // for different programming models.
 // ------------------------------------------------------------------------
-// versioned_base: object declaration-style interface to versioned objects.
-template<typename T, typename MetaData, obj_modifiers_t OMod>
-class versioned_base : public obj_access_traits<T, obj_instance<MetaData>, versioned_base<T, MetaData, OMod> > {
-private:
-    obj_instance<MetaData> * copy_back;
-
-protected:
-    typedef obj_access_traits<T, obj_instance<MetaData>, versioned_base<T, MetaData, OMod> > OAT;
-
-public:
-    versioned_base(size_t n = 1) {
-	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
-	this->version = obj_version<MetaData>::create(n*size_struct<T>::value, this);
-    }
-    versioned_base( const versioned_base<T, MetaData, OMod> &o ) { // needed?
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	o.version->add_ref();
-	this->version = o.version;
-    }
-    // For nesting. Nesting is only allowed if the obj_recast flag is set,
-    // causing the destructor to copy back the contents of the data.
-    versioned_base( indep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = 0;
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-    versioned_base( outdep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = o.get_object();
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-    versioned_base( inoutdep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = o.get_object();
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-
-    ~versioned_base() {
-	// If nesting applied, we do a simple flat byte copy of the data.
-	if( OMod & obj_recast ) { // resolves to a compile-time constant
-	    if( copy_back )
-		obj_version<MetaData>::unnest( this, copy_back );
-	}
-
-	// Remove keep-alive reference
-	this->version->del_ref();
-    }
-
-    const versioned_base<T, MetaData, OMod> &
-    operator = ( const versioned_base<T, MetaData, OMod> & o ) {
-	o.version->add_ref();
-	this->version->del_ref();
-	this->version = o.version;
-	return *this;
-    }
-
-    const versioned_base<T, MetaData, OMod> & operator = ( const T & t ) {
-	*OAT::get_ptr() = t; return *this;
-    }
-
-    const versioned_base<T, MetaData, OMod> & operator += ( const T & t ) {
-	*OAT::get_ptr() += t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator -= ( const T & t ) {
-	*OAT::get_ptr() -= t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator *= ( const T & t ) {
-	*OAT::get_ptr() *= t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator /= ( const T & t ) {
-	*OAT::get_ptr() /= t; return *this;
-    }
-
-    // For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-};
-
-// unversioned: object declaration-style interface to unversioned objects.
-template<typename T, typename MetaData, obj_modifiers_t OMod>
-class unversioned_base 
-    : public obj_access_traits<T,
-			       obj_unv_instance<MetaData,
-						size_struct<T>::value>,
-			       unversioned_base<T, MetaData, OMod> > {
-protected:
-    typedef obj_access_traits<T,
-			      obj_unv_instance<MetaData, size_struct<T>::value>,
-			      unversioned_base<T, MetaData, OMod> > OAT;
-
-public:
-    unversioned_base() { }
-    ~unversioned_base() {
-	this->get_version()->nonfreeing_del_ref();
-    }
-
-    const unversioned_base<T, MetaData, OMod> &
-    operator = ( const unversioned_base<T, MetaData, OMod> & o )  = delete;
-
-    const unversioned_base<T, MetaData, OMod> & operator = ( const T & t ) {
-	*OAT::get_ptr() = t; return *this;
-    }
-
-    // For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-};
-
 // ------------------------------------------------------------------------
 // Some debugging support
 // ------------------------------------------------------------------------
@@ -1908,124 +1803,168 @@ class truedep_tags { };
 // ------------------------------------------------------------------------
 // The actual objects used in the programming model
 // ------------------------------------------------------------------------
-/* Should be as simple as, the following, but changes syntax...
-template<typename T>
-struct object_t {
-    typedef versioned_base<T, obj_metadata> type;
-};
-*/
-
+// object_t: object declaration-style interface to versioned objects.
 template<typename T, obj_modifiers_t OMod = obj_none>
-class object_t : public versioned_base<T, obj_metadata, OMod> {
-public:
-    typedef versioned_base<T, obj_metadata, OMod> parent_ty;
-    typedef object_t<T, OMod> self_ty;
+class object_t
+    : public obj_access_traits<T, obj_instance<obj_metadata>,
+			       object_t<T, OMod> > {
+protected:
+    typedef obj_access_traits<T, obj_instance<obj_metadata>,
+			      object_t<T, OMod> > OAT;
+
+private:
+    obj_instance<obj_metadata> * copy_back;
 
 public:
-    explicit object_t(size_t n = 1) : versioned_base<T,obj_metadata, OMod>( n ) { }
-    // object_t( const object_t<T, OMod> &o ) : versioned_base<T,obj_metadata, OMod>( o ) { } // needed?
-    // For nesting
-    object_t( outdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
-    object_t( indep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
-    object_t( inoutdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    explicit object_t(size_t n = 1) {
+	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
+	this->version = obj_version<obj_metadata>::create(n*size_struct<T>::value, this);
+    }
+#if 0 // needed?
+    object_t( const object_t<T, OMod> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	o.version->add_ref();
+	this->version = o.version;
+    }
+#endif
+
+    // For nesting. Nesting is only allowed if the obj_recast flag is set,
+    // causing the destructor to copy back the contents of the data.
+    object_t( indep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = 0;
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
+    object_t( outdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
+    object_t( inoutdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #if OBJECT_COMMUTATIVITY
-    object_t( cinoutdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    object_t( cinoutdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #endif
 #if OBJECT_REDUCTION
-    object_t( reduction<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    object_t( reduction<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #endif
 
-    const self_ty & operator = ( const self_ty & o ) {
-	parent_ty::operator = ( o );
-	return *this;
+    ~object_t() {
+	// If nesting applied, we do a simple flat byte copy of the data.
+	if( OMod & obj_recast ) { // resolves to a compile-time constant
+	    if( copy_back )
+		obj_version<obj_metadata>::unnest( this, copy_back );
+	}
+
+	// Remove keep-alive reference
+	this->version->del_ref();
     }
 
-    const self_ty & operator = ( const T & t ) {
-	parent_ty::operator = ( t );
-	return *this;
+    const object_t<T, OMod> & operator = ( const T & t ) {
+	*OAT::get_ptr() = t; return *this;
     }
 
-    const self_ty & operator += ( const T & t ) {
-	parent_ty::operator += ( t );
-	return *this;
+    const object_t<T, OMod> & operator += ( const T & t ) {
+	*OAT::get_ptr() += t; return *this;
     }
-    const self_ty & operator -= ( const T & t ) {
-	parent_ty::operator -= ( t );
-	return *this;
+    const object_t<T, OMod> & operator -= ( const T & t ) {
+	*OAT::get_ptr() -= t; return *this;
     }
-    const self_ty & operator *= ( const T & t ) {
-	parent_ty::operator *= ( t );
-	return *this;
+    const object_t<T, OMod> & operator *= ( const T & t ) {
+	*OAT::get_ptr() *= t; return *this;
     }
-    const self_ty & operator /= ( const T & t ) {
-	parent_ty::operator /= ( t );
-	return *this;
+    const object_t<T, OMod> & operator /= ( const T & t ) {
+	*OAT::get_ptr() /= t; return *this;
     }
 
-    inline operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
-    inline operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
-    inline operator inoutdep<T> () const { return create_dep_ty< inoutdep<T> >(); }
+    operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
+    operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
+    operator inoutdep<T> () const { return create_dep_ty< inoutdep<T> >(); }
 #if OBJECT_COMMUTATIVITY
-    inline operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
+    operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
 #endif
 #if OBJECT_REDUCTION
     template<typename M>
-    inline operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
+    operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
 #endif
-    inline operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
+    operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
 
-    // Do we need this?
-    // template<typename U>
-    // inline operator object_t<U> () const {
-	// return *reinterpret_cast<object_t<U>*>(const_cast<object_t<T>*>(this));
-    // }
+    const object_t<T, OMod> &
+    operator = ( const object_t<T, OMod> & o ) {
+	o.version->add_ref();
+	this->version->del_ref();
+	this->version = o.version;
+	return *this;
+    }
 
 private:
     template<typename DepTy>
     DepTy create_dep_ty() const {
-	return parent_ty::OAT::template create_dep_ty< DepTy >();
+	return OAT::template create_dep_ty< DepTy >();
     }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
+// unversioned: object declaration-style interface to unversioned objects.
 template<typename T, obj_modifiers_t OMod = obj_none>
-class unversioned : public unversioned_base<T, obj_metadata, OMod> {
-public:
-    typedef unversioned_base<T, obj_metadata, OMod> parent_ty;
+class unversioned
+    : public obj_access_traits<T,
+			       obj_unv_instance<obj_metadata,
+						size_struct<T>::value>,
+			       unversioned<T, OMod> > {
+protected:
+    typedef obj_access_traits<T,
+			      obj_unv_instance<obj_metadata, size_struct<T>::value>,
+			      unversioned<T, OMod> > OAT;
     typedef unversioned<T, OMod> self_ty;
 
 public:
     unversioned() { }
+    ~unversioned() {
+	this->get_version()->nonfreeing_del_ref();
+    }
 
     const self_ty & operator = ( const self_ty & o ) = delete;
 
     const self_ty & operator = ( const T & t ) {
-	parent_ty::operator = ( t );
-	return *this;
+	*OAT::get_ptr() = t; return *this;
     }
 
-    inline operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
-    inline operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
-    inline operator inoutdep<T> () const   { return create_dep_ty< inoutdep<T> >();   }
+    operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
+    operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
+    operator inoutdep<T> () const   { return create_dep_ty< inoutdep<T> >();   }
 #if OBJECT_COMMUTATIVITY
-    inline operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
+    operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
 #endif
 #if OBJECT_REDUCTION
     template<typename M>
-    inline operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
+    operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
 #endif
-    inline operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
-
-    // Do we need this?
-    // template<typename U>
-    // inline operator unversioned<U> () const {
-	// return *reinterpret_cast<unversioned<U>*>(const_cast<unversioned<T>*>(this));
-    // }
+    operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
 
 private:
     template<typename DepTy>
     DepTy create_dep_ty() const {
-	return parent_ty::OAT::template create_dep_ty< DepTy >();
+	return OAT::template create_dep_ty< DepTy >();
     }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 // ------------------------------------------------------------------------
