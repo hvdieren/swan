@@ -1022,6 +1022,8 @@ struct dep_traits<ecgtg_metadata, task_metadata, reduction> {
 #endif
 
 typedef ecgtg_metadata obj_metadata;
+typedef ecgtg_metadata token_metadata;
+
 
 } // end of namespace obj
 
