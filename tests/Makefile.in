@@ -21,7 +21,9 @@ all: examples
 
 include $(top_builddir)/scheduler/Makefile.flags
 
-CXXFLAGS += -I$(top_srcdir)/scheduler
+CXXFLAGS += -I$(top_srcdir)/scheduler -I$(top_srcdir)/util
+LDFLAGS += -L$(top_builddir)/util
+LDLIBS += -ltime_marss
 
 examples: $(EXAMPLES)
 
@@ -30,8 +32,8 @@ $(patsubst %,%.o,$(EXAMPLES)): $(patsubst %,$(top_srcdir)/scheduler/%,$(HDRS))
 
 # Generic rule to build an example program
 %: %.o
-	$(CXX) $(LDFLAGS) $(LDLIBS) $(top_builddir)/scheduler/libschedulers.a $< -o $*
+	$(CXX) $(LDFLAGS) $< $(LDLIBS) $(top_builddir)/scheduler/libschedulers.a -o $*
 
 # Cleanup
 clean:
-	rm -f $(EXAMPLES)
+	rm -f $(EXAMPLES) $(patsubst %,%.o,$(EXAMPLES))
