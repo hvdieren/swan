@@ -30,6 +30,7 @@
 #include <cassert>
 #include <type_traits>
 #include <algorithm>
+#include <tuple>
 
 #define __vasm__ __asm__ __volatile__
 
@@ -368,16 +369,23 @@ struct is_integer_class
 // members of the struct, such that we can check for trivial structs and
 // what registers they fit in. Currently an interface for one-member structs
 // is implemented.
-template<size_t ireg, size_t freg, size_t loff, typename T,
-	 typename Enable = void>
-struct arg_passing {
+template<size_t ireg, size_t freg, size_t loff>
+struct arg_passing_by_mem {
     static const bool in_reg = false;
     static const size_t ibump = 0;
     static const size_t fbump = 0;
     static const size_t lbump = 0;
 
-    static inline void load() __attribute__((always_inline)) { }
+    static const size_t inext = ireg;
+    static const size_t fnext = freg;
+    static const size_t lnext = loff;
 
+    static inline void load() __attribute__((always_inline)) { }
+};
+
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename Enable = void>
+struct arg_passing : arg_passing_by_mem<ireg,freg,loff> {
     // In general, passing structs directly is not allowed!
     static_assert( !std::is_class<T>::value,
 		   "x86-64 calling convention: Should not pass structs "
@@ -398,6 +406,10 @@ struct arg_passing {
 	static const size_t ibump = 1;					\
 	static const size_t fbump = 0;					\
 	static const size_t lbump = 8;					\
+									\
+	static const size_t inext = nth+ibump;				\
+	static const size_t fnext = freg+fbump;				\
+	static const size_t lnext = loff+lbump;				\
 									\
 	static inline void load() __attribute__((always_inline)) {	\
 	    __vasm__ ( "mov %c0(%%rax), %" name " \n\t" : : "i"(loff) : ); \
@@ -423,6 +435,10 @@ X86_64_ARG_INT_CASE(5,"%r9" );
 	static const size_t fbump = 1;					\
 	static const size_t lbump = 16;					\
 									\
+	static const size_t inext = ireg+ibump;				\
+	static const size_t fnext = nth+fbump;				\
+	static const size_t lnext = loff+lbump;				\
+									\
 	static inline void load() __attribute__((always_inline)) {	\
 	    __vasm__ ( "movsd %c0(%%rax), %" name " \n\t" : : "i"(loff) : ); \
 	}								\
@@ -438,9 +454,299 @@ X86_64_ARG_SSE_CASE(5,"%xmm5");
 X86_64_ARG_SSE_CASE(6,"%xmm6");
 X86_64_ARG_SSE_CASE(7,"%xmm7");
 
-// Some special cases of structs (incomplete - allows only one field
-// and assumes that this field is in the integer class)
+// ----------------------------------------------------------------------
+// General machinery to allocate structs to register arguments
+// ----------------------------------------------------------------------
+enum arg_pass_class {
+    ap_none,
+    ap_int,
+    ap_sse,
+    // ap_sseup, -- currently not supported
+    // ap_x87, -- currently not supported
+    // ap_x87up, -- currently not supported
+    // ap_complex_x87, -- currently not supported
+    ap_mem
+};
+
+struct ap_none_ty { };
+struct ap_int_ty { };
+struct ap_sse_ty { };
+struct ap_mem_ty { };
+
+// Internal state (3-valued): do we accept to take the next field in the
+// current 8-byte? Eightbytes are constructed by gathering successive
+// fields of a structure, but alignment constraints must be respected.
+enum ap_accept {
+    ap_reject,
+    ap_continue,
+    ap_full
+};
+
+template<arg_pass_class ap, typename Enable = void>
+struct ap_type_of {
+    typedef ap_none_ty type;
+};
+
+template<arg_pass_class ap>
+struct ap_type_of<ap,typename std::enable_if<ap == ap_int>::type> {
+    typedef ap_int_ty type;
+};
+
+template<arg_pass_class ap>
+struct ap_type_of<ap,typename std::enable_if<ap == ap_sse>::type> {
+    typedef ap_sse_ty type;
+};
+
+template<arg_pass_class ap>
+struct ap_type_of<ap,typename std::enable_if<ap == ap_mem>::type> {
+    typedef ap_mem_ty type;
+};
+
+// Classify a single field of an aggregate. Aggregate fields not yet supported.
+// default
+template<typename T, typename Enable = void>
+struct APS_classify {
+    // static const arg_pass_class value = ap_none; // following ABI reference
+    // This way aggregate fields force memory allocation
+    static const arg_pass_class value = ap_mem;
+};
+
+template<typename T>
+struct APS_classify<T,
+		    typename std::enable_if<is_integer_class<T>
+					    ::value>::type > {
+    static const arg_pass_class value = ap_int;
+};
+
+template<typename T>
+struct APS_classify<T,
+		    typename std::enable_if<std::is_floating_point<T>
+					    ::value>::type > {
+    static const arg_pass_class value = ap_sse;
+};
+
+// Combine the classification of two fields of an aggregate.
+template<arg_pass_class ap0, arg_pass_class ap1>
+struct APS_combine {
+    static constexpr arg_pass_class combine() {
+	return ap0 == ap1 ? ap0
+	    : ap0 == ap_none ? ap1
+	    : ap1 == ap_none ? ap0
+	    : ap0 == ap_mem ? ap_mem
+	    : ap1 == ap_mem ? ap_mem
+	    : ap0 == ap_int ? ap_int
+	    : ap1 == ap_int ? ap_int
+	    : ap_sse;
+    }
+    static constexpr arg_pass_class value = combine(); // default
+};
+
+// Check for alignment: is type T with sizeof(T) <= 8 aligned at offset
+// off with respect to any 8-byte starting address?
+template<size_t off, typename T, typename Enable = void>
+struct APS_aligned : public std::false_type { };
+
+template<size_t off, typename T>
+struct APS_aligned<off,T,typename std::enable_if<(off&(sizeof(T)-1))==0>::type >
+    : public std::true_type { };
+
+// Is the next argument T combinable with the previous contents of the
+// eightbyte, which has been filled with <fill> bytes. Check for the number
+// of bytes as well as alignment.
+template<size_t fill, typename T, typename Enable = void>
+struct APS_accept {
+    static const ap_accept value = ap_reject;
+};
+
+template<size_t fill, typename T>
+struct APS_accept<fill,T,
+		  typename std::enable_if<((fill+sizeof(T)<=8)
+					   && APS_aligned<fill,T>::value)>
+					  ::type> {
+    static const ap_accept value
+	= ( fill+sizeof(T) == 8 ) ? ap_full : ap_continue;
+};
+
+// Some tuple mechanism
+template<typename T0, typename Tuple>
+struct tuple_prefix;
+
+template<typename T0>
+struct tuple_prefix<T0,std::tuple<> > {
+    typedef std::tuple<T0> type;
+};
+
+template<typename T0, typename... T>
+struct tuple_prefix<T0, std::tuple<T...> > {
+    typedef std::tuple<T0,T...> type;
+};
+
+// Pre-declaration
+template<typename... T>
+struct APS_classify_struct;
+
+template<size_t off, arg_pass_class ap, ap_accept aa, typename... T>
+struct APS_split;
+
+// APS_split and APS_classify_struct have two fields:
+// * static const arg_pass_class value
+//   If the value is ap_mem, then the whole structure is passed in memory
+// * static constexpr array<arg_pass_class,N> value8
+//   If the scalar variable value is different from ap_mem and from ap_none,
+//   then this array has one position for each 8-byte and indicates the
+//   storage class per 8-byte
+
+// A. Default case: end of recursion; assume ap, but if ap == ap_none, then
+// do not push element in tuple
+template<size_t off, arg_pass_class ap, ap_accept aa>
+struct APS_split<off,ap,aa> {
+    static const arg_pass_class value = ap;
+    typedef std::tuple<typename ap_type_of<ap>::type> type;
+};
+
+template<size_t off, ap_accept aa>
+struct APS_split<off,ap_none,aa> {
+    static const arg_pass_class value = ap_none;
+    typedef std::tuple<> type;
+};
+
+// B. Specialization: aa = ap_reject -> pass in memory
+template<size_t off, arg_pass_class ap, typename T0, typename... T>
+struct APS_split<off,ap,ap_reject,T0,T...> {
+    static const arg_pass_class value = ap_mem;
+    typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
+};
+
+// C. Specialization: aa = ap_full -> combine 8byte and continue
+template<size_t off, arg_pass_class ap, typename T0, typename... T>
+struct APS_split<off,ap,ap_full,T0,T...> {
+    typedef APS_combine<ap,APS_classify<T0>::value> eightbyte;
+    typedef APS_classify_struct<T...> remainder;
+    static const arg_pass_class value = 
+	APS_combine<eightbyte::value,remainder::value>::value;
+    typedef typename tuple_prefix<typename ap_type_of<value>::type,
+				  typename remainder::type>::type type;
+};
+
+// D. Specialization: aa = ap_continue -> continue filling 8byte
+// D.1. Last field of structure
+template<size_t off, arg_pass_class ap, typename T0>
+struct APS_split<off,ap,ap_continue,T0> {
+    static const arg_pass_class value =
+	APS_combine<ap,APS_classify<T0>::value>::value;
+    typedef std::tuple<typename ap_type_of<value>::type> type;
+};
+
+// D.2. More fields of structure
+template<size_t off, arg_pass_class ap, typename T0, typename T1, typename... T>
+struct APS_split<off,ap,ap_continue,T0,T1,T...> :
+	APS_split<off+sizeof(T0),APS_combine<ap,APS_classify<T0>::value>::value,
+		  APS_accept<off+sizeof(T0),T1>::value, T1, T...> {
+};
+
+// E. Specialization: ap == ap_mem -> all in memory as soon as one eightbyte
+// in memory (this is a post-pass processing rule)
+template<size_t off, ap_accept aa, typename T0, typename... T>
+struct APS_split<off,ap_mem,aa,T0,T...> {
+    static const arg_pass_class value = ap_mem;
+    typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
+};
+
+// Calling interface. Need to check for total size of structure: this must
+// always be constrained within 4 8-bytes and a size larger than 2 8-bytes
+// is allowed only if the first 8-byte is SSE. If these conditions are not met,
+// then the structure is passed in memory.
+// Empty structure/base case
+template<>
+struct APS_classify_struct<> {
+    static const arg_pass_class value = ap_none;
+    typedef std::tuple<> type;
+};
+
+template<typename T0, typename... T>
+struct APS_classify_struct<T0,T...>
+    : public APS_split<0,ap_none,APS_accept<0,T0>::value,T0,T...> {
+};
+
+// ----------------------------------------------------------------------
+// Case of passing structure in memory
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename ap_classify, typename Enable = void>
+struct arg_passing_tuple : public arg_passing_by_mem<ireg,freg,loff> { };
+
+// Handle a single 8-byte
+template<size_t ireg, size_t freg, size_t loff, typename T = ap_mem_ty>
+struct APT_8byte : public arg_passing_by_mem<ireg,freg,loff> { };
+
+template<size_t ireg, size_t freg, size_t loff>
+struct APT_8byte<ireg,freg,loff,ap_int_ty>
+    : arg_passing<ireg,freg,loff,long> { };
+
+template<size_t ireg, size_t freg, size_t loff>
+struct APT_8byte<ireg,freg,loff,ap_sse_ty>
+    : arg_passing<ireg,freg,loff,double> { };
+
+// Iterate over all 8-bytes
+template<size_t ireg, size_t freg, size_t loff, typename... T>
+struct APT_iter;
+
+// base case
+template<size_t ireg, size_t freg, size_t loff>
+struct APT_iter<ireg,freg,loff> {
+    static const bool in_reg = true;
+    static const size_t ibump = 0;
+    static const size_t fbump = 0;
+    static const size_t lbump = 0;
+
+    static const size_t inext = ireg;
+    static const size_t fnext = freg;
+    static const size_t lnext = loff;
+
+    static inline void load() __attribute__((always_inline)) { }	
+};
+
+template<size_t ireg, size_t freg, size_t loff, typename T0, typename... T>
+struct APT_iter<ireg,freg,loff,T0,T...> {
+    typedef struct APT_8byte<ireg,freg,loff,T0> p0;
+    typedef struct APT_iter<p0::inext,p0::fnext,p0::lnext,T...> pn;
+
+    static const bool in_reg = p0::in_reg && pn::in_reg;
+    static const size_t ibump = p0::ibump + pn::ibump;
+    static const size_t fbump = p0::fbump + pn::fbump;
+    static const size_t lbump = p0::lbump + pn::lbump;
+
+    static const size_t inext = pn::inext;
+    static const size_t fnext = pn::fnext;
+    static const size_t lnext = pn::lnext;
+
+    static inline void load() __attribute__((always_inline)) {
+	p0::load();
+	pn::load();
+    }	
+};
+
+template<size_t ireg, size_t freg, size_t loff, typename Tuple>
+struct APT_tuple;
+
+template<size_t ireg, size_t freg, size_t loff, typename... T>
+struct APT_tuple<ireg,freg,loff,std::tuple<T...> >
+    : public APT_iter<ireg,freg,loff,T...> {
+};
+
+// Case of passing structure in registers. The classification must pass all
+// 8-bytes in registers and a sufficient number of registers must be available.
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename ap_classify>
+struct arg_passing_tuple<ireg,freg,loff,T,ap_classify,
+			 typename std::enable_if<(ap_classify::value != ap_mem)
+						 && APT_tuple<ireg,freg,loff,typename ap_classify::type>::in_reg>
+			 ::type > : public APT_tuple<ireg,freg,loff,typename ap_classify::type> { };
+
+// ----------------------------------------------------------------------
+// Some special cases of structs (incomplete - allows only few fields
+// and assumes absence of padding in structure).
 // These trivial structs are passed in register(s).
+// Passing structures by invisible reference is not implemented.
 
 // Default case: struct with 1 member, passed by implicit reference.
 // Trigger a compile-time assertion failure. We inherit from arg_passing<>
@@ -448,7 +754,7 @@ X86_64_ARG_SSE_CASE(7,"%xmm7");
 // Do not use arg_passing_struct1 on non-structure things!
 template<size_t ireg, size_t freg, size_t loff, typename T, typename M,
 	 typename Enable = void>
-struct arg_passing_struct1 : arg_passing<100,100,0,long> {
+struct arg_passing_struct1 : arg_passing_by_mem<ireg,freg,loff> {
     // In general, passing structs (with 1 member) directly is not allowed!
     static_assert( !std::is_class<T>::value,
 		   "x86-64 calling convention: Should not pass 1-member "
@@ -473,7 +779,7 @@ struct arg_passing_struct1<
 // Do not use arg_passing_struct2 on non-structure things!
 template<size_t ireg, size_t freg, size_t loff, typename T, typename M1,
 	 typename M2, typename Enable = void>
-struct arg_passing_struct2 : arg_passing<100,100,0,long> {
+struct arg_passing_struct2 : arg_passing_by_mem<ireg,freg,loff> {
     // In general, passing structs (with 1 member) directly is not allowed!
     static_assert( !std::is_class<T>::value,
 		   "x86-64 calling convention: Should not pass 2-member "
@@ -489,28 +795,9 @@ struct arg_passing_struct2<
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
 			    && std::has_trivial_destructor<T>::value
-			    // What about alignment (e.g. char + long)
-			    && sizeof(T) == sizeof(M1) + sizeof(M2)
-			    >::type > {
-    typedef arg_passing<ireg, freg, loff, M1> arg_pass1;
-    typedef arg_passing<ireg+arg_pass1::ibump, freg+arg_pass1::fbump,
-			loff+arg_pass1::lbump, M2> arg_pass2;
-
-    static const bool in_reg = arg_pass1::in_reg && arg_pass2::in_reg;
-    static const size_t ibump =
-	in_reg ? arg_pass1::ibump + arg_pass2::ibump : 0;
-    static const size_t fbump =
-	in_reg ? arg_pass1::fbump + arg_pass2::fbump : 0;
-    static const size_t lbump =
-	in_reg ? arg_pass1::lbump + arg_pass2::lbump : 0;
-
-    static inline void load() __attribute__((always_inline)) {
-	// Only load in registers if both are in registers.
-	if( in_reg ) {
-	    arg_pass1::load();
-	    arg_pass2::load();
-	}
-    }
+			    >::type >
+    : public arg_passing_tuple<ireg, freg, loff, T,
+			       APS_classify_struct<M1, M2> > {
 };
 
 // Default case: struct with 3 members, passed by implicit reference.
@@ -519,7 +806,7 @@ struct arg_passing_struct2<
 // Do not use arg_passing_struct2 on non-structure things!
 template<size_t ireg, size_t freg, size_t loff, typename T, typename M1,
 	 typename M2, typename M3, typename Enable = void>
-struct arg_passing_struct3 : arg_passing<100,100,0,long> {
+struct arg_passing_struct3 : arg_passing_by_mem<ireg,freg,loff> {
     // In general, passing structs (with 1 member) directly is not allowed!
     static_assert( !std::is_class<T>::value,
 		   "x86-64 calling convention: Should not pass 3-member "
@@ -535,35 +822,9 @@ struct arg_passing_struct3<
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
 			    && std::has_trivial_destructor<T>::value
-			    // What about alignment (e.g. char + long)
-			    && sizeof(T) == sizeof(M1) + sizeof(M2) + sizeof(M3)
-			    >::type > {
-    typedef arg_passing<ireg, freg, loff, M1> arg_pass1;
-    typedef arg_passing<ireg+arg_pass1::ibump, freg+arg_pass1::fbump,
-			loff+arg_pass1::lbump, M2> arg_pass2;
-    typedef arg_passing<ireg+arg_pass2::ibump, freg+arg_pass2::fbump,
-			loff+arg_pass2::lbump, M3> arg_pass3;
-
-    static const bool in_reg = arg_pass1::in_reg && arg_pass2::in_reg
-    && arg_pass3::in_reg;
-    static const size_t ibump =
-	in_reg ? arg_pass1::ibump + arg_pass2::ibump
-	+ arg_pass3::ibump : 0;
-    static const size_t fbump =
-	in_reg ? arg_pass1::fbump + arg_pass2::fbump
-	+ arg_pass3::fbump : 0;
-    static const size_t lbump =
-	in_reg ? arg_pass1::lbump + arg_pass2::lbump
-	+ arg_pass3::lbump : 0;
-
-    static inline void load() __attribute__((always_inline)) {
-	// Only load in registers if both are in registers.
-	if( in_reg ) {
-	    arg_pass1::load();
-	    arg_pass2::load();
-	    arg_pass3::load();
-	}
-    }
+			    >::type >
+    : public arg_passing_tuple<ireg, freg, loff, T,
+			       APS_classify_struct<M1, M2, M3> > {
 };
 
 // Default case: struct with 4 members, passed by implicit reference.
@@ -572,14 +833,14 @@ struct arg_passing_struct3<
 // Do not use arg_passing_struct2 on non-structure things!
 template<size_t ireg, size_t freg, size_t loff, typename T, typename M1,
 	 typename M2, typename M3, typename M4, typename Enable = void>
-struct arg_passing_struct4 : arg_passing<100,100,0,long> {
+struct arg_passing_struct4 : arg_passing_by_mem<ireg,freg,loff> {
     // In general, passing structs (with 1 member) directly is not allowed!
     static_assert( !std::is_class<T>::value,
 		   "x86-64 calling convention: Should not pass 4-member "
 		   "structs directly as function arguments!" );
 };
 
-// Trivial struct - 4 non-static data members. Does not implement packing
+// Trivial struct - 4 non-static data members. Implements packing
 // small values in single 8-word (e.g. struct { short; short; }).
 template<size_t ireg, size_t freg, size_t loff, typename T,
 	 typename M1, typename M2, typename M3, typename M4>
@@ -588,38 +849,9 @@ struct arg_passing_struct4<
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
 			    && std::has_trivial_destructor<T>::value
-			    // What about alignment (e.g. char + long)
-			    && sizeof(T) == sizeof(M1) + sizeof(M2) + sizeof(M3) + sizeof(M4)
-			    >::type > {
-    typedef arg_passing<ireg, freg, loff, M1> arg_pass1;
-    typedef arg_passing<ireg+arg_pass1::ibump, freg+arg_pass1::fbump,
-			loff+arg_pass1::lbump, M2> arg_pass2;
-    typedef arg_passing<ireg+arg_pass2::ibump, freg+arg_pass2::fbump,
-			loff+arg_pass2::lbump, M3> arg_pass3;
-    typedef arg_passing<ireg+arg_pass3::ibump, freg+arg_pass3::fbump,
-			loff+arg_pass3::lbump, M4> arg_pass4;
-
-    static const bool in_reg = arg_pass1::in_reg && arg_pass2::in_reg
-	&& arg_pass3::in_reg && arg_pass4::in_reg;
-    static const size_t ibump =
-	in_reg ? arg_pass1::ibump + arg_pass2::ibump
-	+ arg_pass3::ibump + arg_pass4::ibump : 0;
-    static const size_t fbump =
-	in_reg ? arg_pass1::fbump + arg_pass2::fbump
-	+ arg_pass3::fbump + arg_pass4::fbump : 0;
-    static const size_t lbump =
-	in_reg ? arg_pass1::lbump + arg_pass2::lbump
-	+ arg_pass3::lbump + arg_pass4::lbump : 0;
-
-    static inline void load() __attribute__((always_inline)) {
-	// Only load in registers if both are in registers.
-	if( in_reg ) {
-	    arg_pass1::load();
-	    arg_pass2::load();
-	    arg_pass3::load();
-	    arg_pass4::load();
-	}
-    }
+			    >::type >
+    : public arg_passing_tuple<ireg, freg, loff, T,
+			       APS_classify_struct<M1, M2, M3, M4> > {
 };
 
 // Count how many 8-words of memory arguments there are
@@ -761,7 +993,7 @@ void load_mem_args() {
 // This should be merged with copy_args2 and also with arg_pass, e.g.
 // by defining a struct ablk_offset { size_t reg_off, mem_off; } and
 // passing this along instead of sometimes pointers, sometimes offsets.
-// Or extend the templates to 4 arguments: iref, freg, regoffinmem, memoffinmem
+// Or extend the templates to 4 arguments: ireg, freg, regoffinmem, memoffinmem
 template<size_t ireg, size_t freg>
 static inline size_t offset_of2( size_t & reg_off, size_t & mem_off,
 				 size_t argnum ) {
