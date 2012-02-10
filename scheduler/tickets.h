@@ -173,6 +173,79 @@ public:
     friend std::ostream & operator << ( std::ostream & os, const tkt_metadata & md );
 };
 
+class token_metadata {
+public:
+    struct fifo_like {
+	typedef uint32_t ctr_t;
+	ctr_t head;
+	ctr_t tail;
+    public:
+	fifo_like() : head( 0 ), tail( 0 ) { }
+
+	ctr_t adv_head() { return __sync_fetch_and_add( &head, 1 ); }
+	// Note: tail increment is covered by parent lock only if we use
+	// hyperobjects intra-procedurally. If we use them "wrongly" then
+	// the tail update must be atomic.
+	// ctr_t adv_tail() { return tail++; } // covered by parent lock
+	ctr_t adv_tail() { return __sync_fetch_and_add( &tail, 1 ); }
+	bool empty() const volatile { return head == tail; }
+	bool chk_tag( ctr_t tag ) const volatile { return head == tag; }
+	ctr_t get_tag() const { return tail; }
+
+	friend std::ostream &
+	operator << ( std::ostream & os, const fifo_like & f );
+    };
+    typedef fifo_like::ctr_t tag_t;
+
+private:
+    fifo_like writers;            // head and tail counter for writers
+    fifo_like readers;            // head and tail counter for readers
+    depth_t depth;                // depth in task graph
+
+public:
+    token_metadata() : depth( 0 ) { }
+    ~token_metadata() {
+	assert( readers.empty()
+		&& "Must have zero readers when destructing obj_version" );
+	assert( writers.empty()
+		&& "Must have zero writers when destructing obj_version" );
+    }
+
+    // External interface - never do renaming
+    bool rename_is_active() const volatile { return true; }
+    bool rename_has_readers() const volatile { return true; }
+    bool rename_has_writers() const volatile { return true; }
+
+    // Track oustanding readers with a head and tail counter
+    void add_reader() { readers.adv_tail(); }
+    void del_reader() { readers.adv_head(); }
+    bool chk_reader_tag( tag_t w ) const volatile { return readers.chk_tag(w); }
+    bool has_readers() const volatile { return !readers.empty(); }
+    tag_t get_reader_tag() const { return readers.get_tag(); }
+
+    // Track outstanding writers with a head and tail counter, both adding up.
+    // This organization allows us to easily implement inout dependencies where
+    // the object with an inout dependency is never renamed. Each successive
+    // inout dependency gets a different value of the writers variable, a "tag"
+    // that must be matched for waking up pending children.
+    void add_writer() { writers.adv_tail(); } 
+    void del_writer() { writers.adv_head(); }
+    bool chk_writer_tag( tag_t w ) const volatile { return writers.chk_tag(w); }
+    bool has_writers() const volatile { return !writers.empty(); }
+    tag_t get_writer_tag() const { return writers.get_tag(); }
+
+    depth_t get_depth() const { return depth; }
+    void update_depth( depth_t d ) {
+	// In principle, an outdep has depth == 0 and an inoutdep has depth <= d
+	// because d = max(depth_in) over all indep and inoutdep.
+	// Note: an unversioned outdep has depth > 0 and must also be
+	// included in the depth computation of the frame!
+	// depth = std::max( depth, d );
+	assert( depth <= d );
+	depth = d;
+    }
+};
+
 // Some debugging support
 inline std::ostream &
 operator << ( std::ostream & os, const tkt_metadata::fifo_like & f ) {
@@ -295,10 +368,11 @@ class link_metadata {
 // Checking readiness of pending_metadata
 // ----------------------------------------------------------------------
 // Ready? functor
-template<typename MetaData, typename Task>
+template<typename MetaData_, typename Task>
 struct ready_functor {
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	return dep_traits<MetaData, Task, DepTy>::arg_ready( obj, sa );
     }
     template<typename T>
@@ -606,7 +680,7 @@ class reduction_tags : public reduction_tags_base<tkt_metadata> {
 //----------------------------------------------------------------------
 // Dependency handling traits to track task-object dependencies
 //----------------------------------------------------------------------
-// indep traits
+// indep traits for objects
 template<>
 struct dep_traits<tkt_metadata, task_metadata, indep> {
     template<typename T>
@@ -656,7 +730,38 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     }
 };
 
-// output dependency traits
+// indep traits for tokens
+template<>
+struct dep_traits<token_metadata, task_metadata, indep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, indep<T> & obj_ext,
+			   typename indep<T>::dep_tags * tags ) {
+	token_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->wr_tag  = md->get_writer_tag();
+	md->add_reader();
+    }
+    template<typename T>
+    static
+    bool arg_ready( indep<T> & obj_int, typename indep<T>::dep_tags & tags ) {
+	token_metadata * md = obj_int.get_version()->get_metadata();
+	return md->chk_writer_tag( tags.wr_tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const indep<T> & obj_ext ) {
+	const token_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_writers();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, indep<T> & obj,
+		      typename indep<T>::dep_tags & tags ) {
+	obj.get_version()->get_metadata()->del_reader();
+    }
+};
+
+
+// output dependency traits for objects
 template<>
 struct dep_traits<tkt_metadata, task_metadata, outdep> {
     template<typename T>
@@ -686,7 +791,7 @@ struct dep_traits<tkt_metadata, task_metadata, outdep> {
     }
 };
 
-// inout dependency traits
+// inout dependency traits for objects
 template<>
 struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     template<typename T>
@@ -711,6 +816,42 @@ struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     void arg_release( task_metadata * fr, inoutdep<T> & obj,
 		      typename inoutdep<T>::dep_tags & tags ) {
 	serial_dep_traits::arg_release( obj );
+    }
+};
+
+// inout dependency traits for tokens
+template<>
+struct dep_traits<token_metadata, task_metadata, inoutdep> {
+    template<typename T>
+    static
+    void arg_issue( task_metadata * fr, inoutdep<T> & obj_ext,
+		    typename inoutdep<T>::dep_tags * tags ) {
+	token_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->rd_tag  = md->get_reader_tag();
+	tags->wr_tag  = md->get_writer_tag();
+	md->add_writer();
+	md->update_depth( fr->get_depth() );
+    }
+    template<typename T>
+    static
+    bool arg_ready( inoutdep<T> & obj_ext,
+		    typename inoutdep<T>::dep_tags & tags ) {
+	token_metadata * md = obj_ext.get_version()->get_metadata();
+	return md->chk_reader_tag( tags.rd_tag )
+	    & md->chk_writer_tag( tags.wr_tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const inoutdep<T> & obj_ext ) {
+	const token_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_readers() & !md->has_writers();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, inoutdep<T> & obj,
+		      typename inoutdep<T>::dep_tags & tags ) {
+	token_metadata * md = obj.get_version()->get_metadata();
+	md->del_writer();
     }
 };
 
