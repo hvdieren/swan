@@ -23,7 +23,7 @@ srcdir = @srcdir@
 VPATH = @srcdir@
 top_builddir = @top_builddir@
 
-PROG=J_jacobi J_jacobi_unversioned
+PROG=J_jacobi J_jacobi_unversioned J_jacobi3 J_jacobi4
 
 include ../../Makefile.wf
 include $(top_builddir)/util/Makefile.use_us

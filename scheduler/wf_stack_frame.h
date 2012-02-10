@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 #ifndef STACK_FRAME_H
 #define STACK_FRAME_H
 
@@ -197,12 +197,12 @@ public:
 			   "Padding of pending_frame failed" );
 	}
 #else
-    pending_frame( size_t as_, size_t ts_, size_t nargs_,
+    pending_frame( size_t as_, size_t ts_, size_t fts_, size_t nargs_,
 		   future * cr_, void (*func_)(void),
 		   bool (*stub_)( stack_frame *, void (*)(void) ) )
 	: cresult( cr_ ), func( func_ ), stub( stub_ )
 	{
-	    get_task_data().initialize( as_, ts_, nargs_ );
+	    get_task_data().initialize( as_, ts_, fts_, nargs_ );
 	    static_assert( (sizeof(*this) % CACHE_ALIGNMENT) == 0,
 			   "Padding of pending_frame failed" );
 	}
@@ -372,7 +372,7 @@ protected:
     dbg_continuation dbgc;
 
     pad_multiple<8, 5*sizeof(void*)+sizeof(frame_state_t)+4*sizeof(bool)
-		 + sizeof(intptr_t) + sizeof(picptr_t)
+		 + sizeof(intptr_t) + (sizeof(picptr_t)<8?8:sizeof(picptr_t))
 		 + inherited_size<obj::stack_frame_base_obj>::value
 		 + sizeof(dbg_continuation) > pad0;
 
@@ -383,7 +383,7 @@ public:
 	: call( call_ ), ff( 0 ), parent( parent_ ), owner( owner_ ) {
 	static_assert( (sizeof(stack_frame_base) & 7) == 0,
 		       "stack_frame_base alignment" );
-	get_task_data().initialize( 0, 0, end_of_stack, nargs_ );
+	get_task_data().initialize( 0, 0, 0, end_of_stack, nargs_ );
     }
     // Executing frame constructor
 #if STORED_ANNOTATIONS
@@ -393,11 +393,11 @@ public:
 	get_task_data().initialize( task_data_ );
     }
 #else
-    stack_frame_base( size_t as_, size_t ts_, char * end_of_stack,
+    stack_frame_base( size_t as_, size_t ts_, size_t fts_, char * end_of_stack,
 		      size_t nargs_, stack_frame * parent_,
 		      spawn_deque * owner_, bool call_ )
 	: call( call_ ), ff( 0 ), parent( parent_ ), owner( owner_ ) {
-	get_task_data().initialize( as_, ts_, end_of_stack, nargs_ );
+	get_task_data().initialize( as_, ts_, fts_, end_of_stack, nargs_ );
     }
 #endif
     // Conversion from pending_frame
@@ -519,9 +519,10 @@ public:
 	: stack_frame_base( task_data_,
 			    task_data_.get_parent()->get_owner(), call_ )
 #else
-    stack_frame( size_t as_, size_t ts_, size_t nargs_, stack_frame * parent_,
-		 future * cresult_, bool full_, bool call_ )
-	: stack_frame_base( as_, ts_, &mem[DataSize],
+	  stack_frame( size_t as_, size_t ts_, size_t fts_, size_t nargs_,
+		       stack_frame * parent_, future * cresult_,
+		       bool full_, bool call_ )
+        : stack_frame_base( as_, ts_, fts_, &mem[DataSize],
 			    nargs_, parent_, parent_->get_owner(), call_ )
 #endif
     // : parent( parent_ ),
@@ -716,7 +717,7 @@ public:
 				 void (*fn_ptr)(void) )
 	__attribute__((returns_twice, noinline, regparm(3)));
     static void sync_stub( stack_frame * fr )
-	__attribute__((returns_twice, noinline, regparm(1)));
+	__attribute__((noinline, regparm(1)));
     static bool split_return( stack_frame * child )
 	__attribute__((noinline, regparm(2)));
     void resume() __attribute__((noinline));

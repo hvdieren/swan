@@ -172,6 +172,7 @@
  *     in a generation
  * 11: like 7, but traverse next generation list only for last releasing task
  *     in a generation
+ * 12: global tickets with ROB
  */
 #ifndef OBJECT_TASKGRAPH
 #define OBJECT_TASKGRAPH 1

@@ -531,6 +531,9 @@ struct serial_dep_traits {
 //----------------------------------------------------------------------
 // Tags class for each dependency type
 //----------------------------------------------------------------------
+// Whole-function dependency tags
+class function_tags : public function_tags_base { };
+
 // Input dependency tags
 class indep_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
