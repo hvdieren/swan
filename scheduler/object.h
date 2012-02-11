@@ -79,6 +79,11 @@ class obj_version;
 template<typename MetaData>
 class obj_instance;
 
+template<typename T, obj_modifiers_t OMod>
+class object_t; // versioned;
+template<typename T, obj_modifiers_t OMod>
+class unversioned;
+
 class obj_dep_traits;
 
 #if STORED_ANNOTATIONS
