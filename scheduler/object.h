@@ -905,6 +905,7 @@ void obj_version<MetaData>::del_ref_delete() {
 // and cinoutdep as direct arguments. We don't support this for object_t.
 template<typename MetaData>
 class obj_instance {
+public:
     typedef MetaData metadata_t;
 
 protected:
@@ -1971,10 +1972,10 @@ template<typename T>
 class indep
     : public obj_access_traits<T, obj_instance<obj_metadata>, indep<T> > {
 protected:
-    typedef obj_metadata metadata_t;
     typedef obj_access_traits<T, obj_instance<obj_metadata>,
 			      indep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef indep_tags dep_tags;
     typedef indep_type_tag _object_tag;
     
