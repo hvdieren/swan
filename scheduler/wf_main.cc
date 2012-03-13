@@ -55,6 +55,17 @@ static pthread_t * thread;
 
 volatile long ini_barrier = 0;
 
+void validate_spawn_deque( spawn_deque * d ) {
+    bool fnd = false;
+    for( int i=0; i < nthreads; ++i )
+	if( d == ws[i].get_deque() ) {
+	    fnd = true;
+	    break;
+	}
+    if( !fnd )
+	exit( 1 );
+}
+
 void wf_initialize() {
     const char * pv = getenv( "PRINT_VERSION" );
     if( pv && atoi(pv) > 0 ) {
