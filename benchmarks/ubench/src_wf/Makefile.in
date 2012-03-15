@@ -22,6 +22,7 @@
 srcdir = @srcdir@
 VPATH = @srcdir@
 top_builddir = @top_builddir@
+builddir = @builddir@
 
 PROG=data_dep1 data_dep2 data_depN1 data_depN2 data_depN5 data_depN10 data_depN20 data_depN40 data_depN50 data_depN60 data_depN100 data_depN200 data_depN1000 data_depN2000
 
@@ -32,7 +33,7 @@ all: $(PROG)
 $(PROG): $(SCHEDULER_GOALS)
 
 data_depN%.cc: data_depN.cc.templ
-	$(srcdir)/gen.pl $* $< > $@
+	$(builddir)/gen.pl $* $< > $@
 
 data_dep%: data_dep%.cc
 	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@

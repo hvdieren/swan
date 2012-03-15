@@ -1,4 +1,4 @@
-#!/opt/local/bin/perl -w
+#!@PERL@ -w
 
 do { print STDERR "Usage: $0 <replicas> [input*]\n"; exit 1; } if @ARGV == 0;
 

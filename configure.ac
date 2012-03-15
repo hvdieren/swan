@@ -31,6 +31,7 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CXX
 AC_PROG_CC
 AC_PROG_RANLIB
+AC_PATH_PROG([PERL],[perl])
 
 # Checks for libraries.
 # Replace `pthread_create' is a function in `-lpthread':
@@ -67,6 +68,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/jacobi/src_wfo/Makefile
 		 benchmarks/jacobi/src_wfo/create.sh
 		 benchmarks/ubench/src_wf/Makefile
+		 benchmarks/ubench/src_wf/gen.pl
 		 benchmarks/ubench/src_wf/create.sh
 		 benchmarks/matmul2/src_wfo/Makefile
 		 benchmarks/rectmul_bis/src_wfo/Makefile
