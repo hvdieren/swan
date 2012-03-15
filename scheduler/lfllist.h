@@ -40,7 +40,10 @@ template<typename T>
 class lfllist {
     T * head;
 public:
-    lfllist() : head( 0 ) { }
+    lfllist() : head( 0 ) {
+	assert( (intptr_t(&head) & (sizeof(head)-1)) == 0
+		&& "Alignment of head pointer violated" );
+    }
 
     bool empty() const { return head == 0; }
 
