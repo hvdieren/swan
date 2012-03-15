@@ -49,7 +49,7 @@ struct call_stack {
 // This class implements a similar interface to STL deque, but hopefully
 // more efficient.
 class spawn_deque_store {
-    typedef aligned_class<mcs_mutex, CACHE_ALIGNMENT> sds_mutex;
+    typedef aligned_class<mcs_mutex, CACHE_ALIGNMENT/2> sds_mutex;
 
     static const size_t Chunk = 32;
     call_stack * deque;
