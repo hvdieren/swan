@@ -8,10 +8,11 @@ taskgraph_name()
 {
     case "$1" in
 	1) echo tkt ;;
+	5) echo g ;; # graph
 	8) echo vtkt ;;
-	9) echo cs ;;
-	10) echo cg ;;
-	11) echo ecg ;;
+	9) echo eg ;; # embedded graph
+	10) echo h ;; # hypergraph
+	11) echo eh ;; # embedded hypergraph
 	12) echo gtkt ;;
 	13) echo otkt ;;
     esac
