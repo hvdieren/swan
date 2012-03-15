@@ -261,7 +261,9 @@ void stack_frame::invoke( future * cresult,
     // Save the PIC register, which is ebx on the supported target
     // Can't do this from within the stub, because gcc changes ebx before
     // we can copy.
+#ifdef __PIC__
     cur_frame->saved_ebx = get_pr();
+#endif
 
     // The functions that the stub needs to call
     void (*void_func)(void) = reinterpret_cast<void (*)(void)>(func);
@@ -337,7 +339,9 @@ void stack_frame::create_waiting( full_frame * cur_full, future * cresult,
     // Save the PIC register, which is ebx on the supported target
     // Can't do this from within the stub, because gcc changes ebx before
     // we can copy.
+#ifdef __PIC__
     cur_frame->saved_ebx = get_pr();
+#endif
 
     // The functions that the stub needs to call
     void (*void_func)(void) = reinterpret_cast<void (*)(void)>(func);
@@ -650,7 +654,9 @@ run( TR (*func)( Tn... ), Tn... args ) {
 void
 stack_frame::sync() {
     LOG( id_sync_ctr, 0 /*join_counter*/ );
+#ifdef __PIC__
     saved_ebx = get_pr();
+#endif
     stack_frame::sync_stub( this );
     CLOBBER_CALLEE_SAVED_BUT1();
 }

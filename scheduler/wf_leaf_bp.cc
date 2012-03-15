@@ -45,7 +45,9 @@ stack_frame::split_ctrl_waiting( stack_frame * child ) {
 
     // Return and save continuation
     intptr_t leave_ebp = child->saved_ebp;
-    picptr_t leave_ebx( child->saved_ebx );
+#ifdef __PIC__
+    intptr_t leave_ebx = child->saved_ebx;
+#endif
     child->saved_ebp = get_bp();
     child->save_continuation();
     LEAVE( leave_ebp, (intptr_t)leave_ebx );
