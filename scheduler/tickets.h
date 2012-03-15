@@ -61,7 +61,12 @@ public:
 	ctr_t head;
 	ctr_t tail;
     public:
-	fifo_like() : head( 0 ), tail( 0 ) { }
+	fifo_like() : head( 0 ), tail( 0 ) {
+	    assert( (intptr_t(&head) & (sizeof(head)-1)) == 0
+		    && "Alignment of head field not respected" );
+	    assert( (intptr_t(&tail) & (sizeof(tail)-1)) == 0
+		    && "Alignment of tail field not respected" );
+	}
 
 	ctr_t adv_head() { return __sync_fetch_and_add( &head, 1 ); }
 	// Note: tail increment is covered by parent lock only if we use
@@ -180,7 +185,12 @@ public:
 	ctr_t head;
 	ctr_t tail;
     public:
-	fifo_like() : head( 0 ), tail( 0 ) { }
+	fifo_like() : head( 0 ), tail( 0 ) {
+	    assert( (intptr_t(&head) & (sizeof(head)-1)) == 0
+		    && "Alignment of head field not respected" );
+	    assert( (intptr_t(&tail) & (sizeof(tail)-1)) == 0
+		    && "Alignment of tail field not respected" );
+	}
 
 	ctr_t adv_head() { return __sync_fetch_and_add( &head, 1 ); }
 	// Note: tail increment is covered by parent lock only if we use
@@ -548,8 +558,10 @@ public:
 
 private:
     void allocate_pending() {
-	if( !pending )
+	if( !pending ) {
+	    // errs() << "ALLOC PENDING\n";
 	    pending = new hashed_list<pending_metadata>;
+	    }
     }
 
 };
