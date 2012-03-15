@@ -935,6 +935,7 @@ struct dep_traits<ctg_metadata, task_metadata, reduction> {
 #endif
 
 typedef ctg_metadata obj_metadata;
+typedef ctg_metadata token_metadata;
 
 } // end of namespace obj
 
