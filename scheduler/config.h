@@ -162,16 +162,26 @@
  * 3: taskgraph with linked lists embedded in existing structures
  * 4: embeddded task graph with multiple generations
  * 5: taskgraph (2) but with support for commutativity and reductions
+ *    file = ctaskgraph.h
+ *    currently best non-embedded single-generation/graph scheme
  * 6: generational taskgraph (4), not embedded, with support for commutativity
+ *    file = ecgtaskgraph.h
  * 7: embedded generational taskgraph (4) with support for commutativity
  *    and reductions
+ *    file = ecgtaskgraph.h
  * 8: vector-optimized tickets
  * 9: taskgraph with commutativity and reductions (5) with storage of
  *    generation task lists embedded in tags
+ *    file = ctaskgraph.h
+ *    currently best embedded single-generation/graph scheme
  * 10: like 6, but traverse next generation list only for last releasing task
  *     in a generation
+ *    file = ecgtaskgraph.h
+ *    currently best non-embedded generational/multi-generation/hypergraph
  * 11: like 7, but traverse next generation list only for last releasing task
  *     in a generation
+ *    file = ecgtaskgraph.h
+ *    currently best embedded generational/multi-generation/hypergraph
  * 12: global tickets with ROB
  */
 #ifndef OBJECT_TASKGRAPH
@@ -197,8 +207,8 @@
 
 /* Stack frame size
  */
-#define STACK_FRAME_SIZE 8192
-// #define STACK_FRAME_SIZE 32768
+// #define STACK_FRAME_SIZE 8192
+#define STACK_FRAME_SIZE 32768
 // #define STACK_FRAME_SIZE 4096
 
 /* Using HWLOC to schedule OS threads and analyze cache hierarchy
