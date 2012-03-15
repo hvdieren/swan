@@ -70,12 +70,6 @@ enum steal_method_t {
     sm_N
 };
 
-#ifdef __PIC__
-typedef static_maybe<intptr_t, true> picptr_t; // for PIC
-#else
-typedef static_maybe<intptr_t, false> picptr_t; // for no-PIC
-#endif
-
 //----------------------------------------------------------------------
 // This struct helps to compute the size of a base class, assuming that it may
 // be empty, in which case sizeof(T) >= 1 but T's contribution in sizeof(Derived:T)
@@ -367,12 +361,17 @@ protected:
     char * stack_ptr;
 
     intptr_t saved_ebp;
-    picptr_t saved_ebx; // for PIC
+#ifdef __PIC__
+    intptr_t saved_ebx; // for PIC
+#endif
 
     dbg_continuation dbgc;
 
     pad_multiple<8, 5*sizeof(void*)+sizeof(frame_state_t)+4*sizeof(bool)
-		 + sizeof(intptr_t) + (sizeof(picptr_t)<8?8:sizeof(picptr_t))
+		 + sizeof(intptr_t)
+#ifdef __PIC__
+		 + sizeof(intptr_t)
+#endif
 		 + inherited_size<obj::stack_frame_base_obj>::value
 		 + sizeof(dbg_continuation) > pad0;
 
@@ -431,7 +430,9 @@ public:
     inline size_t get_args_size() const { return get_task_data().get_args_size(); }
     using stack_frame_base_obj::get_task_data;
 
+#ifdef __PIC__
     void set_saved_pr( intptr_t saved_pr_ ) { saved_ebx = saved_pr_; }
+#endif
 
     void save_continuation() { dbgc.save_continuation( saved_ebp ); }
     void check_continuation() const { dbgc.check_continuation( saved_ebp ); }
