@@ -53,7 +53,10 @@ class cas_mutex_v {
     // check for ABA races.
     volatile value_type m;
 public:
-    cas_mutex_v() : m( 0 ) { }
+    cas_mutex_v() : m( 0 ) {
+    	assert( (((intptr_t)&m) & (sizeof(value_type)-1)) == 0
+		&& "cas_mutex_v alignment violated" );
+    }
 
     void lock() {
 	// errs() << "CAS intend lock " << this << '\n';
@@ -119,8 +122,10 @@ public:
 	    : inuse( 0 )
 #endif
 	    {
-		// assert( (intptr_t(this) & (Alignment-1)) == 0
-		// && "Alignment of mcs_mutex::node not respected" );
+		// assert( (intptr_t(this) & (NodeAlignment-1)) == 0
+		        // && "Alignment of mcs_mutex::node not respected" );
+		assert( (intptr_t(&next) & (sizeof(next)-1)) == 0
+		        && "Alignment of mcs_mutex::node::next not respected" );
 	    }
 
 	void unuse() {
@@ -140,7 +145,10 @@ private:
     volatile node * L;
 
 public:
-    mcs_mutex() : L( 0 ) { }
+    mcs_mutex() : L( 0 ) {
+	assert( (intptr_t(&L) & (sizeof(L)-1)) == 0
+		&& "Alignment of mcs_mutex::L not respected" );
+    }
 
     void lock( volatile node * I ) volatile {
 	volatile node * pred;
