@@ -82,5 +82,5 @@ AC_CONFIG_FILES([Makefile
                  util/Makefile.use_us
                  util/Makefile.use_cy])
 AC_CONFIG_COMMANDS([exec-scripts-create.sh],[chmod u+x scripts/create.sh])
-AC_CONFIG_COMMANDS([exec-benchmarks-ubench-src_wf-create.sh],[chmod u+x benchmarks/ubench/src_wf/create.sh])
+AC_CONFIG_COMMANDS([exec-benchmarks-ubench-src_wf-scripts],[chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl])
 AC_OUTPUT
