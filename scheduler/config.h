@@ -158,9 +158,14 @@
 /* OBJECT_TASKGRAPH: implementation of task grapn
  * 0: no task graphs, no object dependency tracking
  * 1: tickets
+ *    file = tickets.h
  * 2: taskgraph
+ *    file = taskgraph.h
  * 3: taskgraph with linked lists embedded in existing structures
+ *    including the deps list, but does not support commutativity and reductions
+ *    file = etaskgraph.h
  * 4: embeddded task graph with multiple generations
+ *    file = egtaskgraph.h
  * 5: taskgraph (2) but with support for commutativity and reductions
  *    file = ctaskgraph.h
  *    currently best non-embedded single-generation/graph scheme
