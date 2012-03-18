@@ -31,13 +31,13 @@ create_target_rectmul_bis()
 
 . $top_builddir/scripts/create.sh
 
-( for tg in 1 9 10 11 12 ; do
-    for bs in 16 32 64 ; do
+( for tg in 1 5 9 10 11 ; do
+    for bs in 16 24 32 ; do
 	echo "rectmul_bis rectmul wfo-$tg-1-$bs-jik"
     done
     done ) | create_benchmarks exec 
-( for tg in 1 9 10 11 12 ; do
-    for bs in 16 32 64 ; do
+( for tg in 1 5 9 10 11 ; do
+    for bs in 16 24 32 ; do
 	echo "rectmul_bis rectmul wfo-$tg-1-$bs-kji"
     done
     done ) | create_benchmarks exec 

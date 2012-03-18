@@ -20,6 +20,6 @@ create_target_cholesky2()
 
 . $top_builddir/scripts/create.sh
 
-( for tg in 1 9 10 11 12 ; do
+( for tg in 1 5 9 10 11 ; do
     echo "cholesky2 cholesky wfo-$tg"
     done ) | create_benchmarks exec 
