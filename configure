@@ -662,6 +662,7 @@ SHELL'
 ac_subst_files=''
 ac_user_opts='
 enable_option_checking
+enable_fortify_source
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1282,6 +1283,14 @@ if test -n "$ac_init_help"; then
      short | recursive ) echo "Configuration of FULL-PACKAGE-NAME VERSION:";;
    esac
   cat <<\_ACEOF
+
+Optional Features:
+  --disable-option-checking  ignore unrecognized --enable/--with options
+  --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)
+  --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
+  --disable-fortify-source
+                          gcc's fortify source functionality may break swan
+                          [default=2]
 
 Some influential environment variables:
   CXX         C++ compiler command
@@ -4482,6 +4491,24 @@ _ACEOF
 fi
 done
 
+
+# Declare package options
+# Check whether --enable-fortify-source was given.
+if test "${enable_fortify_source+set}" = set; then :
+  enableval=$enable_fortify_source; value_fortify_source=$enableval
+else
+  value_fortify_source=default
+fi
+
+
+if test "x$value_fortify_source" != "xdefault"; then :
+  if test "x$value_fortify_source" == "xno"; then :
+  value_fortify_source=0
+fi;
+	     as_fn_append CFLAGS " -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source";
+	     as_fn_append CXXFLAGS " -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"
+
+fi
 
 # Variables
 

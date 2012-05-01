@@ -23,7 +23,7 @@ include $(top_builddir)/scheduler/Makefile.flags
 
 CXXFLAGS += -I$(top_srcdir)/scheduler -I$(top_srcdir)/util
 LDFLAGS += -L$(top_builddir)/util
-LDLIBS += -ltime_marss
+LDLIBS += -ltime_us
 
 examples: $(EXAMPLES)
 
