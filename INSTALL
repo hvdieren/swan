@@ -1,0 +1,38 @@
+Caveat: Swan can be compiled correctly ONLY with GCC 4.6 at this stage.
+
+Installation instructions:
+$ git clone or unpack tar-ball into directory swan
+$ cd swan
+$ mkdir obj
+$ cd obj
+$ ../configure CC=gcc-4.6 CXX=g++-4.6
+
+To build in debugging mode:
+$ OPT="-O0 -DMODE=0" make
+To build in performance mode:
+$ OPT="-O4 -DMODE=1" make
+
+Always do a full cleanup and recompile when changing the value of -DMODE={0,1}
+
+Don't use the -jN option of make at the moment.
+
+There are a number of tests in the the swan/tests directory.
+You can check that things work correctly. E.g. tests/explain is
+parallel fibonacci:
+$ cd swan/obj/tests
+$ NUM_THREADS=1 time ./explain 35
+$ NUM_THREADS=2 time ./explain 35
+$ NUM_THREADS=4 time ./explain 35
+Should not dump core, should print the correct number (you know the
+35th Fibonacci number, don't you?) and should show good linear scaling
+(provided that you have the cores available).
+
+Alternatives:
+When you observe segmentation faults inside the longjmp() function, this is
+most likely due to GCC's FORTIFY_SOURCE option. You can disable it by adding
+the --disable-fortify-source option to configure:
+$ cd to/swan/obj directory
+$ ../configure CC=gcc-4.6 CXX=g++-4.6 --disable-fortify-source
+then cleanup
+$ make clean
+and then repeat all other steps
