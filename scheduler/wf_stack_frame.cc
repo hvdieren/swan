@@ -71,7 +71,7 @@ stack_frame::resume() {
     errs() << "resume " << this << '\n';
 #endif
 
-    LEAVE_RETURN_ONE( saved_ebp, (intptr_t)saved_ebx );
+    LEAVE_RETURN_ONE( saved_ebp, saved_ebx );
 }
 
 void
@@ -113,7 +113,9 @@ stack_frame::create_frame( stack_frame * parent, spawn_deque * owner,
 
     stack_frame * fr = new stack_frame( parent, owner, pnd, true, false );
 
+#ifdef __PIC__
     fr->set_saved_pr( get_pr() ); // redundant - will return via longjmp()
+#endif
 
     wf_trace( fr, parent, (void *)pnd->func, true, true );
 

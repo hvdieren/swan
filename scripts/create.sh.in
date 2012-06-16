@@ -1,0 +1,280 @@
+#!/bin/bash
+
+abs_top_builddir=@abs_top_builddir@
+benchmarks_builddir=$abs_top_builddir/benchmarks
+scheduler_tg=unknown
+
+taskgraph_name()
+{
+    case "$1" in
+	1) echo tkt ;;
+	5) echo g ;; # graph
+	8) echo vtkt ;;
+	9) echo eg ;; # embedded graph
+	10) echo h ;; # hypergraph
+	11) echo eh ;; # embedded hypergraph
+	12) echo gtkt ;;
+	13) echo otkt ;;
+    esac
+}
+
+save_cd()
+{
+    local dir=$1
+
+    if [ ! -d $dir ] ; then
+	echo "No such directory $dir (pwd=$(pwd))" >> $log_file 2>&1
+	echo "No such directory $dir (pwd=$(pwd))" 
+	return 1;
+    else
+	cd $dir
+	echo '# ' $(pwd)
+	return 0;
+    fi
+}
+
+scheduler_compile()
+{
+    local opt=$1
+    local tg=$2
+
+    local retdir=`pwd`
+    save_cd $abs_top_builddir/scheduler || return 0
+    echo "Compiling scheduler for target $tgt with options $opt"
+    if ! ( make clean && OPT="$opt" make ) >> $log_file 2>&1 ; then
+	echo "FAILED scheduler TASKGRAPH=$tg"
+    fi
+    save_cd $retdir
+}
+
+generic_compile()
+{
+    local maketgt=$1
+    local opt=$2
+    local tgt=$3
+
+    case "$tgt" in
+	wf*|wfo*|wfod*)
+	    local tg=$(echo "$tgt" | cut -d- -f2)
+	    if [ "$scheduler_tg" != "$tg" ] ; then
+		scheduler_compile "$opt" "$tg"
+		scheduler_tg="$tg"
+	    fi
+	    ;;
+    esac
+
+    echo "Compiling $maketgt for target $tgt with options $opt"
+    if ! ( make clean && OPT="$opt" make $maketgt ) >> $log_file 2>&1; then
+	echo "FAILED"
+    fi
+}
+
+get_options()
+{
+    local tgt=$1
+
+    case "$tgt" in
+    smpss|cilk++)
+	echo "-static $OPT"
+	;;
+    wf*|wfo*|wfod*)
+	local tg=$(echo "$tgt" | cut -d- -f2)
+	echo "-O4 -DMODE=1 -DOBJECT_TASKGRAPH=$tg $OPT"
+	;;
+    c)
+	echo "-O4 -static $OPT"
+	;;
+    esac
+}
+
+create_target()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    generic_compile "$maketgt" "`get_options $tgt`" "$tgt"
+    local tgtname=${maketgt}_${tgt}
+    if declare -f "target_name_$bench" > /dev/null ; then
+	tgtname=`eval "target_name_$bench" $maketgt $tgt`
+    fi
+    cp $maketgt $dir/$tgtname
+    save_cd ..
+}
+
+create_target_bzip2f()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    generic_compile "$maketgt" "`get_options $tgt`" "$tgt"
+    local opt=`get_options $tgt`
+    case $tgt in
+    cilk++)
+	APPLE=1 generic_compile "$maketgt" "$opt" "$tgt"
+	;;
+    c|wf*|wfod*)
+	generic_compile "$maketgt" "$opt" "$tgt"
+	;;
+    esac
+    cp $maketgt $dir/${maketgt}_${tgt}
+    save_cd ..
+}
+
+postprocess_bzip2f()
+{
+    local dir=$1
+
+    for i in `grep input=[^$] $bench_script | grep -v ^#` ; do
+	eval "$i"
+	echo "Copying input file '$input' ..."
+	cp test/$input $dir
+    done
+}
+
+create_target_hmmer()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    case $tgt in
+    c)
+	save_cd src_orig || return 0
+	local opt=`get_options $tgt`
+	generic_compile "hmmer_cc" "$opt" "$tgt"
+	cp hmmer_cc $dir/${maketgt}_${tgt}
+	save_cd ..
+	;;
+    *)
+	create_target "$maketgt" "$tgt" "$dir"
+	;;
+    esac
+}
+
+
+postprocess_hmmer()
+{
+    local dir=$1
+
+    for i in `grep input=[^$] $bench_script | grep -v ^#` ; do
+	eval "$i"
+	echo "Copying input directory '$input' ..."
+	cp -r $input $dir
+    done
+}
+
+postprocess_crc32()
+{
+    local dir=$1
+
+    for i in `grep input=[^$] $bench_script | grep -v ^#` ; do
+	eval "$i"
+	echo "Copying input file '$input' ..."
+	cp test/$input $dir
+    done
+}
+
+#create_target_rectmul_bis()
+#{
+#    local maketgt=$1
+#    local tgt=$2
+#    local dir=$3
+#
+#    local tg=$(echo src_$tgt | cut -d- -f2)
+#    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+#    local opt=`get_options $tgt`
+#    for block in 16 32 64 ; do
+#	generic_compile "$maketgt" "$opt -DALGO=1 -DBLOCK_EDGE=$block" "$tgt"
+#	cp $maketgt $dir/${maketgt}_$(taskgraph_name $tg)_a1_b$block
+#    done
+#    save_cd ..
+#}
+
+create()
+{
+    local bench=$1
+    local maketgt=$2
+    shift 2
+
+    local dir=$root_dir/$bench
+    if [ ! -d $dir ] ; then
+	mkdir $dir
+    fi
+
+    save_cd $bench || return 0
+    for tgt in $* ; do
+	if declare -f "create_target_$bench" > /dev/null ; then
+	    eval "create_target_$bench" $maketgt $tgt $dir
+	else
+	    create_target $maketgt $tgt $dir
+	fi
+    done
+
+    if test -f "$bench_script" ; then
+	cp $bench_script $dir
+    elif [ "$bench_script" != "" ] ; then
+    	echo "No benchmark script $bench_script found for $bench ..."
+    fi
+
+    if declare -f "postprocess_$bench" > /dev/null ; then
+	eval "postprocess_$bench" $dir
+    fi
+
+    save_cd ..
+}
+
+create_benchmarks()
+{
+    root_dir=$1
+    bench_script=$2
+
+    case "$root_dir" in
+	/*) ;;
+	*) root_dir=`pwd`/$root_dir
+    esac
+
+    # Everything is relative to this directory
+    local retdir=`pwd`
+    save_cd $benchmarks_builddir || return 0
+
+    mkdir $root_dir
+    log_file=$root_dir/create_log
+
+    while read cmd ; do
+	echo $cmd
+	eval "create $cmd"
+    done
+
+    save_cd $retdir
+}
+
+# SMPSS benchmarks
+#create cholesky2 cholesky_goto c # smpss wfo
+#create sparse_lu sparse_lu c # smpss wfo
+#create transpose HM_transpose c # smpss wfo
+#create jacobi J_jacobi c smpss wfo
+#create matmul2 matmul_novec_goto c # smpss wfo
+
+# Cilk benchmarks
+#create cholesky cholesky c cilk++ wf
+#create fft fft c # cilk++ wf
+#create heat heat c # cilk++ wf
+#create lu lu c # cilk++ wf
+#create matmul matmul c # cilk++ wf
+#create rectmul rectmul c # cilk++ wf
+#create spacemul spacemul c # cilk++ wf
+#create strassen strassen c # cilk++ wf
+
+# Mixed benchmarks
+#create rectmul_bis rectmul c # cilk++ smpss wf wfo
+
+# Pipelined benchmarks
+#create bzip2f bzip2 c cilk++ wf wfod
+#create hmmer hmmer c # cilk++ wf wfo
+#create crc32 crc32 c wf wfo wfod
+
+#exit 0

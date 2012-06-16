@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /*
  * object.h
  *
@@ -78,6 +78,11 @@ template<typename MetaData>
 class obj_version;
 template<typename MetaData>
 class obj_instance;
+
+template<typename T, obj_modifiers_t OMod>
+class object_t; // versioned;
+template<typename T, obj_modifiers_t OMod>
+class unversioned;
 
 class obj_dep_traits;
 
@@ -158,6 +163,11 @@ template<typename T>
 struct size_struct<T,true> {
     typedef typename std::remove_extent<T>::type ty;
     static const size_t value = sizeof(ty);
+};
+
+template<>
+struct size_struct<void,false> {
+    static const size_t value = 0;
 };
 
 // ------------------------------------------------------------------------
@@ -333,7 +343,7 @@ private:
     template<typename MetaData>
     friend class obj_version;
 
-    obj_payload() : refcnt( 1 ) {
+    obj_payload( int refcnt_init=1 ) : refcnt( refcnt_init ) {
 	// std::cerr << "Create obj_payload " << this << "\n";
     }
     ~obj_payload() {
@@ -343,10 +353,21 @@ private:
     }
 
 public:
+    // Dynamic memory allocation create function
     static obj_payload *
     create( size_t n ) {
 	char * p = new char[sizeof(obj_payload)+n];
 	return new (p) obj_payload();
+    }
+
+    // In-place create function for unversioned objects
+    static constexpr size_t
+    size( size_t n ) {
+	return n == 0 ? sizeof(ctr_t) : sizeof(obj_payload)+n;
+    }
+    static obj_payload *
+    create( char * p ) {
+	return new (p) obj_payload(2); // refcnt initialized to 2 to avoid free
     }
 
     // First byte after payload, allocated in one go with refcnt
@@ -691,6 +712,8 @@ public:
     obj_reduction_md<MetaData> * get_reduction()  {
 	return reduc;
     }
+
+    bool is_initialized() const { return reduc != 0; }
 };
 
 // obj_version: versioning of data objects + tracking readers/writer
@@ -708,11 +731,11 @@ private:
     obj_instance<metadata_t> * obj; // pointer to the object for renaming purposes
     reduction_md<metadata_t> reduc; // hook for reduction-specific information
 
-    template<typename T, typename MetaData_, obj_modifiers_t OMod>
-    friend class versioned_base;
+    template<typename T, obj_modifiers_t OMod>
+    friend class object_t; // versioned;
 
-    template<typename T, typename MetaData_, obj_modifiers_t OMod>
-    friend class unversioned_base;
+    template<typename T, obj_modifiers_t OMod>
+    friend class unversioned;
 
     template<typename MetaData_, size_t DataSize>
     friend class obj_unv_instance; // for constructor
@@ -721,6 +744,12 @@ private:
     obj_version( size_t sz, obj_instance<metadata_t> * obj_ )
 	: refcnt( 1 ), size( sz ), obj( obj_ ) {
 	payload = obj_payload::create( sz );
+	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
+    }
+    // First-create constructor for unversioned objects
+    obj_version( size_t sz, char * payload_ptr )
+	: refcnt( 1 ), size( sz ), obj( (obj_instance<metadata_t> *)0 ) {
+	payload = obj_payload::create( payload_ptr );
 	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
     }
     // Constructor for nesting
@@ -801,7 +830,8 @@ private:
     // but not on Intel (Core i7).
     void del_ref_delete() __attribute__((noinline));
 
-protected:
+// protected:
+public:
     void nonfreeing_del_ref() {
 	assert( refcnt > 0 );
 	__sync_fetch_and_add( &refcnt, -1 ); // atomic!
@@ -836,18 +866,6 @@ public:
 		expensive_reduction_tag>::value;
 	    odt->add_finalize_version( this, do_expand );
 	}
-/*
-	if( std::is_same<typename Monad::reduction_tag,
-	    expensive_reduction_tag>::value ) {
-	    // Force initialization for all threads
-	    if( reduc.template initialize<Monad>( size, this ) )
-		odt->add_finalize_version( this, true );
-	} else {
-	    // Force initialization for all threads
-	    if( reduc.template initialize<Monad>( size, this ) )
-		odt->add_finalize_version( this, false );
-	}
-*/
     }
 
     template<typename Monad>
@@ -859,6 +877,8 @@ public:
     obj_reduction_md<MetaData> * get_reduction()  {
 	return reduc.get_reduction<Monad>();
     }
+
+    bool is_used_in_reduction() const { return reduc.is_initialized(); }
 
     // Some computations may not be complete (eg reductions). Finalize them
     // now or expand them, depending on the complexity of the reduction
@@ -890,10 +910,11 @@ void obj_version<MetaData>::del_ref_delete() {
 // and cinoutdep as direct arguments. We don't support this for object_t.
 template<typename MetaData>
 class obj_instance {
+public:
     typedef MetaData metadata_t;
 
 protected:
-    obj_version<metadata_t>  * version;
+    obj_version<metadata_t> * version;
 
     template<typename T, typename Base, typename Final>
     friend class obj_access_traits;
@@ -955,10 +976,10 @@ template<typename MetaData, size_t DataSize>
 class obj_unv_instance : public obj_version<MetaData> {
     typedef MetaData metadata_t;
 
-    char data[DataSize];
+    char data[obj_payload::size(DataSize)];
 public:
     obj_unv_instance()
-	: obj_version<metadata_t>( DataSize, (obj_instance<metadata_t> *)0 ) { }
+	: obj_version<metadata_t>( DataSize, data ) { }
 
     const obj_version<metadata_t> * get_version() const { return this; }
     obj_version<metadata_t> * get_version() { return this; }
@@ -1016,116 +1037,6 @@ public:
 	od.version = this->get_nc_version();
 	return od;
     }
-};
-
-// ------------------------------------------------------------------------
-// Intermediate definitions of objects used, making it easy to instantiate
-// for different programming models.
-// ------------------------------------------------------------------------
-// versioned_base: object declaration-style interface to versioned objects.
-template<typename T, typename MetaData, obj_modifiers_t OMod>
-class versioned_base : public obj_access_traits<T, obj_instance<MetaData>, versioned_base<T, MetaData, OMod> > {
-private:
-    obj_instance<MetaData> * copy_back;
-
-protected:
-    typedef obj_access_traits<T, obj_instance<MetaData>, versioned_base<T, MetaData, OMod> > OAT;
-
-public:
-    versioned_base(size_t n = 1) {
-	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
-	this->version = obj_version<MetaData>::create(n*size_struct<T>::value, this);
-    }
-    versioned_base( const versioned_base<T, MetaData, OMod> &o ) { // needed?
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	o.version->add_ref();
-	this->version = o.version;
-    }
-    // For nesting. Nesting is only allowed if the obj_recast flag is set,
-    // causing the destructor to copy back the contents of the data.
-    versioned_base( indep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = 0;
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-    versioned_base( outdep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = o.get_object();
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-    versioned_base( inoutdep<T> &o ) {
-	static_assert( OMod & obj_recast, "constructor only allowed if..." );
-	copy_back = o.get_object();
-	this->version = obj_version<MetaData>::nest( this, &o );
-    }
-
-    ~versioned_base() {
-	// If nesting applied, we do a simple flat byte copy of the data.
-	if( OMod & obj_recast ) { // resolves to a compile-time constant
-	    if( copy_back )
-		obj_version<MetaData>::unnest( this, copy_back );
-	}
-
-	// Remove keep-alive reference
-	this->version->del_ref();
-    }
-
-    const versioned_base<T, MetaData, OMod> &
-    operator = ( const versioned_base<T, MetaData, OMod> & o ) {
-	o.version->add_ref();
-	this->version->del_ref();
-	this->version = o.version;
-	return *this;
-    }
-
-    const versioned_base<T, MetaData, OMod> & operator = ( const T & t ) {
-	*OAT::get_ptr() = t; return *this;
-    }
-
-    const versioned_base<T, MetaData, OMod> & operator += ( const T & t ) {
-	*OAT::get_ptr() += t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator -= ( const T & t ) {
-	*OAT::get_ptr() -= t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator *= ( const T & t ) {
-	*OAT::get_ptr() *= t; return *this;
-    }
-    const versioned_base<T, MetaData, OMod> & operator /= ( const T & t ) {
-	*OAT::get_ptr() /= t; return *this;
-    }
-
-    // For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-};
-
-// unversioned: object declaration-style interface to unversioned objects.
-template<typename T, typename MetaData, obj_modifiers_t OMod>
-class unversioned_base 
-    : public obj_access_traits<T,
-			       obj_unv_instance<MetaData,
-						size_struct<T>::value>,
-			       unversioned_base<T, MetaData, OMod> > {
-protected:
-    typedef obj_access_traits<T,
-			      obj_unv_instance<MetaData, size_struct<T>::value>,
-			      unversioned_base<T, MetaData, OMod> > OAT;
-
-public:
-    unversioned_base() { }
-    ~unversioned_base() {
-	this->get_version()->nonfreeing_del_ref();
-    }
-
-    const unversioned_base<T, MetaData, OMod> &
-    operator = ( const unversioned_base<T, MetaData, OMod> & o )  = delete;
-
-    const unversioned_base<T, MetaData, OMod> & operator = ( const T & t ) {
-	*OAT::get_ptr() = t; return *this;
-    }
-
-    // For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
 };
 
 // ------------------------------------------------------------------------
@@ -1264,7 +1175,7 @@ namespace obj {
 // of stack-stored dep_tags.
 // ------------------------------------------------------------------------
 // Release functor
-template<typename MetaData, typename Task>
+template<typename MetaData_, typename Task>
 struct release_functor {
     Task * fr;
     release_functor( Task * fr_ ) : fr( fr_ ) { fr->start_deregistration(); }
@@ -1274,8 +1185,10 @@ struct release_functor {
     // obj_instance.
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, sa );
-	obj_ext.get_version()->del_ref();
+	if( !std::is_void< T >::value ) // tokens
+	    obj_ext.get_version()->del_ref();
 	return true;
     }
 
@@ -1283,8 +1196,10 @@ struct release_functor {
     // In the case of a reduction, the internal obj_instance may differ
     // from the external one.
     template<typename M>
-    bool operator () ( reduction<M> obj_int,
-		       typename reduction<M>::dep_tags & tags ) {
+    typename std::enable_if<std::is_class<M>::value, bool>::type
+    operator () ( reduction<M> obj_int,
+		  typename reduction<M>::dep_tags & tags ) {
+	typedef typename reduction<M>::metadata_t MetaData;
 	obj_version<MetaData> * v = tags.ext_version;
 	reduction<M> obj_ext = reduction<M>::create( v );
 	v->leave_reduction( tags.idx );
@@ -1303,38 +1218,38 @@ struct release_functor {
 };
 
 // Grab functor
-template<typename MetaData, typename Task>
-struct grab_functor {
+template<typename MetaData_, typename Task>
+class grab_functor {
     Task * fr;
     obj_dep_traits * odt;
+public:
     grab_functor( Task * fr_, obj_dep_traits * odt_ )
 	: fr( fr_ ), odt( odt_ ) { }
     
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version() );
 	// Renaming is impossible here: we have already started to work
 	// on this object, so it is too late now to rename...
 	// rename<MetaData, T>( obj_ext, obj_int, tags );
 	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
-	obj_ext.get_version()->add_ref();
-	return true;
-    }
-
-    // This specialization is concerned with performance, not functionality.
-    // It all comes down to low-level instruction scheduling
-    template<typename T>
-    bool operator () ( indep<T> & obj_int, typename indep<T>::dep_tags & tags ) {
-	indep<T> obj_ext = indep<T>::create( obj_int.get_version() );
-	obj_ext.get_version()->add_ref(); // do this first
-	dep_traits<MetaData, Task, indep>::template arg_issue( fr, obj_ext, &tags );
+	if( !std::is_void< T >::value ) // token
+	    obj_ext.get_version()->add_ref();
+	if( !is_outdep< DepTy<T> >::value
+	    && !is_truedep< DepTy<T> >::value // static checks
+	    && !std::is_void< T >::value // token
+	    && obj_ext.get_version()->is_used_in_reduction() )
+	    fr->get_task_data().set_finalization_required();
 	return true;
     }
 
 #if OBJECT_REDUCTION
     template<typename M>
-    bool operator () ( reduction<M> & obj_int,
-		       typename reduction<M>::dep_tags & tags ) {
+    typename std::enable_if<std::is_class<M>::value, bool>::type
+    operator () ( reduction<M> & obj_int,
+		  typename reduction<M>::dep_tags & tags ) {
+	typedef typename reduction<M>::metadata_t MetaData;
 	reduction<M> obj_ext = reduction<M>::create( obj_int.get_version() );
 	reduction_init<MetaData, M>( obj_int, tags, odt );
 	privatize<MetaData, M>( obj_ext, obj_int, tags );
@@ -1390,7 +1305,7 @@ static inline void arg_issue_fn( Task * fr, obj_dep_traits * odt ) {
 // of stack-stored dep_traits.
 // ------------------------------------------------------------------------
 // Acquire-and-store functor
-template<typename MetaData, typename Task>
+template<typename MetaData_, typename Task>
 struct dgrab_functor {
     Task * fr;
     obj_dep_traits * odt;
@@ -1401,28 +1316,22 @@ struct dgrab_functor {
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> obj_ext, DepTy<T> & obj_int,
 		       typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	// No renaming yet, unless we pass the same argument multiple times
 	// assert( obj_ext.get_version() == obj_int.get_version() );
 	rename<MetaData, T>( obj_ext, obj_int, tags );
 	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
-	obj_ext.get_version()->add_ref();
-	return true;
-    }
-    //
-    // This specialization is concerned with performance, not functionality.
-    // It all comes down to low-level instruction scheduling
-    template<typename T>
-    bool operator () ( indep<T> obj_ext, indep<T> & obj_int,
-		       typename indep<T>::dep_tags & tags ) {
-	obj_ext.get_version()->add_ref(); // do this first
-	dep_traits<MetaData, Task, indep>::template arg_issue( fr, obj_ext, &tags );
+	if( !std::is_void< T >::value ) // token
+	    obj_ext.get_version()->add_ref();
 	return true;
     }
 
 #if OBJECT_REDUCTION
     template<typename M>
-    bool operator () ( reduction<M> & obj_ext, reduction<M> & obj_int,
-		       typename reduction<M>::dep_tags & tags ) {
+    typename std::enable_if<std::is_class<M>::value, bool>::type
+    operator () ( reduction<M> & obj_ext, reduction<M> & obj_int,
+		  typename reduction<M>::dep_tags & tags ) {
+	typedef typename reduction<M>::metadata_t MetaData;
 	// Create a private copy for this task, if it is_ready
 	reduction_init<MetaData, M>( obj_int, tags, odt );
 	if( is_ready )
@@ -1437,10 +1346,12 @@ struct dgrab_functor {
 };
 
 // Reduction expansion functor
-template<typename MetaData, typename Task>
+template<typename MetaData_, typename Task>
 struct dexpand_functor {
     template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+    typename std::enable_if<!std::is_void<T>::value, bool>::type
+    operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	obj_version<MetaData> & v = *obj_ext.get_version();
 	v.expand();
 	return true;
@@ -1467,6 +1378,13 @@ struct dexpand_functor {
     void undo( cinoutdep<T> & obj_ext, typename cinoutdep<T>::dep_tags & sa ) {
     }
 #endif
+
+    // Tokens -- ?? -- need to qualify *ALL* functors with is_void<T>
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<std::is_void<T>::value, bool>::type
+    operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	return true;
+    }
 };
 
 template<typename MetaData>
@@ -1490,18 +1408,20 @@ struct privatize_functor {
 };
 
 template<typename MetaData>
-struct finalize_functor {
+class finalize_functor {
+private:
+    bool do_finalize;
+public:
+    finalize_functor( const task_data_t & task_data )
+	: do_finalize( task_data.is_finalization_required() ) { }
+
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & tags ) {
-	obj.get_version()->finalize();
-	return true;
-    }
-    template<typename T>
-    bool operator () ( outdep<T> & obj, typename outdep<T>::dep_tags & tags ) {
-	return true;
-    }
-    template<typename T>
-    bool operator () ( truedep<T> & obj, typename truedep<T>::dep_tags & tags ){
+	if( !is_outdep< DepTy<T> >::value
+	    && !is_truedep< DepTy<T> >::value // static checks
+	    && !std::is_void< T >::value // tokens are never finalized
+	    && do_finalize )
+	    obj.get_version()->finalize();
 	return true;
     }
 #if OBJECT_REDUCTION
@@ -1517,31 +1437,12 @@ struct finalize_functor {
     void undo( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) { }
 };
 
-// A finalize reduction function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_finalize_fn( task_data_t & td ) {
-    finalize_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    return arg_apply_stored_fn( fn, nargs, args, tags );
-}
-#else
-template<typename MetaData, typename... Tn>
-static inline void arg_finalize_fn( task_data_t & td ) {
-    finalize_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    arg_apply_fn<finalize_functor<MetaData>,Tn...>( fn, args, tags );
-}
-#endif
-
 // Initial ready? functor
-template<typename MetaData, typename Task>
+template<typename MetaData_, typename Task>
 struct dini_ready_functor {
     template<typename T, template<typename U> class DepTy>
     bool operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	if( dep_traits<MetaData, Task, DepTy>::arg_ini_ready( obj_ext ) ) {
 	    obj_ext.get_version()->finalize();
 	    return true;
@@ -1557,6 +1458,7 @@ struct dini_ready_functor {
 	// sync time), but that would be overhead that is paid in the common
 	// case, while the program idiom (compute reduction and discard) is
 	// an anomaly.
+	typedef typename outdep<T>::metadata_t MetaData;
 	return dep_traits<MetaData, Task, outdep>::arg_ini_ready( obj_ext );
     }
     template<typename T>
@@ -1569,11 +1471,13 @@ struct dini_ready_functor {
 		       typename reduction<M>::dep_tags & sa ) {
 	// Don't finalize more reductions...
 	// TODO: What if we change M (eg from + to *)?
+	typedef typename reduction<M>::metadata_t MetaData;
 	return dep_traits<MetaData, Task, reduction>::arg_ini_ready( obj_ext );
     }
 #endif
     template<typename T, template<typename U> class DepTy>
     void undo( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	return dep_traits<MetaData, Task, DepTy>::arg_ini_ready_undo( obj_ext );
     }
 };
@@ -1645,7 +1549,7 @@ static inline void arg_dgrab_fn( Task * fr, obj_dep_traits * odt, bool wakeup, T
 	gfn, nargs, args, tags, an... );
 #else
     size_t (*off)(size_t) = &offset_of<Tn...>;
-    arg_apply3_fn<dgrab_functor<MetaData, Task>,0,Tn...>(
+    arg_apply3_fn<dgrab_functor<MetaData, Task>,Tn...>(
 	gfn, off, args, tags, an... );
 #endif
     fr->stop_registration( wakeup );
@@ -1830,6 +1734,8 @@ struct all_tags_base : public annotation_tags { };
 struct all_tags_base { };
 #endif
 
+struct function_tags_base { };
+
 struct indep_tags_base : public all_tags_base { };
 struct outdep_tags_base : public all_tags_base { };
 struct inoutdep_tags_base : public all_tags_base { };
@@ -1872,6 +1778,10 @@ struct reduction_tags_base : public all_tags_base {
 #else
 #if OBJECT_TASKGRAPH == 8
 #include "vtickets.h"
+#else
+#if OBJECT_TASKGRAPH == 12
+#include "gtickets.h"
+#endif
 #endif
 #endif
 #endif
@@ -1894,124 +1804,168 @@ class truedep_tags { };
 // ------------------------------------------------------------------------
 // The actual objects used in the programming model
 // ------------------------------------------------------------------------
-/* Should be as simple as, the following, but changes syntax...
-template<typename T>
-struct object_t {
-    typedef versioned_base<T, obj_metadata> type;
-};
-*/
-
+// object_t: object declaration-style interface to versioned objects.
 template<typename T, obj_modifiers_t OMod = obj_none>
-class object_t : public versioned_base<T, obj_metadata, OMod> {
-public:
-    typedef versioned_base<T, obj_metadata, OMod> parent_ty;
-    typedef object_t<T, OMod> self_ty;
+class object_t
+    : public obj_access_traits<T, obj_instance<obj_metadata>,
+			       object_t<T, OMod> > {
+protected:
+    typedef obj_access_traits<T, obj_instance<obj_metadata>,
+			      object_t<T, OMod> > OAT;
+
+private:
+    obj_instance<obj_metadata> * copy_back;
 
 public:
-    explicit object_t(size_t n = 1) : versioned_base<T,obj_metadata, OMod>( n ) { }
-    // object_t( const object_t<T, OMod> &o ) : versioned_base<T,obj_metadata, OMod>( o ) { } // needed?
-    // For nesting
-    object_t( outdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
-    object_t( indep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
-    object_t( inoutdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    explicit object_t(size_t n = 1) {
+	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
+	this->version = obj_version<obj_metadata>::create(n*size_struct<T>::value, this);
+    }
+#if 0 // needed?
+    object_t( const object_t<T, OMod> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	o.version->add_ref();
+	this->version = o.version;
+    }
+#endif
+
+    // For nesting. Nesting is only allowed if the obj_recast flag is set,
+    // causing the destructor to copy back the contents of the data.
+    object_t( indep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = 0;
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
+    object_t( outdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
+    object_t( inoutdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #if OBJECT_COMMUTATIVITY
-    object_t( cinoutdep<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    object_t( cinoutdep<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #endif
 #if OBJECT_REDUCTION
-    object_t( reduction<T> &o ) : versioned_base<T,obj_metadata,OMod>( o ) { }
+    object_t( reduction<T> &o ) {
+	static_assert( OMod & obj_recast, "constructor only allowed if..." );
+	copy_back = o.get_object();
+	this->version = obj_version<obj_metadata>::nest( this, &o );
+    }
 #endif
 
-    const self_ty & operator = ( const self_ty & o ) {
-	parent_ty::operator = ( o );
-	return *this;
+    ~object_t() {
+	// If nesting applied, we do a simple flat byte copy of the data.
+	if( OMod & obj_recast ) { // resolves to a compile-time constant
+	    if( copy_back )
+		obj_version<obj_metadata>::unnest( this, copy_back );
+	}
+
+	// Remove keep-alive reference
+	this->version->del_ref();
     }
 
-    const self_ty & operator = ( const T & t ) {
-	parent_ty::operator = ( t );
-	return *this;
+    const object_t<T, OMod> & operator = ( const T & t ) {
+	*OAT::get_ptr() = t; return *this;
     }
 
-    const self_ty & operator += ( const T & t ) {
-	parent_ty::operator += ( t );
-	return *this;
+    const object_t<T, OMod> & operator += ( const T & t ) {
+	*OAT::get_ptr() += t; return *this;
     }
-    const self_ty & operator -= ( const T & t ) {
-	parent_ty::operator -= ( t );
-	return *this;
+    const object_t<T, OMod> & operator -= ( const T & t ) {
+	*OAT::get_ptr() -= t; return *this;
     }
-    const self_ty & operator *= ( const T & t ) {
-	parent_ty::operator *= ( t );
-	return *this;
+    const object_t<T, OMod> & operator *= ( const T & t ) {
+	*OAT::get_ptr() *= t; return *this;
     }
-    const self_ty & operator /= ( const T & t ) {
-	parent_ty::operator /= ( t );
-	return *this;
+    const object_t<T, OMod> & operator /= ( const T & t ) {
+	*OAT::get_ptr() /= t; return *this;
     }
 
-    inline operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
-    inline operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
-    inline operator inoutdep<T> () const { return create_dep_ty< inoutdep<T> >(); }
+    operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
+    operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
+    operator inoutdep<T> () const { return create_dep_ty< inoutdep<T> >(); }
 #if OBJECT_COMMUTATIVITY
-    inline operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
+    operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
 #endif
 #if OBJECT_REDUCTION
     template<typename M>
-    inline operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
+    operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
 #endif
-    inline operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
+    operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
 
-    // Do we need this?
-    // template<typename U>
-    // inline operator object_t<U> () const {
-	// return *reinterpret_cast<object_t<U>*>(const_cast<object_t<T>*>(this));
-    // }
+    const object_t<T, OMod> &
+    operator = ( const object_t<T, OMod> & o ) {
+	o.version->add_ref();
+	this->version->del_ref();
+	this->version = o.version;
+	return *this;
+    }
 
 private:
     template<typename DepTy>
     DepTy create_dep_ty() const {
-	return parent_ty::OAT::template create_dep_ty< DepTy >();
+	return OAT::template create_dep_ty< DepTy >();
     }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
+// unversioned: object declaration-style interface to unversioned objects.
 template<typename T, obj_modifiers_t OMod = obj_none>
-class unversioned : public unversioned_base<T, obj_metadata, OMod> {
-public:
-    typedef unversioned_base<T, obj_metadata, OMod> parent_ty;
+class unversioned
+    : public obj_access_traits<T,
+			       obj_unv_instance<obj_metadata,
+						size_struct<T>::value>,
+			       unversioned<T, OMod> > {
+protected:
+    typedef obj_access_traits<T,
+			      obj_unv_instance<obj_metadata, size_struct<T>::value>,
+			      unversioned<T, OMod> > OAT;
     typedef unversioned<T, OMod> self_ty;
 
 public:
     unversioned() { }
+    ~unversioned() {
+	this->get_version()->nonfreeing_del_ref();
+    }
 
     const self_ty & operator = ( const self_ty & o ) = delete;
 
     const self_ty & operator = ( const T & t ) {
-	parent_ty::operator = ( t );
-	return *this;
+	*OAT::get_ptr() = t; return *this;
     }
 
-    inline operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
-    inline operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
-    inline operator inoutdep<T> () const   { return create_dep_ty< inoutdep<T> >();   }
+    operator indep<T> () const    { return create_dep_ty< indep<T> >();    }
+    operator outdep<T> () const   { return create_dep_ty< outdep<T> >();   }
+    operator inoutdep<T> () const   { return create_dep_ty< inoutdep<T> >();   }
 #if OBJECT_COMMUTATIVITY
-    inline operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
+    operator cinoutdep<T> () const { return create_dep_ty< cinoutdep<T> >(); }
 #endif
 #if OBJECT_REDUCTION
     template<typename M>
-    inline operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
+    operator reduction<M> () const { return create_dep_ty< reduction<M> >(); }
 #endif
-    inline operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
-
-    // Do we need this?
-    // template<typename U>
-    // inline operator unversioned<U> () const {
-	// return *reinterpret_cast<unversioned<U>*>(const_cast<unversioned<T>*>(this));
-    // }
+    operator truedep<T> () const { return create_dep_ty< truedep<T> >(); }
 
 private:
     template<typename DepTy>
     DepTy create_dep_ty() const {
-	return parent_ty::OAT::template create_dep_ty< DepTy >();
+	return OAT::template create_dep_ty< DepTy >();
     }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 // ------------------------------------------------------------------------
@@ -2026,6 +1980,7 @@ protected:
     typedef obj_access_traits<T, obj_instance<obj_metadata>,
 			      indep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef indep_tags dep_tags;
     typedef indep_type_tag _object_tag;
     
@@ -2045,6 +2000,7 @@ class outdep
 protected:
     typedef obj_access_traits<T, obj_instance<obj_metadata>, outdep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef outdep_tags dep_tags;
     typedef outdep_type_tag _object_tag;
 
@@ -2065,6 +2021,7 @@ class inoutdep
 protected:
     typedef obj_access_traits<T, obj_instance<obj_metadata>, inoutdep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef inoutdep_tags dep_tags;
     typedef inoutdep_type_tag _object_tag;
 
@@ -2086,6 +2043,7 @@ class cinoutdep
 protected:
     typedef obj_access_traits<T, obj_instance<obj_metadata>, cinoutdep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef cinoutdep_tags dep_tags; // -- not yet defined in all TG
     typedef cinoutdep_type_tag _object_tag;
 
@@ -2130,6 +2088,7 @@ class truedep
 protected:
     typedef obj_access_traits<T, obj_instance<obj_metadata>, truedep<T> > OAT;
 public:
+    typedef obj_metadata metadata_t;
     typedef truedep_tags dep_tags;
     typedef truedep_type_tag _object_tag;
 
@@ -2203,6 +2162,107 @@ struct dep_traits<obj_metadata, task_metadata, truedep> {
     template<typename T>
     static inline void arg_release( task_metadata * fr, truedep<T> & obj,
 				    typename truedep<T>::dep_tags & sa ) { }
+};
+
+// ------------------------------------------------------------------------
+// Tokens - specialize object_t, unversioned, and dep types to void argument
+// ------------------------------------------------------------------------
+template<>
+class indep<void> : public obj_instance<token_metadata> {
+public:
+    typedef token_metadata metadata_t;
+    typedef indep_tags dep_tags;
+    typedef indep_type_tag _object_tag;
+    
+    static indep<void> create( obj_version<token_metadata> * v ) {
+	indep<void> od;
+	od.version = v;
+	return od;
+    }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
+template<>
+class outdep<void> : public obj_instance<token_metadata> {
+public:
+    typedef token_metadata metadata_t;
+    typedef outdep_tags dep_tags;
+    typedef outdep_type_tag _object_tag;
+
+    static outdep<void> create( obj_version<token_metadata> * v ) {
+	outdep<void> od;
+	od.version = v;
+	return od;
+    }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
+template<>
+class inoutdep<void> : public obj_instance<token_metadata> {
+public:
+    typedef token_metadata metadata_t;
+    typedef inoutdep_tags dep_tags;
+    typedef inoutdep_type_tag _object_tag;
+
+    static inoutdep<void> create( obj_version<token_metadata> * v ) {
+	inoutdep<void> od;
+	od.version = v;
+	return od;
+    }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
+template<>
+class truedep<void> : public obj_instance<token_metadata> {
+public:
+    typedef token_metadata metadata_t;
+    typedef truedep_tags dep_tags;
+    typedef truedep_type_tag _object_tag;
+
+    static truedep<void> create( obj_version<token_metadata> * v ) {
+	truedep<void> od;
+	od.version = v;
+	return od;
+    }
+	
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
+// unversioned: object declaration-style interface to unversioned objects.
+template<obj_modifiers_t OMod>
+class unversioned<void, OMod>
+    : public obj_unv_instance<token_metadata, 0> {
+public:
+    unversioned() { }
+    ~unversioned() {
+	this->get_version()->nonfreeing_del_ref();
+    }
+
+    operator indep<void> () const    { return create_dep_ty< indep >();    }
+    operator outdep<void> () const   { return create_dep_ty< outdep >();   }
+    operator inoutdep<void> () const { return create_dep_ty< inoutdep >();   }
+    operator truedep<void> () const  { return create_dep_ty< truedep >(); }
+
+private:
+    template<template<typename U> class DepTy>
+    DepTy<void> create_dep_ty() const {
+	return DepTy<void>::create( get_nc_version() );
+    }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 // ------------------------------------------------------------------------
@@ -2479,6 +2539,8 @@ struct task_graph_traits {
     template<typename... Tn>
     static size_t
     arg_stored_size() { return obj::arg_stored_size<Tn...>(); }
+    static size_t
+    fn_stored_size() { return obj::fn_stored_size<obj::function_tags>(); }
     template<typename... Tn>
     static bool
     arg_introduces_deps() { return obj::count_object<Tn...>::value > 0; }
@@ -2624,6 +2686,8 @@ struct task_graph_traits {
     template<typename... Tn>
     static size_t
     arg_stored_size() { return 0; }
+    static size_t
+    fn_stored_size() { return 0; }
     template<typename... Tn>
     static bool
     arg_introduces_deps() { return false; }

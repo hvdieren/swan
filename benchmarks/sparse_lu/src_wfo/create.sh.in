@@ -1,0 +1,31 @@
+#!/bin/bash
+
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+
+create_target_sparse_lu()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    local tg=$(echo src_$tgt | cut -d- -f2)
+    local bs=$(echo src_$tgt | cut -d- -f3)
+    local nb=$(echo src_$tgt | cut -d- -f4)
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    local opt=`get_options $tgt`
+    generic_compile "$maketgt" "$opt -DBS=$bs -DNB=$nb" "$tgt"
+    cp $maketgt $dir/${maketgt}_$(taskgraph_name $tg)_${bs}_${nb}
+    save_cd ..
+}
+
+
+. $top_builddir/scripts/create.sh
+
+( for tg in 1 8 9 10 11 12 ; do
+    for bs in 32 64 128 256 512 ; do
+	for nb in $[4096/$bs] ; do
+	    echo "sparse_lu sparse_lu wfo-$tg-$bs-$nb"
+	done
+    done
+    done ) | create_benchmarks exec 

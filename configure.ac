@@ -31,6 +31,7 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CXX
 AC_PROG_CC
 AC_PROG_RANLIB
+AC_PATH_PROG([PERL],[perl])
 
 # Checks for libraries.
 # Replace `pthread_create' is a function in `-lpthread':
@@ -55,6 +56,20 @@ AC_FUNC_MMAP
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([atexit gettimeofday memset munmap strerror])
 
+# Declare package options
+AC_ARG_ENABLE([fortify-source],
+	[AS_HELP_STRING([--disable-fortify-source],
+		[gcc's fortify source functionality may break swan @<:@default=2@:>@])],
+	[value_fortify_source=$enableval],
+	[value_fortify_source=default])
+
+AS_IF([test "x$value_fortify_source" != "xdefault"],
+	    [AS_IF([test "x$value_fortify_source" == "xno"],
+	    	    [value_fortify_source=0]);
+	     AS_VAR_APPEND(CFLAGS,[" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"]);
+	     AS_VAR_APPEND(CXXFLAGS,[" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"])
+	     ])
+
 # Variables
 AC_SUBST([HAVE_LIBHWLOC])
 
@@ -65,7 +80,21 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/Makefile.wf
 		 benchmarks/fft/src_wf/Makefile
 		 benchmarks/jacobi/src_wfo/Makefile
+		 benchmarks/jacobi/src_wfo/create.sh
+		 benchmarks/ubench/src_wf/Makefile
+		 benchmarks/ubench/src_wf/gen.pl
+		 benchmarks/ubench/src_wf/create.sh
+		 benchmarks/matmul2/src_wfo/Makefile
+		 benchmarks/rectmul_bis/src_wfo/Makefile
+		 benchmarks/rectmul_bis/src_wfo/create.sh
+		 benchmarks/cholesky2/src_wfo/Makefile
+		 benchmarks/cholesky2/src_wfo/create.sh
+		 benchmarks/sparse_lu/src_wfo/Makefile
+		 benchmarks/sparse_lu/src_wfo/create.sh
+                 scripts/create.sh
                  util/Makefile
                  util/Makefile.use_us
                  util/Makefile.use_cy])
+AC_CONFIG_COMMANDS([exec-scripts-create.sh],[chmod u+x scripts/create.sh])
+AC_CONFIG_COMMANDS([exec-benchmarks-ubench-src_wf-scripts],[chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl])
 AC_OUTPUT

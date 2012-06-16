@@ -609,6 +609,7 @@ LIBOBJS
 EGREP
 GREP
 CPP
+PERL
 RANLIB
 ac_ct_CC
 CFLAGS
@@ -661,6 +662,7 @@ SHELL'
 ac_subst_files=''
 ac_user_opts='
 enable_option_checking
+enable_fortify_source
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1281,6 +1283,14 @@ if test -n "$ac_init_help"; then
      short | recursive ) echo "Configuration of FULL-PACKAGE-NAME VERSION:";;
    esac
   cat <<\_ACEOF
+
+Optional Features:
+  --disable-option-checking  ignore unrecognized --enable/--with options
+  --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)
+  --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
+  --disable-fortify-source
+                          gcc's fortify source functionality may break swan
+                          [default=2]
 
 Some influential environment variables:
   CXX         C++ compiler command
@@ -3443,6 +3453,46 @@ else
   RANLIB="$ac_cv_prog_RANLIB"
 fi
 
+# Extract the first word of "perl", so it can be a program name with args.
+set dummy perl; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_PERL+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $PERL in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_PERL="$PERL" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if { test -f "$as_dir/$ac_word$ac_exec_ext" && $as_test_x "$as_dir/$ac_word$ac_exec_ext"; }; then
+    ac_cv_path_PERL="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+PERL=$ac_cv_path_PERL
+if test -n "$PERL"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $PERL" >&5
+$as_echo "$PERL" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
 
 # Checks for libraries.
 # Replace `pthread_create' is a function in `-lpthread':
@@ -4442,10 +4492,32 @@ fi
 done
 
 
+# Declare package options
+# Check whether --enable-fortify-source was given.
+if test "${enable_fortify_source+set}" = set; then :
+  enableval=$enable_fortify_source; value_fortify_source=$enableval
+else
+  value_fortify_source=default
+fi
+
+
+if test "x$value_fortify_source" != "xdefault"; then :
+  if test "x$value_fortify_source" == "xno"; then :
+  value_fortify_source=0
+fi;
+	     as_fn_append CFLAGS " -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source";
+	     as_fn_append CXXFLAGS " -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"
+
+fi
+
 # Variables
 
 
-ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+
+ac_config_commands="$ac_config_commands exec-scripts-create.sh"
+
+ac_config_commands="$ac_config_commands exec-benchmarks-ubench-src_wf-scripts"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -4992,6 +5064,7 @@ cat >>$CONFIG_STATUS <<_ACEOF || ac_write_fail=1
 # Files that config.status was made for.
 config_files="$ac_config_files"
 config_headers="$ac_config_headers"
+config_commands="$ac_config_commands"
 
 _ACEOF
 
@@ -5020,6 +5093,9 @@ $config_files
 
 Configuration headers:
 $config_headers
+
+Configuration commands:
+$config_commands
 
 Report bugs to <BUG-REPORT-ADDRESS>."
 
@@ -5156,9 +5232,23 @@ do
     "benchmarks/Makefile.wf") CONFIG_FILES="$CONFIG_FILES benchmarks/Makefile.wf" ;;
     "benchmarks/fft/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/fft/src_wf/Makefile" ;;
     "benchmarks/jacobi/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/jacobi/src_wfo/Makefile" ;;
+    "benchmarks/jacobi/src_wfo/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/jacobi/src_wfo/create.sh" ;;
+    "benchmarks/ubench/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/ubench/src_wf/Makefile" ;;
+    "benchmarks/ubench/src_wf/gen.pl") CONFIG_FILES="$CONFIG_FILES benchmarks/ubench/src_wf/gen.pl" ;;
+    "benchmarks/ubench/src_wf/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/ubench/src_wf/create.sh" ;;
+    "benchmarks/matmul2/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/matmul2/src_wfo/Makefile" ;;
+    "benchmarks/rectmul_bis/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/rectmul_bis/src_wfo/Makefile" ;;
+    "benchmarks/rectmul_bis/src_wfo/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/rectmul_bis/src_wfo/create.sh" ;;
+    "benchmarks/cholesky2/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/cholesky2/src_wfo/Makefile" ;;
+    "benchmarks/cholesky2/src_wfo/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/cholesky2/src_wfo/create.sh" ;;
+    "benchmarks/sparse_lu/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/sparse_lu/src_wfo/Makefile" ;;
+    "benchmarks/sparse_lu/src_wfo/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/sparse_lu/src_wfo/create.sh" ;;
+    "scripts/create.sh") CONFIG_FILES="$CONFIG_FILES scripts/create.sh" ;;
     "util/Makefile") CONFIG_FILES="$CONFIG_FILES util/Makefile" ;;
     "util/Makefile.use_us") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_us" ;;
     "util/Makefile.use_cy") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_cy" ;;
+    "exec-scripts-create.sh") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-scripts-create.sh" ;;
+    "exec-benchmarks-ubench-src_wf-scripts") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-benchmarks-ubench-src_wf-scripts" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
   esac
@@ -5172,6 +5262,7 @@ done
 if $ac_need_defaults; then
   test "${CONFIG_FILES+set}" = set || CONFIG_FILES=$config_files
   test "${CONFIG_HEADERS+set}" = set || CONFIG_HEADERS=$config_headers
+  test "${CONFIG_COMMANDS+set}" = set || CONFIG_COMMANDS=$config_commands
 fi
 
 # Have a temporary directory for convenience.  Make it in the build tree
@@ -5468,7 +5559,7 @@ cat >>$CONFIG_STATUS <<\_ACEOF || ac_write_fail=1
 fi # test -n "$CONFIG_HEADERS"
 
 
-eval set X "  :F $CONFIG_FILES  :H $CONFIG_HEADERS    "
+eval set X "  :F $CONFIG_FILES  :H $CONFIG_HEADERS    :C $CONFIG_COMMANDS"
 shift
 for ac_tag
 do
@@ -5701,9 +5792,17 @@ $as_echo "$as_me: $ac_file is unchanged" >&6;}
   fi
  ;;
 
-
+  :C)  { $as_echo "$as_me:${as_lineno-$LINENO}: executing $ac_file commands" >&5
+$as_echo "$as_me: executing $ac_file commands" >&6;}
+ ;;
   esac
 
+
+  case $ac_file$ac_mode in
+    "exec-scripts-create.sh":C) chmod u+x scripts/create.sh ;;
+    "exec-benchmarks-ubench-src_wf-scripts":C) chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl ;;
+
+  esac
 done # for ac_tag
 
 

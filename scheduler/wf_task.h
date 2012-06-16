@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 #ifndef WF_TASK_H
 #define WF_TASK_H
 
@@ -151,6 +151,13 @@ class task_data_t {
 #if STORED_ANNOTATIONS
     size_t nargs;
 #endif
+    // Optimize finalization (part of ready check). Finalization requires us
+    // to scan over all arguments and check if each argument was involved in
+    // a reduction. Most often, this check is redundant. So skip the scan if
+    // none of the arguments was used in a reduction; else do the scan (the
+    // latter part could be optimized by precomputing which arguments require
+    // finalization).
+    bool req_fin;
 
 public:
     task_data_t() { }
@@ -158,27 +165,33 @@ public:
 	if( arg_buf )
 	    delete[] arg_buf;
     }
-    void initialize( size_t args_size, size_t tags_size, size_t nargs_ ) {
-	arg_buf = new char[((args_size+15)&~15)+tags_size];
+    void initialize( size_t args_size, size_t tags_size, size_t fn_tags_size,
+		     size_t nargs_ ) {
+	fn_tags_size = (fn_tags_size+15) & ~15;
+	arg_buf = new char[((args_size+15)&~15)+fn_tags_size+tags_size];
 	args = &arg_buf[0];
 	tags = &arg_buf[(args_size+15)&~15];
+	tags += fn_tags_size;
 #if STORED_ANNOTATIONS
 	nargs = nargs_;
 #endif
+	req_fin = false;
 	assert( (intptr_t(args) & 15) == 0 );
 	assert( (intptr_t(tags) & 15) == 0 );
     }
-    void initialize( size_t args_size, size_t tags_size, char * end_of_stack,
-		     size_t nargs_ ) {
+    void initialize( size_t args_size, size_t tags_size, size_t fn_tags_size,
+		     char * end_of_stack, size_t nargs_ ) {
 	arg_buf = 0;
 #if STORED_ANNOTATIONS
 	nargs = nargs_;
 #endif
 	// align to 16 bytes (x86_64 ABI)
+	fn_tags_size = (fn_tags_size+15) & ~15;
 	tags = reinterpret_cast<char *>(
 	    intptr_t(end_of_stack-tags_size) & ~intptr_t(15) );
 	args = reinterpret_cast<char *>(
-	    intptr_t(tags-args_size) & ~intptr_t(15) );
+	    intptr_t(tags-fn_tags_size-args_size) & ~intptr_t(15) );
+	req_fin = false;
 	assert( (intptr_t(args) & 15) == 0 );
 	assert( (intptr_t(tags) & 15) == 0 );
     }
@@ -189,6 +202,7 @@ public:
 #if STORED_ANNOTATIONS
 	nargs = data.nargs;
 #endif
+	req_fin = data.req_fin;
 	data.arg_buf = 0;
 	assert( (intptr_t(args) & 15) == 0 );
 	assert( (intptr_t(tags) & 15) == 0 );
@@ -210,6 +224,9 @@ public:
 	copy_args( tgt, an... );
     }
 #endif
+
+    void set_finalization_required() { req_fin = true; }
+    bool is_finalization_required() const { return req_fin; }
 
 public:
     const task_data_t & get_task_data() const { return *this; }

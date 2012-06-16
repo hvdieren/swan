@@ -22,7 +22,7 @@ endif
 
 FEATURE_FLAGS = -momit-leaf-frame-pointer -fno-omit-frame-pointer -pthread
 
-CFLAGS  = -Wall $(OPT) $(PKG_CFLAGS) $(FEATURE_FLAGS)
-CXXFLAGS= -Wall $(OPT) $(PKG_CFLAGS) -std=c++0x $(FEATURE_FLAGS)
-LIBS += $(PKG_LIBS)
-
+CFLAGS   += -Wall $(OPT) $(PKG_CFLAGS) $(FEATURE_FLAGS)
+CXXFLAGS += -Wall $(OPT) $(PKG_CFLAGS) -std=c++0x $(FEATURE_FLAGS)
+LDFLAGS  += -pthread $(OPT) 
+LIBS     += $(PKG_LIBS)

@@ -27,15 +27,17 @@ RANLIB = @RANLIB@
 
 CFLAGS+=-O4
 
-OBJS=pp_time_cy.o pp_time_us.o
+OBJS=pp_time_cy.o pp_time_us.o pp_time_marss.o
 
-ALL: libtime_us.a libtime_cy.a
+ALL: libtime_us.a libtime_cy.a libtime_marss.a
 
 pp_time_cy.o: CFLAGS+=-DUSE_RDTSC=1
 
 pp_time_us.o: CFLAGS+=-DUSE_RDTSC=0
 
-pp_time_cy.o pp_time_us.o: pp_time.c pp_time.h
+pp_time_marss.o: CFLAGS+=-DUSE_RDTSC=0 -DUSE_MARSS
+
+pp_time_cy.o pp_time_us.o pp_time_marss.o: pp_time.c pp_time.h
 	$(MAKE) CFLAGS="$(CFLAGS)" pp_time.o
 	mv pp_time.o $@
 
@@ -47,5 +49,11 @@ libtime_us.a: pp_time_us.o
 	$(AR) crv libtime_us.a pp_time_us.o
 	$(RANLIB) $@
 
+libtime_marss.a: pp_time_marss.o
+	$(AR) crv libtime_marss.a pp_time_marss.o
+	$(RANLIB) $@
+
+getoptions.o: getoptions.c getoptions.h
+
 clean:
-	rm -f libtime_cy.a libtime_us.a *.o
+	rm -f libtime_cy.a libtime_us.a libtime_marss.a *.o

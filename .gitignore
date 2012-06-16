@@ -1,2 +1,4 @@
 # Ignore Emacs backup files
 *~
+# Ignore autoconf output dir
+autom4te.cache

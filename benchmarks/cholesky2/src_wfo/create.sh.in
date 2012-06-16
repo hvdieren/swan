@@ -1,0 +1,25 @@
+#!/bin/bash
+
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+
+create_target_cholesky2()
+{
+    local maketgt=$1
+    local tgt=$2
+    local dir=$3
+
+    local tg=$(echo src_$tgt | cut -d- -f2)
+    save_cd $(echo src_$tgt | cut -d- -f1) || return 0
+    local opt=`get_options $tgt`
+    generic_compile "$maketgt" "$opt" "$tgt"
+    cp $maketgt $dir/${maketgt}_$(taskgraph_name $tg)
+    save_cd ..
+}
+
+
+. $top_builddir/scripts/create.sh
+
+( for tg in 1 5 9 10 11 ; do
+    echo "cholesky2 cholesky wfo-$tg"
+    done ) | create_benchmarks exec 

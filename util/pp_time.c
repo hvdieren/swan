@@ -19,10 +19,16 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef USE_MARSS
+// Must come first - may impact behavior of headers
+#include "ptlcalls.h"
+#endif /* USE_MARSS */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <signal.h>
+
 #include "pp_time.h"
 
 #ifndef USE_RDTSC
@@ -117,11 +123,17 @@ void pp_time_report( pp_time_t * t, const char * region )
 void pp_time_start( pp_time_t * t )
 {
     t->last = pp_time();
+#ifdef USE_MARSS
+    ptlcall_switch_to_sim();
+#endif /* USE_MARSS */
 }
 
 void pp_time_end( pp_time_t * t )
 {
     unsigned long long d = pp_time() - t->last;
+#ifdef USE_MARSS
+    ptlcall_switch_to_native();
+#endif /* USE_MARSS */
     if( (long long)d < 0LL ) {
 	t->drops++;
     } else {
