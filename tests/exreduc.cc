@@ -316,7 +316,7 @@ void test2( int nr, int ni, int dd ) {
     if( ni > 0 )
 	for( int i=0; i < ni; ++i )
 	    spawn( output<Monad>, (indep<typename Monad::value_type>)redu,
-		   true, nr>0?nr:-nr );
+		   true, 2*(nr>0?nr:-nr) );
     else if( ni < 0 )
 	for( int i=0; i < -ni; ++i )
 	    spawn( waste<Monad>, (outdep<typename Monad::value_type>)redu );
