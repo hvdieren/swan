@@ -315,6 +315,49 @@ struct is_reduction : is_object_with_tag<T, reduction_type_tag> { };
 // ------------------------------------------------------------------------
 // Classes to support versioning of objects
 // ------------------------------------------------------------------------
+template<typename T, bool is_class=std::is_class<T>::value>
+struct destructor_get {
+    typedef void (*destructor_fn_ty)( void * );
+
+    static destructor_fn_ty get_destructor() {
+	return &call_destructor;
+    }
+private:
+    static void call_destructor( void * ptr ) {
+	reinterpret_cast<T *>( ptr )->T::~T();
+    }
+};
+
+template<typename T>
+struct destructor_get<T, false> {
+    typedef void (*destructor_fn_ty)( void * );
+
+    static destructor_fn_ty get_destructor() { return 0; }
+};
+
+class typeinfo {
+    typedef void (*destructor_fn_ty)( void * );
+    destructor_fn_ty dfn;
+
+    typeinfo( destructor_fn_ty dfn_ ) : dfn( dfn_ ) { }
+
+public:
+    template<typename T>
+    static typeinfo create() {
+	typeinfo ti( destructor_get<T>::get_destructor() );
+	return ti;
+    }
+
+    template<typename T>
+    static void construct( void * ptr ) {
+	new (ptr) T();
+    }
+
+    void destruct( void * ptr ) {
+	if( dfn )
+	    (*dfn)( ptr );
+    }
+};
 
 // TODO: tight implementation of obj_version: allocate obj_version and
 // obj_payload at once. Disadvantage: inefficient to nest (need to create
@@ -338,39 +381,44 @@ class obj_payload {
     typedef uint32_t ctr_t;
 private:
     ctr_t refcnt;
+    typeinfo tinfo;
     pad_multiple<64, sizeof(ctr_t)> pad; // put payload at 64-byte boundary
 
     template<typename MetaData>
     friend class obj_version;
 
-    obj_payload( int refcnt_init=1 ) : refcnt( refcnt_init ) {
+    obj_payload( typeinfo tinfo_, int refcnt_init=1 )
+	: refcnt( refcnt_init ), tinfo( tinfo_ ) {
 	// std::cerr << "Create obj_payload " << this << "\n";
     }
     ~obj_payload() {
 	assert( refcnt == 0
 		&& "Must have zero refcnt when destructing obj_payload" );
 	// std::cerr << "Delete obj_payload " << this << "\n";
+	tinfo.destruct( get_ptr() );
     }
 
 public:
     // Dynamic memory allocation create function
     static obj_payload *
-    create( size_t n ) {
+    create( size_t n, typeinfo tinfo ) {
 	char * p = new char[sizeof(obj_payload)+n];
-	return new (p) obj_payload();
+	return new (p) obj_payload( tinfo );
     }
 
     // In-place create function for unversioned objects
     static constexpr size_t
     size( size_t n ) {
-	return n == 0 ? sizeof(ctr_t) : sizeof(obj_payload)+n;
+	return n == 0 ? (sizeof(ctr_t)+sizeof(typeinfo))
+	    : sizeof(obj_payload)+n;
     }
     static obj_payload *
-    create( char * p ) {
-	return new (p) obj_payload(2); // refcnt initialized to 2 to avoid free
+    create( char * p, typeinfo tinfo ) {
+	return new (p) obj_payload(tinfo, 2); // refcnt initialized to 2 to avoid free
     }
 
-    // First byte after payload, allocated in one go with refcnt
+    // First byte after payload, allocated in one go with refcnt.
+    // 1 is counted in units of sizeof(this).
     void * get_ptr() { return this+1; }
     const void * get_ptr() const { return this+1; }
 
@@ -381,6 +429,10 @@ public:
 	if( __sync_fetch_and_add( &refcnt, -1 ) == 1 ) { // atomic!
 	    delete this;
 	}
+    }
+
+    void destruct() {
+	tinfo.destruct( get_ptr() );
     }
 };
 
@@ -435,7 +487,7 @@ class obj_reduction_md {
 		assigned = assign_mutex();
 	    } else {
 		// Immediate allocate + set identity value (cheap anyway)
-		version = obj_version<MetaData>::create( sz, 0 );
+		version = obj_version<MetaData>::template create<typename Monad::value_type>( sz, 0 );
 		set_identity<Monad>();
 		assigned = assign_mutex();
 		is_pref = false;
@@ -452,7 +504,7 @@ class obj_reduction_md {
 		need_identity = false;
 	    } else {
 		// Lazy initialize, should also lazily allocate
-		version = obj_version<MetaData>::create( sz, 0 );
+		version = obj_version<MetaData>::template create<typename Monad::value_type>( sz, 0 );
 		need_identity = true;
 		assigned = assign_mutex();
 		is_pref = false;
@@ -737,19 +789,19 @@ private:
     template<typename T, obj_modifiers_t OMod>
     friend class unversioned;
 
-    template<typename MetaData_, size_t DataSize>
+    template<typename MetaData_, typename T, size_t DataSize>
     friend class obj_unv_instance; // for constructor
 
     // First-create constructor
-    obj_version( size_t sz, obj_instance<metadata_t> * obj_ )
+    obj_version( size_t sz, obj_instance<metadata_t> * obj_, typeinfo tinfo )
 	: refcnt( 1 ), size( sz ), obj( obj_ ) {
-	payload = obj_payload::create( sz );
+	payload = obj_payload::create( sz, tinfo );
 	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
     }
     // First-create constructor for unversioned objects
-    obj_version( size_t sz, char * payload_ptr )
+    obj_version( size_t sz, char * payload_ptr, typeinfo tinfo )
 	: refcnt( 1 ), size( sz ), obj( (obj_instance<metadata_t> *)0 ) {
-	payload = obj_payload::create( payload_ptr );
+	payload = obj_payload::create( payload_ptr, tinfo );
 	// std::cerr << "Create obj_version " << this << " payload " << (void *)payload << "\n";
     }
     // Constructor for nesting
@@ -766,9 +818,13 @@ private:
     }
 
 public:
+    template<typename T>
     static obj_version<metadata_t> *
     create( size_t n, obj_instance<metadata_t> * obj_ ) {
-	return new obj_version<metadata_t>( n, obj_ );
+	obj_version<metadata_t> * v
+	    = new obj_version<metadata_t>( n, obj_, typeinfo::create<T>() );
+	typeinfo::construct<T>( v->get_ptr() );
+	return v;
     }
     static obj_version<metadata_t> *
     nest( obj_instance<metadata_t> * obj_, obj_instance<metadata_t> * src ) {
@@ -832,21 +888,28 @@ private:
 
 // protected:
 public:
+    // Optimized del_ref() call for unversioned objects.
     void nonfreeing_del_ref() {
 	assert( refcnt > 0 );
 	__sync_fetch_and_add( &refcnt, -1 ); // atomic!
+	// One may desire to call get_payload()->destruct() when the unversioned
+	// goes out of scope (in which case refcnt drops to 0). However, it is
+	// equally good to do this unconditionally in the obj_unv_instance
+	// destructor. That saves us a conditional here.
+
 	// TODO: with split allocation of metadata and payload, free payload
 	// or allocate payload inline in special case also?
     }
 
 public:
+    template<typename T>
     obj_version<metadata_t> * rename() {
 	OBJ_PROF( rename );
 	size_t osize = size;      // Save in case del_ref() frees this
 	// TODO: could reset reduction info here: doing reduction is now
 	// redundant: if it hasn't been done already, it won't be read.
 	del_ref();                // The renamed instance no longer points here
-	return create( osize, obj );   // Create a clone of ourselves
+	return create<T>( osize, obj );   // Create a clone of ourselves
     }
     // bool is_renamed() const { return obj && obj->get_version() != this; }
 
@@ -932,6 +995,7 @@ public:
     //   in the spawnee must see this new version, but not previously created
     //   tasks.
     //   Set the version of this dependence to the new current version.
+    template<typename T>
     inline obj_version<metadata_t> * rename( obj_instance<metadata_t> * bro = 0 ) __attribute__((noinline));
 
     template<typename MetaData_>
@@ -957,12 +1021,13 @@ public:
 };
 
 template<typename MetaData>
+template<typename T>
 obj_version<MetaData> * obj_instance<MetaData>::rename( obj_instance<MetaData> * bro ) {
     obj_instance<metadata_t> * obj = version->get_instance();
     if( obj == this )
-	version = version->rename();
+	version = version->rename<T>();
     else if( obj )
-	version = obj->rename();
+	version = obj->rename<T>();
     else { // case of unversioned objects
 	OBJ_PROF( rename_unversioned );
 	return version;
@@ -972,14 +1037,24 @@ obj_version<MetaData> * obj_instance<MetaData>::rename( obj_instance<MetaData> *
     return version;
 }
 
-template<typename MetaData, size_t DataSize>
+template<typename MetaData, typename T, size_t DataSize>
 class obj_unv_instance : public obj_version<MetaData> {
     typedef MetaData metadata_t;
 
     char data[obj_payload::size(DataSize)];
 public:
     obj_unv_instance()
-	: obj_version<metadata_t>( DataSize, data ) { }
+	: obj_version<metadata_t>( DataSize, data, typeinfo::create<T>() ) {
+	// Call the payload data constructor (T::T()) here, just like we
+	// do it in obj_version::create() functions that allocate a new payload.
+	// Same motivation applies: we don't want to pass around a pointer to
+	// the default constructor function for the obj_payload constructor to
+	// call, because very often the constructor will be a no-op.
+	typeinfo::construct<T>( obj_version<metadata_t>::get_ptr() );
+    }
+    ~obj_unv_instance() {
+	obj_version<metadata_t>::get_payload()->destruct();
+    }
 
     const obj_version<metadata_t> * get_version() const { return this; }
     obj_version<metadata_t> * get_version() { return this; }
@@ -1071,7 +1146,7 @@ static inline void rename( outdep<T> & obj_ext, outdep<T> & obj_int,
     obj_version<MetaData> * v = obj_ext.get_version();
     assert( v->is_versionable() ); // Guaranteed by applicators
     if( v->get_metadata()->rename_is_active() )
-	v = obj_ext.rename( &obj_int );
+	v = obj_ext.rename<T>( &obj_int );
 }
 
 // @Note
@@ -1096,7 +1171,7 @@ rename( inoutdep<T> & obj_ext, inoutdep<T> & obj_int,
 	obj_version<MetaData> * v_old = v;
 	if( v_old->rename_has_writers() ) {
 #if OBJECT_INOUT_RENAME > 1
-	    v = obj_ext.rename( &obj_int );
+	    v = obj_ext.rename<T>( &obj_int );
 	    // Create delayed copy task. Does a grab on the old
 	    // object as well as on the new.
 	    outdep<T> v_dep = outdep<T>::create( v );
@@ -1105,7 +1180,7 @@ rename( inoutdep<T> & obj_ext, inoutdep<T> & obj_int,
 	    OBJ_PROF(rename_inout_task);
 #endif
 	} else {
-	    v = obj_ext.rename( &obj_int );
+	    v = obj_ext.rename<T>( &obj_int );
 	    v_old->copy_to( v );
 	    OBJ_PROF(rename_inout);
 	}
@@ -1823,7 +1898,7 @@ private:
 public:
     explicit object_t(size_t n = 1) {
 	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
-	this->version = obj_version<obj_metadata>::create(n*size_struct<T>::value, this);
+	this->version = obj_version<obj_metadata>::create<T>(n*size_struct<T>::value, this);
     }
 #if 0 // needed?
     object_t( const object_t<T, OMod> &o ) {
@@ -1928,12 +2003,13 @@ public:
 template<typename T, obj_modifiers_t OMod = obj_none>
 class unversioned
     : public obj_access_traits<T,
-			       obj_unv_instance<obj_metadata,
+			       obj_unv_instance<obj_metadata, T,
 						size_struct<T>::value>,
 			       unversioned<T, OMod> > {
 protected:
     typedef obj_access_traits<T,
-			      obj_unv_instance<obj_metadata, size_struct<T>::value>,
+			      obj_unv_instance<obj_metadata, T,
+					       size_struct<T>::value>,
 			      unversioned<T, OMod> > OAT;
     typedef unversioned<T, OMod> self_ty;
 
@@ -2246,7 +2322,7 @@ public:
 // unversioned: object declaration-style interface to unversioned objects.
 template<obj_modifiers_t OMod>
 class unversioned<void, OMod>
-    : public obj_unv_instance<token_metadata, 0> {
+    : public obj_unv_instance<token_metadata, void, 0> {
 public:
     unversioned() { }
     ~unversioned() {

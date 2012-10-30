@@ -12,7 +12,7 @@ top_builddir = @top_builddir@
 
 # Examples currently not working:
 # exobject exobjpass expipe_unv 
-EXAMPLES = explain exnop expipe expipe2 exargs exinoutcp exnest exgen exforeach exreduc exptrarg
+EXAMPLES = explain exnop expipe expipe2 exargs exinoutcp exnest exgen exforeach exreduc exptrarg exrename
 
 .PHONY: all
 
@@ -29,6 +29,9 @@ examples: $(EXAMPLES)
 
 # Rebuild examples if any of the header files has changed
 $(patsubst %,%.o,$(EXAMPLES)): $(patsubst %,$(top_srcdir)/scheduler/%,$(HDRS))
+
+# Rebuild examples if the compiled library has changed
+$(patsubst %,%.o,$(EXAMPLES)): $(top_builddir)/scheduler/libschedulers.a
 
 # Generic rule to build an example program
 %: %.o
