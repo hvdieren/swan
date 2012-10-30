@@ -598,6 +598,10 @@ public:
 	return ret;
     }
 
+    void set_active() {
+	state = s_active;
+    }
+
     template<typename Monad>
     obj_version<MetaData> *
     enter( size_t sz, obj_version<MetaData> * orig, int * idxp ) {
@@ -766,6 +770,11 @@ public:
     }
 
     bool is_initialized() const { return reduc != 0; }
+
+    void set_active() {
+	assert( reduc && "Reduction not initialized when calling set_active" );
+	reduc->set_active();
+    }
 };
 
 // obj_version: versioning of data objects + tracking readers/writer
@@ -942,6 +951,7 @@ public:
     }
 
     bool is_used_in_reduction() const { return reduc.is_initialized(); }
+    void set_active_reduction() { reduc.set_active(); }
 
     // Some computations may not be complete (eg reductions). Finalize them
     // now or expand them, depending on the complexity of the reduction
@@ -1398,6 +1408,11 @@ struct dgrab_functor {
 	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
 	if( !std::is_void< T >::value ) // token
 	    obj_ext.get_version()->add_ref();
+	if( !is_outdep< DepTy<T> >::value
+	    && !is_truedep< DepTy<T> >::value // static checks
+	    && !std::is_void< T >::value // token
+	    && obj_ext.get_version()->is_used_in_reduction() )
+	    fr->get_task_data().set_finalization_required();
 	return true;
     }
 
@@ -1503,7 +1518,10 @@ public:
     template<typename M>
     bool operator () ( reduction<M> & obj_int, // int == ext so far
 		       typename reduction<M>::dep_tags & tags ) {
-	// Don't finalize - reduction is still going on
+	// Don't finalize - reduction is still going on,
+	// but do set reduction to state active, meaning we will finalize
+	// or expand it after this task!
+	obj_int.get_version()->set_active_reduction();
 	return true;
     }
 #endif
