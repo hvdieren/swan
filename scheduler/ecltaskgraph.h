@@ -306,7 +306,7 @@ private:
 
 	bool new_group( group_t grp ) const {
 	    // TODO: Optimize by representing group_t as bit_mask?
-	    return grp == g_write || g != grp;
+	    return ( grp == g_write || g != grp ) && g != g_NUM;
 	}
 	bool match_group( group_t grp ) const {
 	    // This condition is markedly simpler than in other task graphs
@@ -317,7 +317,7 @@ private:
 	void open_group( group_t grp ) { g = grp; }
 
 	void add_task() { some_tasks = true; }
-	void clr_task() { some_tasks = false; }
+	void clr_tasks() { some_tasks = false; }
 	bool has_tasks() const { return some_tasks; }
 
 	void lock() { mutex.lock(); }
@@ -326,7 +326,7 @@ private:
 
     Oldest oldest;
     Youngest youngest;
-    size_t with_flag;
+    size_t num_gens;
 
 #if EMBED_LISTS
     sl_list<gen_tags> tasks; // set of readers after the writer
@@ -341,7 +341,7 @@ private:
     operator << ( std::ostream & os, const ecltg_metadata & md_const );
 
 public:
-    ecltg_metadata() : with_flag( 0 ) {
+    ecltg_metadata() : num_gens( 0 ) {
 	// errs() << "ecltg_metadata create: " << this << "\n";
     }
     ~ecltg_metadata() {
@@ -356,7 +356,8 @@ public:
     bool rename_has_readers() const { return has_tasks(); }
     bool rename_has_writers() const { return has_tasks(); }
     bool has_tasks() const {
-	return oldest.has_tasks() || youngest.has_tasks();
+	// return oldest.has_tasks() || youngest.has_tasks();
+	return num_gens > 0;
     }
 
     // Register users of this object.
@@ -386,17 +387,14 @@ public:
 */
 
     // Dependency queries on current generation
-    bool has_readers() const { return youngest.has_tasks(); }
-    bool has_writers() const { return youngest.has_tasks(); }
+    bool has_readers() const { return num_gens > 0; } // youngest.has_tasks(); }
+    bool has_writers() const { return num_gens > 0; } // youngest.has_tasks(); }
 
     // This is really a ready check: can we launch with the previous gang?
     // If has_one_generation(), need to check has_tasks() as well,
     // else just check youngest.
     bool match_group( group_t grp ) const {
-	if( has_one_generation() )
-	    return has_tasks() && youngest.match_group(grp);
-	else
-	    return youngest.match_group(grp);
+	return num_gens <= 1 && youngest.match_group(grp);
     }
 
     // Dependency queries on readers
@@ -418,10 +416,13 @@ public:
 #endif
 
 private:
-    bool may_interfere() const volatile { return with_flag == 0; }
-    bool has_one_generation() const volatile { return with_flag == 0; }
-    void pop_generation() volatile { __sync_fetch_and_add( &with_flag, -1 ); }
-    void push_generation() volatile { __sync_fetch_and_add( &with_flag, 1 ); }
+    bool may_interfere() const volatile { return num_gens <= 2; }
+    bool has_one_generation() const volatile { return num_gens <= 1; }
+    size_t pop_generation() volatile {
+	assert( num_gens > 0 && "pop when no generations exist" );
+	return __sync_fetch_and_add( &num_gens, -1 );
+    }
+    void push_generation() volatile { __sync_fetch_and_add( &num_gens, 1 ); }
 
     // Locking
     // void lock() { mutex.lock(); }
@@ -433,9 +434,14 @@ private:
 inline std::ostream &
 operator << ( std::ostream & os, const ecltg_metadata & md_const ) {
     ecltg_metadata & md = *const_cast<ecltg_metadata *>( &md_const );
-    os << "taskgraph_md={o.num_tasks=" << md.oldest.num_tasks
+    os << "taskgraph_md={this=" << &md_const
+       << " o.num_tasks=" << md.oldest.num_tasks
        << " y.g=" << md.youngest.g
-       << " with_flag=" << md.with_flag << '}';
+       << " y.some=" << md.youngest.some_tasks
+       << " num_gens=" << md.num_gens
+       << " front=" << md.tasks.front()
+       << " back=" << md.tasks.back()
+       << '}';
     return os;
 }
 
@@ -666,8 +672,7 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	youngest.lock();
     }
 
-    if( !may_interfere() )
-	pop_generation(); // --with_flag; protected by lock on both sides?
+    // errs() << "wakeup: " << * this << " has_y=" << has_youngest << std::endl;
 
     gen_tags * head = tasks.front();
     assert( (head || has_youngest) && "youngest not locked but list empty" );
@@ -686,16 +691,40 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // A store is sufficient because all ready tasks have finished execution
     // (checked by the atomic decrement). Therefore, there cannot be races
     // on num_tasks.
-    assert( oldest.num_tasks == 0 && "num_tasks changed during wakeup" );
-    oldest.num_tasks = new_tasks;
+    // assert( oldest.num_tasks == 0 && "num_tasks changed during wakeup" );
+    // oldest.num_tasks = new_tasks;
+    // WRONG: A store is not sufficient because when num_generations==1,
+    // then a task issue may occur between the decrement of oldest.num_tasks
+    // to 0 and obtaining both young and old locks. When this happens, we will
+    // not see that oldest.num_tasks is still zero.
+    __sync_fetch_and_add( &oldest.num_tasks, new_tasks );
+
+    // --num_gens; protected by lock on both sides?
+    // errs() << "flush..." << std::endl;
+    bool empty = pop_generation() == 1; // Down to 0 from 1.
+    assert( empty == !num_gens && "empty iff num_gens==0" );
 
     if( i_next ) {
+	assert( !empty && "Zero generations but still tasks in youngest" );
 	tasks.fastforward( i_next );
     } else {
+	// Two possibilities:
+	// - empty, or num_gens==0: no more tasks in system, num_tasks==0
+	//                          and youngest.some_tasks should be false
+	// - !empty, or num_gens!=0: one generation left, youngest has no
+	//           more tasks in it (i_next == 0), but because !empty,
+	//           there is 1 generation and youngest.some_tasks should
+	//           remain set.
 	assert( has_youngest
 		&& "Youngest generation not locked and list becomes empty" );
+	assert( num_gens <= 1
+		&& "Few generations present when depleting youngest" );
 	tasks.clear();
+	if( empty )
+	    youngest.clr_tasks();
     }
+
+    assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
 
     oldest.unlock();
     if( has_youngest )
@@ -712,28 +741,65 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
     }
     youngest.lock();
 
-    if( !youngest.match_group( g ) ) {
-	youngest.open_group( g );
-	if( tasks.back() ) { // should use iterators?
-	    tasks.back()->set_last_in_generation();
-	    push_generation();
-	}
-    }
+    // errs() << "add_task: " << *this << " has_o=" << has_oldest << std::endl;
 
-    // t->clr_last_in_generation();
+    tags->st_task = t; // TODO: duplicate store?
 
-    if( has_one_generation() ) {
-	// If there is only one generation (oldest == youngest), then
-	// we are immediately adding the task to the oldest generation.
-	assert( has_oldest && "one generation and not locked from both sides" );
+    if( num_gens == 0 ) { // Empty, tasks fly straight through
+	assert( has_oldest && "empty and not locked from both sides" );
+	// Update oldest
 	__sync_fetch_and_add( &oldest.num_tasks, 1 );
+
+	// Update youngest
+	youngest.open_group( g );
+	youngest.add_task();
+
+	// Count generations
+	push_generation();
+    } else if( num_gens == 1 ) { // One generation, tasks fly straight through
+	// errs() << std::endl;
+	assert( has_oldest && "one generation and not locked from both sides" );
+	assert( youngest.has_tasks() && "youngest not empty if 1 generation" );
+	// oldest.num_tasks will be decremented before entering the critical
+	// section. Therefore, we cannot trust on its value.
+	// assert( oldest.has_tasks() && "oldest not empty if 1 generation" );
+
+	// Update youngest
+	if( !youngest.match_group( g ) ) {
+	    youngest.open_group( g );
+	    youngest.add_task();
+	    // Update num_gens
+	    // if( oldest.has_tasks() ) {
+		push_generation();
+		t->add_incoming();
+		tasks.push_back( tags );
+	    // }
+	} else {
+	    // Update oldest
+	    __sync_fetch_and_add( &oldest.num_tasks, 1 );
+	}
+    } else if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
+	youngest.open_group( g );
+	youngest.add_task();
+	if( tasks.back() ) // should use iterators?
+	    tasks.back()->set_last_in_generation();
+	push_generation();
+	// In this case, we are assured that a wakeup will happen on the
+	// new task.
+	t->add_incoming();
+	tasks.push_back( tags );
     } else {
 	// In this case, we are assured that a wakeup will happen on the
 	// new task.
 	t->add_incoming();
-	tags->st_task = t; // TODO: duplicate store?
 	tasks.push_back( tags );
     }
+
+    // assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
+	    // && "Either no generations or oldest and youngest diff has_tasks" );
+    assert( (has_oldest || !may_interfere()) && "interference invariant" );
+    assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
+    assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
 
     if( has_oldest )
 	oldest.unlock();
@@ -789,7 +855,7 @@ struct serial_dep_traits {
     static
     bool arg_ini_ready( const obj_instance<ecltg_metadata> & obj, group_t g ) {
 	const ecltg_metadata * md = obj.get_version()->get_metadata();
-	// errs() << "0 ini_ready serial: " << *md << "\n";
+	// errs() << "0 ini_ready serial: " << *md << " g=" << g << "\n";
 	bool x = md->match_group( g );
 	// errs() << "1 ini_ready serial: " << *md << " x=" << x << "\n";
 	return x;
@@ -864,7 +930,7 @@ struct dep_traits<ecltg_metadata, task_metadata, outdep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, outdep<T> & obj,
 			   typename outdep<T>::dep_tags * sa ) {
-	serial_dep_traits::arg_issue( fr, obj, sa, g_read );
+	serial_dep_traits::arg_issue( fr, obj, sa, g_write );
     }
     template<typename T>
     static bool arg_ini_ready( const outdep<T> & obj ) {
