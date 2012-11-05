@@ -377,7 +377,7 @@ int main( int argc, char* argv[] ) {
     }
 
     printf("Total time %.3lf %s\n", elapsed, get_unit());
-    printf("Per-task time %.3lf %s\n", elapsed / num_tasks, get_unit());
+    printf("Per-task time %.3lf %s\n", elapsed / num_tasks / num_stages, get_unit());
 
     return 0;
 }
