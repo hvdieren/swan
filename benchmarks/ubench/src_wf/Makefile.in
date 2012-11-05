@@ -24,7 +24,7 @@ VPATH = @srcdir@
 top_builddir = @top_builddir@
 builddir = @builddir@
 
-PROG=data_dep1 data_dep2 data_depN1 data_depN2 data_depN5 data_depN10 data_depN20 data_depN40 data_depN50 data_depN60 data_depN100 data_depN200 data_depN1000 data_depN2000
+PROG=data_dep1 data_dep2 data_depN1 data_depN2 data_depN5 data_depN10 data_depN20 data_depN40 data_depN50 data_depN60 data_depN100 data_depN200 data_depN1000 data_depN2000 upipe
 
 include ../../Makefile.wf
 include $(top_builddir)/util/Makefile.use_cy
