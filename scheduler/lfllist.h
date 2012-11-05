@@ -425,6 +425,9 @@ public:
 
     void clear() { head = tail = 0; }
 
+    // Put in for ecltaskgraph.h - special case of splice()
+    void fastforward( T * it ) { head = it; }
+
     void push_back( const_iterator * elm ) { push_back( elm.cur ); }
     void push_back( T * elm ) {
 	traits::set_next( elm, 0 );
@@ -440,6 +443,7 @@ public:
     }
 
     T * front() const { return head; }
+    T * back() const { return tail; }
     void pop() {
 	assert( !empty() && "List may not be empty on a pop" );
 	head = traits::get_next( head );

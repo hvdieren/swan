@@ -188,6 +188,9 @@
  *    file = ecgtaskgraph.h
  *    currently best embedded generational/multi-generation/hypergraph
  * 12: global tickets with ROB
+ * 13/14: Hypergraph idea implemented as a list with flags on the tasks
+ *     indicating when a generation ends. 13 uses distinct list nodes, 14 uses
+ *     list nodes embedded in the tasks.
  */
 #ifndef OBJECT_TASKGRAPH
 #define OBJECT_TASKGRAPH 1
