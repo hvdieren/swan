@@ -224,17 +224,20 @@ void task(int arg) {
 enum exp_enum {
     exp_reference,
     exp_pipe_serial,
+    exp_pipe_rename1,
     exp_NUM
 };
 
 const char * const experiment_desc[exp_NUM] = {
     "reference",
-    "pipe_serial"
+    "pipe-serial",
+    "pipe-rename1"
 };
 
 const char * const experiment_arg[exp_NUM] = {
     "ref",
-    "serial"
+    "serial",
+    "rename1"
 };
 
 exp_enum decode( const char * arg ) {
@@ -371,13 +374,23 @@ int main( int argc, char* argv[] ) {
 	elapsed = experiment( num_tasks, num_stages,
 			      pipe_in, pipe_out, pipe_inout );
 	break;
+    case exp_pipe_rename1:
+	for( unsigned int s=0; s < num_stages; ++s ) {
+	    pipe_out[s] = s == 0 ? new object_t<int>() : 0;
+	    pipe_inout[s] = s == 0 ? 0 : pipe_out[0];
+	    pipe_in[s] = 0;
+	}
+	elapsed = experiment( num_tasks, num_stages,
+			      pipe_in, pipe_out, pipe_inout );
+	break;
     case exp_NUM:
 	elapsed = 0;
     break;
     }
 
+    extern size_t nthreads;
     printf("Total time %.3lf %s\n", elapsed, get_unit());
-    printf("Per-task time %.3lf %s\n", elapsed / num_tasks / num_stages, get_unit());
+    printf("Per-task time %.3lf %s\n", nthreads * ( elapsed / num_tasks / num_stages ), get_unit());
 
     return 0;
 }
