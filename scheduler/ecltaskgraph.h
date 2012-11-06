@@ -394,7 +394,7 @@ public:
     // If has_one_generation(), need to check has_tasks() as well,
     // else just check youngest.
     bool match_group( group_t grp ) const {
-	return num_gens <= 1 && youngest.match_group(grp);
+	return num_gens == 0 || youngest.match_group(grp);
     }
 
     // Dependency queries on readers
