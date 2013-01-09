@@ -349,8 +349,15 @@ public:
     }
 
     template<typename T>
-    static void construct( void * ptr ) {
+    static typename std::enable_if<!std::is_array<T>::value>::type
+    construct( void * ptr ) {
 	new (ptr) T();
+    }
+
+    template<typename T>
+    static typename std::enable_if<std::is_array<T>::value>::type
+    construct( void * ptr ) {
+	// empty
     }
 
     void destruct( void * ptr ) {
@@ -382,7 +389,9 @@ class obj_payload {
 private:
     ctr_t refcnt;
     typeinfo tinfo;
-    pad_multiple<64, sizeof(ctr_t)> pad; // put payload at 64-byte boundary
+    pad_multiple<64, sizeof(ctr_t) + sizeof(typeinfo)> pad;
+    // put payload at 64-byte boundary (assumed cache line size, assumed
+    // obj_payload allocated on 64-byte boundary).
 
     template<typename MetaData>
     friend class obj_version;
