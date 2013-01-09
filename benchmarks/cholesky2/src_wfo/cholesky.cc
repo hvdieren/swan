@@ -82,8 +82,8 @@ void smpSs_sgemm_tile(bin Adep, bin Bdep, binout Cdep, unsigned long NB)
 //           &DONE,           /* BETA           */
 //           C, &NB);         /* C, LDC         */
 
-    float * A = (block_t)Adep;
-    float * B = (block_t)Bdep;
+    const float * A = (block_t)Adep;
+    const float * B = (block_t)Bdep;
     float * C = (block_t)Cdep;
 
  // using CBLAS
@@ -110,7 +110,7 @@ void smpSs_strsm_tile(bin Tdep, binout Bdep, unsigned long NB)
 //         T, &NB,               /* A, LDA                   */
 //         B, &NB);              /* B, LDB                   */
 
-float * T = (block_t)Tdep;
+const float * T = (block_t)Tdep;
 float * B = (block_t)Bdep;
 
  // using CBLAS
@@ -136,7 +136,7 @@ void smpSs_ssyrk_tile( bin Adep, binout Cdep, unsigned long NB)
 //           &DONE,              /* BETA         */
 //           C, &NB);            /* C, LDC       */
 
-float * A = (block_t)Adep;
+const float * A = (block_t)Adep;
 float * C = (block_t)Cdep;
 
  // using CBLAS
