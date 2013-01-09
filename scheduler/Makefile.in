@@ -40,7 +40,7 @@ wf_main.o: current_version.h
 
 %.o: %.cc
 	@echo $(CXX) $(OPT) $@
-	@$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(ECHO) $(CXX) $(CXXFLAGS) -c $< -o $@
 
 mangl:
 	$(ECHO) if [ ! -f mangled.h ] ; then $(srcdir)/xfn.sh /dev/null > mangled.h ; fi
