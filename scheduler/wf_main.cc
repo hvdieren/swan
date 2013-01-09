@@ -57,7 +57,7 @@ volatile long ini_barrier = 0;
 
 void validate_spawn_deque( spawn_deque * d ) {
     bool fnd = false;
-    for( int i=0; i < nthreads; ++i )
+    for( unsigned i=0; i < nthreads; ++i )
 	if( d == ws[i].get_deque() ) {
 	    fnd = true;
 	    break;
@@ -127,6 +127,22 @@ void wf_initialize() {
     tls_thread_logger = &thread_logger[0];
     threadid = 0;
 
+    // Get the initial thread affinity for the initial thread.
+    // All threads will be scheduled to this set in round-robin fashion.
+    cpu_set_t cpu_hint;
+    unsigned cpu_current;
+    unsigned cpu_max = sizeof(cpu_hint)*8;
+    pthread_getaffinity_np( pthread_self(), sizeof(cpu_hint), &cpu_hint );
+    if( (unsigned)CPU_COUNT( &cpu_hint ) < nthreads ) {
+	std::cerr << "Error: number of CPUs in initial affinity set ("
+		  << CPU_COUNT( &cpu_hint )
+		  << ") is less than number of threads ("
+		  << nthreads << ").\n";
+    }
+    for( cpu_current=0; cpu_current < cpu_max; ++cpu_current ) 
+       if( CPU_ISSET( cpu_current, &cpu_hint ) )
+           break;
+
 #ifdef HAVE_LIBHWLOC
     // Use HWLOC library to figure out cores and memory nodes
     // Allocate and initialize topology object.
@@ -150,15 +166,13 @@ void wf_initialize() {
 	exit( 2 );
     }
 
-    hwloc_cpuset_t cpuset;
-
     // Initializing main and other threads
     for( size_t i=0; i < nthreads; ++i ) {
 	hwloc_obj_t pu
-	    = hwloc_get_obj_by_type( topology, HWLOC_OBJ_PU, i );
+	    = hwloc_get_obj_by_type( topology, HWLOC_OBJ_PU, cpu_current );
 	if( !pu ) {
-	    fprintf( stderr, "hwloc: could not find object for PU %lu\n",
-		     i );
+	    fprintf( stderr, "hwloc: could not find object for PU %u\n",
+		     cpu_current );
 	    exit( 2 );
 	}
 	hwloc_obj_t obj;
@@ -167,17 +181,26 @@ void wf_initialize() {
 		break;
 	}
 	if( !obj ) {
-	    fprintf( stderr, "hwloc: could not find memory for PU %lu\n",
-		     i );
+	    fprintf( stderr, "hwloc: could not find memory for thread %lu, "
+	    	     "PU %u\n", i, cpu_current );
 	    exit( 2 );
 	}
 
 	ws[i].initialize( i, nthreads, topology, pu->logical_index,
 			  obj->logical_index, ws[0].get_future() );
+
+	// Advance to next allowed (hinted) CPU
+	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
+	   if( CPU_ISSET( cpu_current, &cpu_hint ) )
+	       break;
     }
 #else
     for( size_t i=0; i < nthreads; ++i ) {
-	ws[i].initialize( i, nthreads, i, 0, ws[0].get_future() );
+	ws[i].initialize( i, nthreads, cpu_current, 0, ws[0].get_future() );
+	// Advance to next allowed (hinted) CPU
+	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
+	   if( CPU_ISSET( cpu_current, &cpu_hint ) )
+	       break;
     }
 #endif
 

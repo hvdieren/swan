@@ -225,7 +225,7 @@ worker_state::cpubind() const {
     // Force thread on the appropriate CPU
     cpu_set_t set;
     CPU_ZERO(&set);
-    CPU_SET(id, &set);
+    CPU_SET(my_cpu, &set);
     if( sched_setaffinity( 0, sizeof(set), &set ) < 0 ) {
 	std::cerr << "sched_setaffinity for thread id=" << id
 		  << " on cpu=" << id << " fails due to: "
@@ -233,6 +233,15 @@ worker_state::cpubind() const {
     }
 #endif
 #endif
+
+    /*
+    cpu_set_t cpu_set;
+    pthread_getaffinity_np( pthread_self(), sizeof(cpu_set), &cpu_set );
+    std::cout << "CHECK: thread " << id << " has " << CPU_COUNT(&cpu_set) << " cpus in set\n";
+    for( unsigned i=0; i < nthreads; ++i )
+       if( CPU_ISSET( i, &cpu_set ) ) std::cout << "cpu " << i << " is set\n";
+    */
+
 }
 
 void
