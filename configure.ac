@@ -25,7 +25,7 @@
 AC_PREREQ([2.68])
 AC_INIT([FULL-PACKAGE-NAME], [VERSION], [BUG-REPORT-ADDRESS])
 AC_CONFIG_SRCDIR([scheduler/alc_allocator.h])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([auto_config.h])
 
 # Checks for programs.
 AC_PROG_CXX
@@ -36,7 +36,7 @@ AC_PATH_PROG([PERL],[perl])
 # Checks for libraries.
 # Replace `pthread_create' is a function in `-lpthread':
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([hwloc], [hwloc_topology_create])
+AC_CHECK_LIB([hwloc], [hwloc_topology_init])
 
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h string.h sys/time.h unistd.h])
@@ -69,9 +69,6 @@ AS_IF([test "x$value_fortify_source" != "xdefault"],
 	     AS_VAR_APPEND(CFLAGS,[" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"]);
 	     AS_VAR_APPEND(CXXFLAGS,[" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$value_fortify_source"])
 	     ])
-
-# Variables
-AC_SUBST([HAVE_LIBHWLOC])
 
 AC_CONFIG_FILES([Makefile
 		 scheduler/Makefile.flags

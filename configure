@@ -604,7 +604,6 @@ ac_includes_default="\
 
 ac_header_list=
 ac_subst_vars='LTLIBOBJS
-HAVE_LIBHWLOC
 LIBOBJS
 EGREP
 GREP
@@ -2310,7 +2309,7 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 
-ac_config_headers="$ac_config_headers config.h"
+ac_config_headers="$ac_config_headers auto_config.h"
 
 
 # Checks for programs.
@@ -3542,9 +3541,9 @@ _ACEOF
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for hwloc_topology_create in -lhwloc" >&5
-$as_echo_n "checking for hwloc_topology_create in -lhwloc... " >&6; }
-if ${ac_cv_lib_hwloc_hwloc_topology_create+:} false; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for hwloc_topology_init in -lhwloc" >&5
+$as_echo_n "checking for hwloc_topology_init in -lhwloc... " >&6; }
+if ${ac_cv_lib_hwloc_hwloc_topology_init+:} false; then :
   $as_echo_n "(cached) " >&6
 else
   ac_check_lib_save_LIBS=$LIBS
@@ -3558,27 +3557,27 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 #ifdef __cplusplus
 extern "C"
 #endif
-char hwloc_topology_create ();
+char hwloc_topology_init ();
 int
 main ()
 {
-return hwloc_topology_create ();
+return hwloc_topology_init ();
   ;
   return 0;
 }
 _ACEOF
 if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_hwloc_hwloc_topology_create=yes
+  ac_cv_lib_hwloc_hwloc_topology_init=yes
 else
-  ac_cv_lib_hwloc_hwloc_topology_create=no
+  ac_cv_lib_hwloc_hwloc_topology_init=no
 fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 LIBS=$ac_check_lib_save_LIBS
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_hwloc_hwloc_topology_create" >&5
-$as_echo "$ac_cv_lib_hwloc_hwloc_topology_create" >&6; }
-if test "x$ac_cv_lib_hwloc_hwloc_topology_create" = xyes; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_hwloc_hwloc_topology_init" >&5
+$as_echo "$ac_cv_lib_hwloc_hwloc_topology_init" >&6; }
+if test "x$ac_cv_lib_hwloc_hwloc_topology_init" = xyes; then :
   cat >>confdefs.h <<_ACEOF
 #define HAVE_LIBHWLOC 1
 _ACEOF
@@ -4510,9 +4509,6 @@ fi;
 
 fi
 
-# Variables
-
-
 ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
 
 ac_config_commands="$ac_config_commands exec-scripts-create.sh"
@@ -5224,7 +5220,7 @@ cat >>$CONFIG_STATUS <<\_ACEOF || ac_write_fail=1
 for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
-    "config.h") CONFIG_HEADERS="$CONFIG_HEADERS config.h" ;;
+    "auto_config.h") CONFIG_HEADERS="$CONFIG_HEADERS auto_config.h" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
     "scheduler/Makefile.flags") CONFIG_FILES="$CONFIG_FILES scheduler/Makefile.flags" ;;
     "scheduler/Makefile") CONFIG_FILES="$CONFIG_FILES scheduler/Makefile" ;;
