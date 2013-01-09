@@ -27,6 +27,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include "auto_config.h"
+
 /* If MODE is defined as 1, we set the configuration to a fast, non-debugging
  * configuration. If MODE is 0, we set a debugging configuration. Else we
  * use the list below.

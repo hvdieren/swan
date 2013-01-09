@@ -12,13 +12,14 @@ ifndef OPT
 OPT:=-O4
 endif
 
-PKG_CFLAGS = -I$(top_builddir)/scheduler
-PKG_LIBS =
+PKG_CFLAGS = -I$(top_builddir) -I$(top_builddir)/scheduler
+PKG_LIBS = -L$(top_builddir)/scheduler -lschedulers @LIBS@
 
-ifeq (@HAVE_LIBHWLOC@,1)
-PKG_CFLAGS += $(shell pkg-config hwloc --cflags)
-PKG_LIBS += $(shell pkg-config hwloc --libs)
-endif
+#ifeq (@HAVE_LIBHWLOC@,1)
+#PKG_CFLAGS += $(shell pkg-config hwloc --cflags)
+#PKG_LIBS += $(shell pkg-config hwloc --libs)
+#PKG_LIBS += -lhwloc
+#endif
 
 FEATURE_FLAGS = -momit-leaf-frame-pointer -fno-omit-frame-pointer -pthread
 
@@ -26,3 +27,4 @@ CFLAGS   += -Wall $(OPT) $(PKG_CFLAGS) $(FEATURE_FLAGS)
 CXXFLAGS += -Wall $(OPT) $(PKG_CFLAGS) -std=c++0x $(FEATURE_FLAGS)
 LDFLAGS  += -pthread $(OPT) 
 LIBS     += $(PKG_LIBS)
+LDLIBS   += $(PKG_LIBS)
