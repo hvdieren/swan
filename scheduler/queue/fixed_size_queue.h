@@ -1,12 +1,14 @@
 // -*- c++ -*-
 
+#ifndef QUEUE_FIXED_SIZE_QUEUE_H
+#define QUEUE_FIXED_SIZE_QUEUE_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "swan/alc_allocator.h"
 #include "swan/alc_mmappol.h"
 #include "swan/alc_flpol.h"
-
-using namespace std;
+#include "swan/padding.h"
 
 namespace obj {
 
@@ -56,7 +58,7 @@ public:
 	volatile unsigned log_size = log2_up( size );
 	assert( log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size) );
 	if(!(log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size) )) {
-	    cout<<"Assertion failed log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size) "<<endl;
+	    errs() << "Assertion failed log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size)\n";
 	    exit(1);
 	}
 	size = 1 << log_size;
@@ -79,8 +81,8 @@ public:
 	return (((tail+tinfo_size) & mask) == head);
     }
 	
-    //returns NULL if pop fails
-    char* pop() volatile {
+//returns NULL if pop fails
+    char* pop() {
 	if( empty() ) {
 	    return NULL;
 	} else {
@@ -90,21 +92,23 @@ public:
 	}
     }
 	
-    //returns true on success false on failure
-    bool push( char* value ) volatile {
+//returns true on success false on failure
+    bool push( void * value ) {
 	if( full() ) {
 	    return false;
 	} else {
-	    tinfo.copy( buffer+tail, value );
+	tinfo.copy( buffer+tail, value );
 	    //free value, we don't need this anymore
 	    tinfo.destruct(value); // HV: this is the wrong place to do this
 	    tail = (tail+tinfo_size) & mask;
 	    return true;
 	}
     }
-    char* front() volatile {
+    char* front() {
 	return (buffer+head);
     }
 };
 
 }//namespace obj
+
+#endif // QUEUE_FIXED_SIZE_QUEUE_H

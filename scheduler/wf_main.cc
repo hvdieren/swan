@@ -129,6 +129,7 @@ void wf_initialize() {
 
     // Get the initial thread affinity for the initial thread.
     // All threads will be scheduled to this set in round-robin fashion.
+#if !defined( __APPLE__ )
     cpu_set_t cpu_hint;
     unsigned cpu_current;
     unsigned cpu_max = sizeof(cpu_hint)*8;
@@ -142,6 +143,9 @@ void wf_initialize() {
     for( cpu_current=0; cpu_current < cpu_max; ++cpu_current ) 
        if( CPU_ISSET( cpu_current, &cpu_hint ) )
            break;
+#else
+    unsigned cpu_current = 0; // No affinity yet for MacOSX
+#endif
 
 #ifdef HAVE_LIBHWLOC
     // Use HWLOC library to figure out cores and memory nodes
@@ -189,18 +193,26 @@ void wf_initialize() {
 	ws[i].initialize( i, nthreads, topology, pu->logical_index,
 			  obj->logical_index, ws[0].get_future() );
 
+#if !defined( __APPLE__ )
 	// Advance to next allowed (hinted) CPU
 	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
 	   if( CPU_ISSET( cpu_current, &cpu_hint ) )
 	       break;
+#else
+	++cpu_current;
+#endif
     }
 #else
     for( size_t i=0; i < nthreads; ++i ) {
 	ws[i].initialize( i, nthreads, cpu_current, 0, ws[0].get_future() );
+#if !defined( __APPLE__ )
 	// Advance to next allowed (hinted) CPU
 	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
 	   if( CPU_ISSET( cpu_current, &cpu_hint ) )
 	       break;
+#else
+	++cpu_current;
+#endif
     }
 #endif
 
