@@ -1,3 +1,6 @@
+* cleanup functors code: all of them should be workable without the MetaData
+  template type argument, as we can figure out MetaData from the DepTy.
+
 * count number of times something is renamed, how many in,out,in/out args
 
 * in debugging mode, check that all spawns have finished

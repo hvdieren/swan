@@ -1002,7 +1002,7 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
     void arg_release( task_metadata * fr, popdep<T> & obj,
 		      typename popdep<T>::dep_tags & tags ) {
 	obj.get_version()->get_metadata()->del_reader();
-	obj.get_version()->del_ref();
+	// obj.get_version()->del_ref();
     }
 };
 
@@ -1014,7 +1014,7 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     void arg_issue( task_metadata * fr, pushdep<T> & obj_ext,
 		    typename pushdep<T>::dep_tags * tags ) {
 	obj_ext.get_version()->get_metadata()->add_writer();
-	obj_ext.get_version()->add_ref();
+	// obj_ext.get_version()->add_ref();
     }
     template<typename T>
     static
@@ -1033,7 +1033,7 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
 	tkt_metadata * md = obj.get_version()->get_metadata();
 	md->del_writer();
 	obj.clear_producing();
-	obj.get_version()->del_ref();
+	// obj.get_version()->del_ref();
     }
 };
 

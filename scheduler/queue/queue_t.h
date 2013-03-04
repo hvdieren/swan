@@ -7,6 +7,8 @@
 
 namespace obj {
 
+typedef tkt_metadata queue_metadata;
+
 struct popdep_tags_base : public all_tags_base { };
 struct pushdep_tags_base : public all_tags_base { };
 
@@ -14,13 +16,21 @@ struct pushdep_tags_base : public all_tags_base { };
 class popdep_tags : public popdep_tags_base {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
+    queue_version<queue_metadata> queue;
     tkt_metadata::tag_t rd_tag;
+
+public:
+    popdep_tags( queue_version<queue_metadata> * parent ) : queue( parent ) { }
 };
 
 // Pushdep (output) dependency tags
 class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
+    queue_version<queue_metadata> queue;
+
+public:
+    pushdep_tags( queue_version<queue_metadata> * parent ) : queue( parent ) { }
 };
 
 // queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
@@ -33,6 +43,9 @@ class queue_base
 {
 public:
     typedef MetaData metadata_t;
+
+    template<typename T>
+    friend class queue_t;
 
 protected:
     queue_version<metadata_t> * queue_v;
@@ -55,17 +68,12 @@ protected:
 };
 
 // queue_t: programmer's instance of a queue
-typedef tkt_metadata queue_metadata;
 
 template<typename T>
-class queue_t : public queue_base<queue_metadata>
+class queue_t : public queue_version<queue_metadata>
 {
 public:
-    queue_t() {
-	queue_v = queue_version<metadata_t>::create<T>( this );
-    }
-    ~queue_t() {
-	queue_v->del_ref();
+    queue_t() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
     }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
@@ -75,8 +83,21 @@ public:
 	return *(this->queue_v->privatize_segment());
     }
 	
-    segmented_queue *get_queue() {
-	return this->queue_v->get_queue();
+    template<typename DepTy>
+    DepTy create_dep_ty() const {
+	DepTy od;
+	od.queue_v = get_nc_version();
+	return od;
+    }
+
+    // segmented_queue *get_queue() {
+	// return get_queue();
+    // }
+
+protected:
+    queue_version<metadata_t> * get_nc_version() const {
+	return const_cast<queue_version<queue_metadata>*>(
+	    static_cast<const queue_version<queue_metadata>*>( this ) );
     }
 	
 public:

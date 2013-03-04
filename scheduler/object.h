@@ -1279,6 +1279,40 @@ namespace obj {
 // These functors step over a list of stack-stored arguments and a list
 // of stack-stored dep_tags.
 // ------------------------------------------------------------------------
+// Tags initialization functor
+struct initialize_tags_functor {
+    // For most tags types, this will basically be a no-op
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::dep_tags tags_t;
+	new (&tags) tags_t();
+	return true;
+    }
+
+    // Queues store a new queue_version inside the tags, allocated together
+    // with the tags, and this queue_version is initialized now. The constructor
+    // requires the parent queue_version as an argument.
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::dep_tags tags_t;
+	new (&tags) tags_t( obj_ext.get_version() );
+	return true;
+    }
+};
+
+// Tags cleanup functor
+struct cleanup_tags_functor {
+    // For most tags types, this will basically be a no-op
+    template<typename T, template<typename U> class DepTy>
+    bool operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::dep_tags tags_t;
+	tags.~tags_t();
+	return true;
+    }
+};
+
 // Release functor
 template<typename MetaData_, typename Task>
 struct release_functor {
@@ -1294,7 +1328,7 @@ struct release_functor {
 	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, sa );
 	if( !std::is_void< T >::value ) // tokens
 	{
-		obj_ext.get_version()->del_ref();
+	    obj_ext.get_version()->del_ref();
 	}
 	return true;
     }
@@ -1329,7 +1363,14 @@ struct release_functor {
 	typedef typename pushdep<T>::metadata_t MetaData;
 	dep_traits<MetaData, Task, pushdep>::arg_release( fr, obj_ext, tags );
 	obj_ext.get_version()->get_private_queue_segment()->clear_producing();
-	obj_ext.get_version()->del_ref();
+	return true;
+    }
+
+    template<typename T>
+    bool operator () ( popdep<T> obj_ext,
+		       typename popdep<T>::dep_tags & tags ) {
+	typedef typename popdep<T>::metadata_t MetaData;
+	dep_traits<MetaData, Task, popdep>::arg_release( fr, obj_ext, tags );
 	return true;
     }
 
@@ -1363,32 +1404,32 @@ public:
     }
 
     template<typename T>
-    bool operator () ( pushdep<T> obj_ext, pushdep<T> & obj_int,
+    bool operator () ( pushdep<T> & obj_int,
 		       typename pushdep<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
 	// No renaming yet, unless we pass the same argument multiple times
 	// assert( obj_ext.get_version() == obj_int.get_version() );
 
 	// Create a new queue_version with a new queue segment
-	obj_ext = pushdep<T>::create(
-	    queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
-	obj_ext.get_version()->add_ref();
+	// obj_ext = pushdep<T>::create(
+	    // queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
+	// obj_ext.get_version()->add_ref();
 
-	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_ext, &tags );
+	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
 	
     template<typename T>
-    bool operator () ( popdep<T> obj_ext, popdep<T> & obj_int,
+    bool operator () ( popdep<T> & obj_int,
 		       typename popdep<T>::dep_tags & tags ) {
 	typedef typename popdep<T>::metadata_t MetaData;
 
 	// Create a new queue_version with a new queue segment
-	obj_ext = popdep<T>::create(
-	    queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
-	obj_ext.get_version()->add_ref();
+	// obj_ext = popdep<T>::create(
+	    // queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
+	// obj_ext.get_version()->add_ref();
 
-	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_ext, &tags );
+	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
 
 	return true;
     }
@@ -1410,10 +1451,26 @@ public:
 };
 
 #if STORED_ANNOTATIONS
+// An "initialize tags function" to initialize tags.
+template<typename Task>
+static inline void arg_initialize_tags_fn( Task * fr ) {
+    initialize_tags_functor fn;
+    arg_apply_stored_fn( fn, fr->get_task_data() );
+}
+
+// A "cleanup tags function" to initialize tags.
+template<typename Task>
+static inline void arg_cleanup_tags_fn( Task * fr ) {
+    cleanup_tags_functor fn;
+    arg_apply_stored_fn( fn, fr->get_task_data() );
+}
+
 // A "release function" to store inside the dep_traits.
 template<typename MetaData, typename Task>
 static inline void arg_release_fn( Task * fr ) {
     release_functor<MetaData, Task> fn( fr );
+    arg_apply_stored_fn( fn, fr->get_task_data() );
+    cleanup_tags_functor fn;
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1426,13 +1483,33 @@ static inline void arg_issue_fn( Task * fr, obj_dep_traits * odt ) {
     fr->stop_registration();
 }
 #else
+// An "initialize tags function" to initialize tags.
+template<typename Task, typename... Tn>
+static inline void arg_initialize_tags_fn( Task * fr ) {
+    initialize_tags_functor fn;
+    char * args = fr->get_task_data().get_args_ptr();
+    char * tags = fr->get_task_data().get_tags_ptr();
+    arg_apply_fn<initialize_tags_functor,Tn...>( fn, args, tags );
+}
+
+// A "cleanup tags function" to initialize tags.
+template<typename Task, typename... Tn>
+static inline void arg_cleanup_tags_fn( Task * fr ) {
+    cleanup_tags_functor fn;
+    char * args = fr->get_task_data().get_args_ptr();
+    char * tags = fr->get_task_data().get_tags_ptr();
+    arg_apply_fn<cleanup_tags_functor,Tn...>( fn, args, tags );
+}
+
 // A "release function" to store inside the dep_traits.
 template<typename MetaData, typename Task, typename... Tn>
 static inline void arg_release_fn( Task * fr ) {
     release_functor<MetaData, Task> fn( fr );
+    cleanup_tags_functor cf;
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<release_functor<MetaData, Task>,Tn...>( fn, args, tags );
+    arg_apply_fn<cleanup_tags_functor,Tn...>( cf, args, tags );
 }
 
 // A "grab function" to store inside the dep_traits.
@@ -1480,11 +1557,13 @@ struct dgrab_functor {
 		       typename pushdep<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
 	// assert( obj_ext.get_version() == obj_int.get_version() );
+	// Most of the work done at moment of initialization of tags, and
+	// creation of child queue_version.
 	// Create a new queue_version with a new queue segment
-	obj_int = pushdep<T>::create( queue_version<MetaData>::nest(
-					  obj_ext.get_version(), &obj_int ) );
+	// obj_int = pushdep<T>::create( queue_version<MetaData>::nest(
+		// 			  obj_ext.get_version(), &obj_int ) );
 	// The internal queue_version also points to the new version
-	obj_ext.get_version()->add_ref();
+	// obj_ext.get_version()->add_ref();
 	// obj_int = pushdep<T>::create( obj_ext.get_version() ); // redundant?
 	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_ext, &tags );
 	return true;
@@ -1495,7 +1574,9 @@ struct dgrab_functor {
 		       typename popdep<T>::dep_tags & tags ) {
 	typedef typename popdep<T>::metadata_t MetaData;
 	// assert( obj_ext.get_version() == obj_int.get_version() );	
-	obj_ext.get_version()->add_ref();
+	// Most of the work done at moment of initialization of tags, and
+	// creation of child queue_version.
+	// obj_ext.get_version()->add_ref();
 	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
@@ -1904,16 +1985,20 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
     OBJ_PROF(arg_issue);
 
     if( (count_object<Tn...>::value) > 0 ) {
+	// Initialize the tags, where required.
+	typename stack_frame_traits<Frame>::metadata_ty * ofr
+	    = stack_frame_traits<Frame>::get_metadata( fr );
+	arg_initialize_tags_fn<Task,Tn...>( ofr );
+
 	if( grab_now( fr ) /*fr->get_parent()->is_full()*/ ) {
 	    // errs() << "grab now " << fr << "\n";
-	    typename stack_frame_traits<Frame>::metadata_ty * ofr
-		= stack_frame_traits<Frame>::get_metadata( fr );
 	    typename stack_frame_traits<StackFrame>::metadata_ty * opr
 		= stack_frame_traits<StackFrame>::get_metadata( parent );
 	    ofr->enable_deps( true
 #if !STORED_ANNOTATIONS
 			      , (void(*)(Task *, obj_dep_traits *))0
 			      , &arg_release_fn<MetaData,Task,Tn...>
+			      , &arg_cleanup_tags_fn<Task,Tn...>
 #endif
 		);
 	    ofr->template create< Tn...>(
@@ -1923,12 +2008,11 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
 		ofr, opr, std::is_same<Frame,pending_frame>::value, an... );
 	} else {
 	    // errs() << "grab later " << fr << "\n";
-	    typename stack_frame_traits<Frame>::metadata_ty * ofr
-		= stack_frame_traits<Frame>::get_metadata( fr );
 	    ofr->enable_deps( false
 #if !STORED_ANNOTATIONS
 			      , &arg_issue_fn<MetaData,Task,Tn...>
 			      , &arg_release_fn<MetaData,Task,Tn...>
+			      , &arg_cleanup_tags_fn<Task,Tn...>
 #endif
 		);
 	    ofr->template create<Tn...>(
@@ -2487,6 +2571,7 @@ public:
 class obj_dep_traits {
     typedef void (*issue_fn_t)( task_metadata *, obj_dep_traits * );
     typedef void (*release_fn_t)( task_metadata * );
+    typedef void (*cleanup_fn_t)( task_metadata * );
 
     enum state_t {
 	s_nodep,
@@ -2496,6 +2581,7 @@ class obj_dep_traits {
 #if !STORED_ANNOTATIONS
     issue_fn_t issue_fn;
     release_fn_t release_fn;
+    cleanup_fn_t cleanup_fn;
 #endif
     state_t state;
     bool pad[7]; // this padding is here because inherited_size<> does not work
@@ -2512,6 +2598,7 @@ protected:
     void create_from_pending( obj_dep_traits * odt ) {
 #if !STORED_ANNOTATIONS
 	release_fn = odt->release_fn;
+	cleanup_fn = odt->cleanup_fn;
 #endif
 	state = s_issued;
 	finalize[0].swap( odt->finalize[0] );
@@ -2526,6 +2613,12 @@ public:
 #else
 	    (*release_fn)( fr );
 #endif
+	} else if( state != s_nodep ) {
+#if STORED_ANNOTATIONS
+	    arg_cleanup_tags_fn<obj_metadata,task_metadata>( fr );
+#else
+	    (*cleanup_fn)( fr );
+#endif
 	}
     }
 
@@ -2533,11 +2626,13 @@ public:
 #if !STORED_ANNOTATIONS
 		      , issue_fn_t grfn
 		      , release_fn_t refn
+		      , cleanup_fn_t cffn
 #endif
 	) {
 #if !STORED_ANNOTATIONS
 	issue_fn = grfn;
 	release_fn = refn;
+	cleanup_fn = cffn;
 #endif
 	state = already_enabled ? s_issued : s_notissued;
     }
