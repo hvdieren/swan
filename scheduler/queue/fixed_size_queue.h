@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
 #include "swan/alc_allocator.h"
 #include "swan/alc_mmappol.h"
 #include "swan/alc_flpol.h"
@@ -16,26 +17,29 @@ namespace obj {
 
 class fixed_size_queue
 {
-    volatile unsigned head;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(unsigned)> pad0;
-    volatile unsigned tail;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(unsigned)> pad1;
-    char * buffer;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(char*)> pad3;
-    q_typeinfo   tinfo;
-    volatile unsigned size;
-    volatile unsigned mask;
-    volatile unsigned tinfo_size;
-    volatile unsigned actual_size;
-    pad_multiple<CACHE_ALIGNMENT, 4*sizeof(unsigned) + sizeof(q_typeinfo)> pad2;
+    // Cache block 0: owned by producer
+    volatile size_t head;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(size_t)> pad0;
+
+    // Cache block 1: owned by consumer
+    volatile size_t tail;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(size_t)> pad1;
+
+    // Cache block 2: unmodified during execution
+    const q_typeinfo tinfo; // HV: TODO: typeinfo should be removed from this class
+    const size_t size;
+    const size_t mask;
+    char * const buffer;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(q_typeinfo) + 2*sizeof(size_t)
+		 + sizeof(char *)> pad2;
 	
 private:
-    static unsigned log2_up( unsigned uu ) {
-	volatile unsigned u = uu;
+    static size_t log2_up( size_t uu ) {
+	volatile size_t u = uu;
 	if( u == 0 )
 	    return 1;
 	else {
-	    volatile unsigned l = 0;
+	    volatile size_t l = 0;
 	    while( u > 0 ) {
 		u >>= 1;
 		l++;
@@ -48,67 +52,61 @@ private:
     }
 	
 public:
-    fixed_size_queue(q_typeinfo tinfo_) : tinfo( tinfo_ ) { 
-	static_assert( sizeof(fixed_size_queue) % 64 == 0, "padding failed" );
-	tinfo_size = tinfo.get_size();
-	actual_size = tinfo.get_actual_size();
-	head = 0;
-	tail = 0;
-	size = MAX_SIZE*tinfo_size;
-	volatile unsigned log_size = log2_up( size );
-	assert( log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size) );
-	if(!(log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size) )) {
-	    errs() << "Assertion failed log_size > 0 && (1<<(log_size-1)) < size && size <= (1<<log_size)\n";
-	    exit(1);
-	}
-	size = 1 << log_size;
-	mask = size - 1;
-	buffer = new char[size];
+    static size_t get_buffer_space( q_typeinfo tinfo ) {
+	// Compute buffer size: MAX_SIZE elements of size dictated by typeinfo
+	size_t size = MAX_SIZE * tinfo.get_size();
+	size_t log_size = log2_up( size );
+	assert( log_size > 0 && (1<<(log_size-1)) < size
+		&& size <= (1<<log_size) );
+	return 1 << log_size;
+    }
+
+    fixed_size_queue( q_typeinfo tinfo_, char * buffer_ )
+	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
+	  size( q_typeinfo::roundup_pow2( MAX_SIZE * tinfo.get_size() ) ),
+	  mask( size-1 ), buffer( buffer_ ) { 
+	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
+		       "padding failed" );
     }
 	
-    ~fixed_size_queue() {
-	static_assert( sizeof(fixed_size_queue) % 64 == 0, "padding failed" );
-	delete[] buffer;
-	buffer = NULL;
-    }
-    inline void * operator new ( size_t size );
-    inline void operator delete( void * p );
-	
-    bool empty() const volatile {
-	return (head == tail);
-    }
+    bool empty() const volatile { return head == tail; }
     bool full() const volatile {
-	return (((tail+tinfo_size) & mask) == head);
+	return ((tail+tinfo.get_size()) & mask) == head;
     }
 	
-//returns NULL if pop fails
-    char* pop() {
+    // peek first element
+    char* front() const { return &buffer[head]; }
+
+    // returns NULL if pop fails
+    char * pop() {
 	if( empty() ) {
 	    return NULL;
 	} else {
-	    char* value = buffer+head;
-	    head = (head+tinfo_size) & mask;
+	    char* value = &buffer[head];
+	    head = (head+tinfo.get_size()) & mask;
 	    return value;
 	}
     }
 	
-//returns true on success false on failure
+    // returns true on success false on failure
     bool push( void * value ) {
 	if( full() ) {
 	    return false;
 	} else {
-	tinfo.copy( buffer+tail, value );
-	    //free value, we don't need this anymore
-	    tinfo.destruct(value); // HV: this is the wrong place to do this
-	    tail = (tail+tinfo_size) & mask;
+	    tinfo.copy( &buffer[tail], value );
+	    tail = (tail+tinfo.get_size()) & mask;
 	    return true;
 	}
     }
-    char* front() {
-	return (buffer+head);
-    }
+    friend std::ostream & operator << ( std::ostream & os, fixed_size_queue & q );
 };
 
-}//namespace obj
+inline std::ostream & operator << ( std::ostream & os, fixed_size_queue & q ) {
+    return os << " QUEUE: head=" << q.head << " tail=" << q.tail
+	      << " size=" << q.size << " mask=" << std::hex << q.mask
+	      << std::dec;
+}
+
+} //namespace obj
 
 #endif // QUEUE_FIXED_SIZE_QUEUE_H

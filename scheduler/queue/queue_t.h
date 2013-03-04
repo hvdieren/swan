@@ -9,55 +9,84 @@ namespace obj {
 
 struct popdep_tags_base : public all_tags_base { };
 struct pushdep_tags_base : public all_tags_base { };
-struct queue_t_tags_base : public all_tags_base { };
 
-// Input dependency tags
+// Popdep (input) dependency tags - fully serialized with other popdeps
 class popdep_tags : public popdep_tags_base {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
     tkt_metadata::tag_t rd_tag;
 };
 
-// Output dependency tags require fully serialized tags in the worst case
+// Pushdep (output) dependency tags
 class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
 };
 
-// Input dependency tags
-class queue_t_tags : public popdep_tags_base {
-    template<typename MetaData, typename Task, template<typename T> class DepTy>
-    friend class dep_traits;
-};
-
-// parent: an instance of a queue, base class for queue_t, pushdep, popdep.
+// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
 // This class may not have non-trival constructors nor destructors in order to
 // reap the simplified x86-64 calling conventions for small structures (the
 // only case we support), in particular for passing pushdep and popdep
 // as direct arguments. We don't support this for queue_t.
-class parent
+template<typename MetaData>
+class queue_base
 {
 public:
-    queue_version *queue_v;
+    typedef MetaData metadata_t;
+
+protected:
+    queue_version<metadata_t> * queue_v;
 	
-    typedef tkt_metadata queue_tkt_metadata;
-    typedef queue_tkt_metadata metadata_t;
+public:
+    const queue_version<metadata_t> * get_version() const { return queue_v; }
+    queue_version<metadata_t> * get_version() { return queue_v; }
 	
-    queue_version * get_version()       { return this->queue_v; }
-    queue_version * get_version() const { return this->queue_v; }
-	
-    void set_version(queue_version *version) {
-	this->queue_v = version;
-    }
-	
-    const parent & operator = ( parent input ) {
-	this->queue_v = input.queue_v;
-	return *this;
+    void set_version( queue_version<metadata_t> * v ) { queue_v = v; }
+
+protected:
+    queue_version<metadata_t> * get_nc_version() const { return queue_v; }
+
+    template<typename DepTy>
+    DepTy create_dep_ty() const {
+	DepTy od;
+	od.queue_v = this->get_nc_version();
+	return od;
     }
 };
 
-template <class T>
-class pushdep : public parent
+// queue_t: programmer's instance of a queue
+typedef tkt_metadata queue_metadata;
+
+template<typename T>
+class queue_t : public queue_base<queue_metadata>
+{
+public:
+    queue_t() {
+	queue_v = queue_version<metadata_t>::create<T>( this );
+    }
+    ~queue_t() {
+	queue_v->del_ref();
+    }
+	
+    operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
+    operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
+	
+    queue_segment* privatize_segment() {
+	return *(this->queue_v->privatize_segment());
+    }
+	
+    segmented_queue *get_queue() {
+	return this->queue_v->get_queue();
+    }
+	
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
+
+template<typename T>
+class pushdep : public queue_base<queue_metadata>
 {
 public:
 	typedef tkt_metadata queue_tkt_metadata;
@@ -67,46 +96,31 @@ public:
 	
 	// For concepts: need not be implemented, must be non-static and public
     void is_object_decl(void);
-	operator pushdep<T>() { 
-		pushdep<T> newpush;
-		this->queue_v->set_instance((parent*)&newpush);
-		newpush.set_version(this->queue_v);
-		return newpush;
-	}
+
+    operator pushdep<T>() { 
+	pushdep<T> newpush;
+	// this->queue_v->set_instance((queue_base*)&newpush);
+	// newpush.set_version(this->queue_v);
+	return newpush;
+    }
 	
-	static pushdep<T> create(queue_version* v, queue_segment* qs) {
-		pushdep<T>  newpush;
-		newpush.queue_v = v;
-		newpush.queue_v->set_private_queue_segment(qs);
-		return newpush;
-	}
+    static pushdep<T> create( queue_version<metadata_t>* v ) {
+	pushdep<T> dep;
+	dep.queue_v = v;
+	return dep;
+    }
+    
+    // void push(T & value) { queue_v->push( value ); }
+    void push(T value) { queue_v->push( value ); }
 	
-	void push(T value) {
-		T* push_value = new T();
-		*push_value = value;
-		this->queue_v->get_queue()->push(push_value, (this->queue_v->get_private_queue_segment()));
-	}
-	
-	void clearBusy() {
-		queue_segment** pqs = (this->queue_v->get_private_queue_segment());
-		(*pqs)->clearBusy();
-	}
-	
-	static pushdep<T> create(queue_version* v) {
-		pushdep<T>  newpush;
-		newpush.queue_v = v;
-		newpush.queue_v->set_private_queue_segment(NULL);
-		return newpush;
-	}
-	
-    pushdep<T> operator=(pushdep<T> input) {
-		this->queue_v = input.queue_v;
-		return *this;
-	}
+    void clear_producing() {
+	queue_segment* pqs = (this->queue_v->get_private_queue_segment());
+	pqs->clear_producing();
+    }
 };
 
-template <typename T>
-class popdep : public parent
+template<typename T>
+class popdep : public queue_base<queue_metadata>
 {
 public:
 	typedef tkt_metadata queue_tkt_metadata;
@@ -117,78 +131,22 @@ public:
 	// For concepts: need not be implemented, must be non-static and public
     void is_object_decl(void);
 	
-	static popdep<T> create(queue_version* v) {
-		popdep<T>  newpop;
-		newpop.queue_v = v;
-		return newpop;
-	}
+    static popdep<T> create(queue_version<metadata_t>* v) {
+	popdep<T>  newpop;
+	newpop.queue_v = v;
+	return newpop;
+    }
 	
-	T pop()	{
-		return *reinterpret_cast<T *>( this->queue_v->pop() );
-	}
+    T pop()	{
+	T t;
+	queue_v->pop( t );
+	return t;
+    }
 	
-	bool empty() {
-		return this->queue_v->empty();
-	}
+    bool empty() {
+	return this->queue_v->empty();
+    }
     popdep<T> operator=(popdep<T> input) {
-		this->queue_v = input.queue_v;
-		return *this;
-	}
-};
-
-template <class T>
-class queue_t : public parent
-{
-public:
-    typedef tkt_metadata queue_tkt_metadata;
-    typedef queue_tkt_metadata metadata_t;
-    typedef queue_t_tags dep_tags;
-    typedef queue_t_type_tag _object_tag;
-	
-    queue_t() {
-	this->queue_v = new queue_version(q_typeinfo::create<T>(), this);
-    }
-	
-    virtual inline ~queue_t() {
-	//if(this->queue_v != NULL) { 
-	//errs() <<"DESTRUCT QUEUE_T!\n";
-	//this->queue_v->destruct();
-	//this->queue_v = NULL;
-	//}
-    }
-	
-    // For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-    operator pushdep<T>() {
-	errs() <<"operator pushdep in queue_t\n";
-	pushdep<T> newpush;
-	this->queue_v->set_instance((parent*)&newpush);
-	newpush.set_version(this->queue_v);
-	return newpush;
-    }
-	
-    operator popdep<T>() {
-	return popdep<T>::create(this->queue_v);
-    }
-	
-    queue_segment* privatize_segment() {
-	return *(this->queue_v->privatize_segment());
-    }
-	
-    segmented_queue *get_queue() {
-	return this->queue_v->get_queue();
-    }
-	
-    void push(T value) {
-	this->queue_v->get_tail()->conc_push(value);
-    }
-	
-    pushdep<T> operator=(pushdep<T> input) {
-	pushdep<T> newpush =  pushdep<T>::create(input.queue_v, *(input.queue_v->get_private_queue_segment()));
-	return newpush;
-    }
-	
-    queue_t<T> operator=(popdep<T> input) {
 	this->queue_v = input.queue_v;
 	return *this;
     }
@@ -209,17 +167,17 @@ namespace platform_x86_64 {
 // way to by-pass the lack of data member introspection in C++.
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::queue_t<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::queue_t<T>, obj::queue_version *> {
+    : arg_passing_struct1<ireg, freg, loff, obj::queue_t<T>, obj::queue_version<typename obj::queue_t<T>::metadata_t> *> {
 };
 
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::popdep<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::popdep<T>, obj::queue_version *> {
+    : arg_passing_struct1<ireg, freg, loff, obj::popdep<T>, obj::queue_version<typename obj::popdep<T>::metadata_t> *> {
 };
 
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::pushdep<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::pushdep<T>, obj::queue_version *> {
+    : arg_passing_struct1<ireg, freg, loff, obj::pushdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *> {
 };
 
 } // namespace platform_x86_64

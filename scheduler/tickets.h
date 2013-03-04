@@ -975,6 +975,69 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
 };
 #endif
 
+// popdep traits for queues
+template<>
+struct dep_traits<tkt_metadata, task_metadata, popdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, popdep<T> & obj_ext,
+			   typename popdep<T>::dep_tags * tags ) {
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->rd_tag  = md->get_reader_tag();
+	md->add_reader();
+    }
+    template<typename T>
+    static
+    bool arg_ready( popdep<T> & obj_int, typename popdep<T>::dep_tags & tags ) {
+	tkt_metadata * md = obj_int.get_version()->get_metadata();
+	return md->chk_reader_tag( tags.rd_tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const popdep<T> & obj_ext ) {
+	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_readers();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, popdep<T> & obj,
+		      typename popdep<T>::dep_tags & tags ) {
+	obj.get_version()->get_metadata()->del_reader();
+	obj.get_version()->del_ref();
+    }
+};
+
+// pushdep dependency traits for queues
+template<>
+struct dep_traits<tkt_metadata, task_metadata, pushdep> {
+    template<typename T>
+    static
+    void arg_issue( task_metadata * fr, pushdep<T> & obj_ext,
+		    typename pushdep<T>::dep_tags * tags ) {
+	obj_ext.get_version()->get_metadata()->add_writer();
+	obj_ext.get_version()->add_ref();
+    }
+    template<typename T>
+    static
+    bool arg_ready( pushdep<T> & obj, typename pushdep<T>::dep_tags & tags ) {
+	return true;
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const pushdep<T> & obj ) {
+	return true;
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, pushdep<T> & obj,
+		      typename pushdep<T>::dep_tags & tags ) {
+	tkt_metadata * md = obj.get_version()->get_metadata();
+	md->del_writer();
+	obj.clear_producing();
+	obj.get_version()->del_ref();
+    }
+};
+
+
 typedef tkt_metadata obj_metadata;
 
 } // end of namespace obj

@@ -13,40 +13,44 @@ namespace obj {
 class queue_segment
 {
     fixed_size_queue q;
-    queue_segment *next;
-    q_typeinfo tinfo;
-    volatile bool busy;
-    pad_multiple<64, sizeof(fixed_size_queue)+sizeof(volatile bool) + sizeof(queue_segment*) + sizeof(q_typeinfo)> padding;
+    queue_segment * next;
+    volatile bool producing;
+
+    // Pad to 16 bytes because this should suite all data types.
+    // There is no guarantee to naturally align any element store in the queue,
+    // but 16 bytes should be good performance-wise for nearly all data types.
+    pad_multiple<16, sizeof(fixed_size_queue)
+		 + sizeof(queue_segment *)
+		 + sizeof(volatile bool) > padding;
+
+private:
+    queue_segment( q_typeinfo tinfo, char * buffer )
+	: q( tinfo, buffer ), next( 0 ), producing( false ) {
+	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
+    }
+	
 public:
-    queue_segment(q_typeinfo tinfo_):q(tinfo_), tinfo(tinfo_) {
-	static_assert( sizeof(queue_segment) % 64 == 0, "padding failed" );
-	next = NULL;
-	busy = false;
+    // Allocate control fields and data buffer in one go
+    static queue_segment * create( q_typeinfo tinfo ) {
+	size_t buffer_size = fixed_size_queue::get_buffer_space( tinfo );
+	char * memory = new char [sizeof(queue_segment) + buffer_size];
+	char * buffer = &memory[sizeof(queue_segment)];
+	return new (memory) queue_segment( tinfo, buffer );
     }
+
+    // Accessor functions for control (not exposed to user API)
+    bool is_full()  const volatile { return q.full(); }
+    bool is_empty() const volatile { return q.empty(); }
+    bool is_producing()  const volatile { return producing; }
+    void set_producing( bool p = true ) volatile { producing = p; }
+    void clear_producing() volatile { producing = false; }
 	
-    ~queue_segment() { 
-	static_assert( sizeof(queue_segment) % 64 == 0, "padding failed" );
-	next = NULL;
-    }
+    // Linking segments in a list
+    queue_segment * get_next() const { return next; }
+    void set_next( queue_segment * next_ ) { next = next_; }
 	
-    inline void * operator new ( size_t size );
-    inline void operator delete( void * p );
-	
-    bool isFull()	volatile  { return q.full(); }
-    bool isempty() volatile	  { return q.empty(); }
-    bool isBusy() volatile	  { return busy; }
-    void setBusy(bool busy_ = true) volatile { busy = busy_; }
-    void clearBusy() volatile { busy = false; }
-	
-    queue_segment *getNext() {
-	return next;
-    }
-	
-    void setNext(queue_segment *next_) { 
-	this->next = next_; 
-    }
-	
-    void* conc_pop() {
+    // Queue pop and push methods
+    void* pop() {
 	while( q.empty() ) {
 	    sched_yield();
 	}
@@ -55,32 +59,17 @@ public:
 	return pop_value;
     }
 	
-    void conc_push(void* value) {
+    void push( void * value ) {
 	while( !q.push( value ) )
 	    sched_yield();
     }
-	
-    void push(void* value)	{ q.push(value); }
+
+    friend std::ostream & operator << ( std::ostream & os, queue_segment & seg );
 };
 
-namespace queue_segment_allocator_ns {
-typedef alc::mmap_alloc_policy<queue_segment, sizeof(queue_segment)> mmap_align_pol;
-typedef alc::freelist_alloc_policy<queue_segment, mmap_align_pol, 64> list_align_pol;
-typedef alc::allocator<queue_segment, list_align_pol> alloc_type;
-}
-
-typedef queue_segment_allocator_ns::alloc_type queue_segment_allocator;
-
-extern __thread queue_segment_allocator * qs_allocator;
-void * queue_segment::operator new ( size_t size ) {
-    if( !qs_allocator )
-	qs_allocator = new queue_segment_allocator();
-    return qs_allocator->allocate( 1 );
-}
-void queue_segment::operator delete( void * p ) {
-    if( !qs_allocator ) // we may deallocate blocks allocated elsewhere
-	qs_allocator = new queue_segment_allocator();
-    return qs_allocator->deallocate( (queue_segment *)p, 1 );
+inline std::ostream & operator << ( std::ostream & os, queue_segment & seg ) {
+    return os << "Segment: @" << &seg << " producing=" << seg.producing
+	      << " next=" << seg.next << ' ' << seg.q;
 }
 
 }//namespace obj
