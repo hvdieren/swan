@@ -78,6 +78,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/fft/src_wf/Makefile
 		 benchmarks/lu/src_wf/Makefile
 		 benchmarks/lu/src_wfo/Makefile
+		 benchmarks/strassen/src_wf/Makefile
 		 benchmarks/jacobi/src_wfo/Makefile
 		 benchmarks/jacobi/src_wfo/create.sh
 		 benchmarks/ubench/src_wf/Makefile
