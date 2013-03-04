@@ -82,6 +82,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/ubench/src_wf/gen.pl
 		 benchmarks/ubench/src_wf/create.sh
 		 benchmarks/matmul2/src_wfo/Makefile
+		 benchmarks/rectmul_bis/src_wf/Makefile
 		 benchmarks/rectmul_bis/src_wfo/Makefile
 		 benchmarks/rectmul_bis/src_wfo/create.sh
 		 benchmarks/cholesky2/src_wfo/Makefile
