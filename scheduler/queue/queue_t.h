@@ -18,6 +18,7 @@ class popdep_tags : public popdep_tags_base {
     friend class dep_traits;
     queue_version<queue_metadata> queue;
     tkt_metadata::tag_t rd_tag;
+    tkt_metadata::tag_t wr_tag;
 
 public:
     popdep_tags( queue_version<queue_metadata> * parent )
@@ -31,6 +32,7 @@ class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
     queue_version<queue_metadata> queue;
+    tkt_metadata::tag_t rd_tag;
 
 public:
     pushdep_tags( queue_version<queue_metadata> * parent )

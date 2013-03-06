@@ -52,12 +52,13 @@ public:
 	if( !head ) {
 	    head = right.head;
 	    right.head = 0;
-	} else {
-	    assert( tail );
+	} else if( tail ) {
 	    tail->set_next( right.head );
 	    tail = right.tail;
 	    right.head = 0;
 	    right.tail = 0;
+	} else { // head and no tail
+	    assert( !right.head && !right.tail );
 	}
 #if 0
 	if( !head ) {
@@ -83,6 +84,10 @@ public:
 
     void reduce_tail( segmented_queue & right ) {
 	// Reduce fresh pop-user into parent's children when tail != 0
+	if( tail->is_producing() ) {
+	    errs() << "reduce_tail: clear producing in " << tail << "\n";
+	    tail->clr_producing();
+	}
 	tail->set_next( right.head );
 	tail = 0;
 	right.head = 0;
@@ -103,6 +108,7 @@ public:
     void take_head( segmented_queue & from ) {
 	head = from.head;
 	from.head = 0;
+	assert( from.tail == 0 && "queue only has head?" );
     }
 
     void take_tail( segmented_queue & from ) {
@@ -180,19 +186,19 @@ public:
 	    || ( head->is_empty() && !head->is_producing() && head == tail );
     }
 
-    void* pop() {
+    template<typename T>
+    void pop( T & t ) {
 	do {
 	    while( !head || ( head->is_empty() && head->is_producing() ) ) {
 		// busy wait
 	    }
 	    if( !head->is_empty() ) {
-		void * value = head->pop();
+		head->pop( t );
 		/*
 		*/
 		errs() << "pop from queue " << head << ": value="
-		       << std::dec << *(int*)value << ' ' << *head << "\n";
-		assert( value );
-		return value;
+		       << std::dec << t << ' ' << *head << "\n";
+		return;
 	    }
 	    if( !head->is_producing() ) {
 		if( head->get_next() ) {
@@ -205,7 +211,7 @@ public:
 	       << " tail=" << tail
 	       << ' ' << *head <<"\n";
 	errs() << "newline\n";
-	return 0;
+	abort();
     }
 	
     void push( void * value, const q_typeinfo & tinfo ) {

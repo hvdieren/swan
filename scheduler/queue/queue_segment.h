@@ -45,7 +45,7 @@ public:
     // Accessor functions for control (not exposed to user API)
     bool is_full()  const volatile { return q.full(); }
     bool is_empty() const volatile { return q.empty(); }
-    bool is_producing()  const volatile { return producing; }
+    bool is_producing()  const volatile { return producing && !next; } // !!!
     void set_producing( bool p = true ) volatile { producing = p; }
     void clr_producing() volatile { producing = false; }
 	
@@ -54,13 +54,11 @@ public:
     void set_next( queue_segment * next_ ) { next = next_; }
 	
     // Queue pop and push methods
-    void* pop() {
-	while( q.empty() ) {
+    template<typename T>
+    void pop( T & t ) {
+	while( q.empty() )
 	    sched_yield();
-	}
-	char *pop_value = q.pop();
-	assert( pop_value && "pop failed" );
-	return pop_value;
+	q.pop( t  );
     }
 	
     void push( void * value ) {

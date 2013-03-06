@@ -58,10 +58,10 @@ void producer_rec( int s, int n, int step, int delay, pushdep<int> q ) {
     errs() << "Recursive: " << s << " by " << step << " to " << n
 	   << " in " << nsteps << " steps\n";
     if( nsteps > 1 ) {
-	spawn( producer_rec, s,   (nsteps/2)*step, step, delay, q );
+	spawn( producer_rec, s, s+(nsteps/2)*step, step, delay, q );
 	spawn( producer_rec, s+(nsteps/2)*step, n, step, delay, q );
     } else
-	spawn( producer, s, n, delay, q );
+	spawn( producer, s, step, delay, q );
     ssync();
 }
 
@@ -79,6 +79,15 @@ void consumer( int s, int n, int delay, popdep<int> q ) {
     }
 }
 
+void zpipe( int dummy ) {
+    queue_t<int> queue;
+    // TODO: Add a check for emptiness in consumer!
+    spawn( consumer, 0, 0, 0, (popdep<int>)queue );
+    ssync();
+}
+
+// Add variable delays to producers, delaying first producer significantly
+// compared to second, and so on.
 void apipe( int n, int producers_, int consumers, int delay ) {
     queue_t<int> queue;
     int np, nc;
@@ -122,7 +131,10 @@ int main( int argc, char * argv[] ) {
     if( argc > 4 )
 	delay = atoi( argv[4] );
 
-    run( apipe, n, producers, consumers, delay );
+    if( producers == 0 )
+	run( zpipe, 0 );
+    else
+	run( apipe, n, producers, consumers, delay );
 
     return 0;
 }

@@ -78,15 +78,16 @@ public:
     char* front() const { return &buffer[head]; }
 
     // returns NULL if pop fails
-    char * pop() {
+    template<typename T>
+    bool pop( T & t ) {
 	if( empty() ) {
 	    errs() << "Q " << this << " empty in pop\n";
-	    return NULL;
+	    return false;
 	} else {
 	    char* value = &buffer[head];
+	    t = *reinterpret_cast<T *>( value );
 	    head = (head+tinfo.get_size()) & mask;
-	    assert( value );
-	    return value;
+	    return true;
 	}
     }
 	
