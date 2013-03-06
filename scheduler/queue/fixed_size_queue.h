@@ -80,10 +80,12 @@ public:
     // returns NULL if pop fails
     char * pop() {
 	if( empty() ) {
+	    errs() << "Q " << this << " empty in pop\n";
 	    return NULL;
 	} else {
 	    char* value = &buffer[head];
 	    head = (head+tinfo.get_size()) & mask;
+	    assert( value );
 	    return value;
 	}
     }

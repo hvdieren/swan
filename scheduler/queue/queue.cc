@@ -5,6 +5,6 @@
 
 namespace obj {
 
-__thread segmented_queue_allocator * segm_queue_allocator = 0;
+// __thread segmented_queue_allocator * segm_queue_allocator = 0;
 
 } // namespace obj

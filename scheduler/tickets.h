@@ -1002,7 +1002,6 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
     void arg_release( task_metadata * fr, popdep<T> & obj,
 		      typename popdep<T>::dep_tags & tags ) {
 	obj.get_version()->get_metadata()->del_reader();
-	// obj.get_version()->del_ref();
     }
 };
 
@@ -1032,8 +1031,6 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
 		      typename pushdep<T>::dep_tags & tags ) {
 	tkt_metadata * md = obj.get_version()->get_metadata();
 	md->del_writer();
-	obj.clear_producing();
-	// obj.get_version()->del_ref();
     }
 };
 

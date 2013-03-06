@@ -3,94 +3,195 @@
 #ifndef QUEUE_SEGMENTED_QUEUE_H
 #define QUEUE_SEGMENTED_QUEUE_H
 
+#include <iostream>
 #include "swan/queue/queue_segment.h"
 
 namespace obj {
 
 class segmented_queue
 {
-public:
-    typedef uint32_t ctr_t;
-
 private:
-    q_typeinfo tinfo;
-    ctr_t refcnt;
     queue_segment * head, * tail;
-	
-    pad_multiple<CACHE_ALIGNMENT, 2*sizeof(uint32_t)
-		 + 2*sizeof(queue_segment*) + sizeof(q_typeinfo)> padding;
+    // TODO: and probably a lock as well for prod/consumer parallelism
+    // Can we avoid the lock if the consumer will leave at least one segment,
+    // ie it will never read/modify tail, and only modify head if gaining access
+    // at which time the producer will not modify head anymore, ie, first set
+    // head to non-zero, then never touch again, and on the other side, wait
+    // until head is non-zero, only then modify
+    // (Sounds like a good match with temporal logic.)
 
-private:
-    inline void del_ref_delete() __attribute__((noinline));
+    // head may be NULL and tail non-NULL. In this case, the list has been
+    // reduced but we know that the current segmented_queue is the last such
+    // one (the right-most in the reduction) and therefore any addition
+    // in the queue goes to the tail and growing the segment grows the tail.
+    // if head is NULL, the segments should not be deallocated?
+    // NOTE: there may be multiple links to a tail segment. How do we update
+    // them?
 
 public: 
-    segmented_queue( q_typeinfo tinfo_ ) : tinfo( tinfo_ ), refcnt( 1 ) {
-	static_assert( sizeof(segmented_queue) % CACHE_ALIGNMENT == 0,
-		       "padding failed");
-	head = tail = queue_segment::create( tinfo );
-    }
+    segmented_queue() : head( 0 ), tail( 0 ) { }
     ~segmented_queue() {
-	for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
-	    q_next = q->get_next();
-	    delete q;
+	// Ownership is determined when both head and tail are non-NULL.
+	errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
+	if( head != 0 && tail != 0 ) {
+	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
+		q_next = q->get_next();
+		delete q;
+	    }
 	}
     }
 
-    inline void * operator new ( size_t size );
-    inline void operator delete( void * p );
+    queue_segment * get_tail() { return tail; }
+    queue_segment * get_head() { return head; }
+    const queue_segment * get_tail() const { return tail; }
+    const queue_segment * get_head() const { return head; }
+    void set_head( queue_segment * seg ) { head = seg; }
 
-    queue_segment * get_tail() const { return tail; }
-    queue_segment * get_head() const { return head; }
-	
-private: // TODO: Make private
+    void reduce_head( segmented_queue & right ) {
+	// lock(); right.lock();
+	if( !head ) {
+	    head = right.head;
+	    right.head = 0;
+	} else {
+	    assert( tail );
+	    tail->set_next( right.head );
+	    tail = right.tail;
+	    right.head = 0;
+	    right.tail = 0;
+	}
+#if 0
+	if( !head ) {
+	    // assert( tail == 0 && "tail must be nil when head is nil" );
+	    if( tail ) {
+		tail->set_next( right.head );
+		tail = right.tail;
+	    } else
+		head = right.head;
+	    right.head = 0;
+	} else {
+	    // When merging a new head, the previous contending tasks must
+	    // have finished completely, and therefore they must have reduced
+	    // the tail pointer also.
+	    assert( tail != 0 && "invalid tail in reduce_head" );
+	    tail->set_next( right.head );
+	    tail = right.tail;
+	    right.head = 0;
+	}
+#endif
+	// unlock(); right.unlock();
+    }
+
+    void reduce_tail( segmented_queue & right ) {
+	// Reduce fresh pop-user into parent's children when tail != 0
+	tail->set_next( right.head );
+	tail = 0;
+	right.head = 0;
+#if 0
+	// When head is NULL on tail reduction, it means the head was
+	// reduced upwards of the current frame. We expect the same to
+	// happen for the reduction of the tail.
+	if( !tail ) {
+	    tail = right.tail;
+	    right.tail = 0;
+	} else {
+	    assert( head != 0 && "head must be non-nil when tail is non-nil" );
+	    right.tail = 0;
+	}
+#endif
+    }
+
+    void take_head( segmented_queue & from ) {
+	head = from.head;
+	from.head = 0;
+    }
+
+    void take_tail( segmented_queue & from ) {
+	tail = from.tail;
+	from.tail = 0;
+    }
+
+    segmented_queue & full_reduce( segmented_queue & right ) {
+/*
+	if( !tail ) {
+	    assert( !head );
+	    *this = right;
+	} else if( right.head ) {
+	    // assert( right.tail );
+	    tail->set_next( right.head );
+	    tail = right.tail; // may be 0
+	    right.head = 0;
+	    right.tail = 0;
+	}
+	return *this;
+*/
+	return merge_reduce( right );
+    }
+
+    segmented_queue & merge_reduce( segmented_queue & right ) {
+	if( !tail ) {
+	    if( !head )
+		head = right.head;
+	    tail = right.tail;
+	    right.head = 0;
+	    right.tail = 0;
+	} else if( right.head ) {
+	    // assert( right.tail );
+	    tail->set_next( right.head );
+	    tail = right.tail; // may be 0
+	    right.head = 0;
+	    right.tail = 0;
+	} else {
+	    assert( !right.tail );
+	}
+	return *this;
+    }
+ 
+    // Check if queue is owned locally (head and tail != 0). Deallocate all
+    // empty/non-producing segments.
+    void cleanup() {
+	// TODO
+    }
+
 public:
-    void push_segment()	{
+    // Always retain at least one segment in the queue, because we own
+    // the head, but we do not always own the tail, so we cannot change the
+    // tail.
+    void pop_segment() {
+	queue_segment * seg = head->get_next();
+	if( seg ) {
+	    delete head;
+	    head = seg;
+	}
+    }
+    void push_segment( const q_typeinfo & tinfo ) {
 	queue_segment * seg = queue_segment::create( tinfo );
-	tail->set_next( seg );
+	seg->set_producing();
+	if( tail ) {
+	    tail->clr_producing();
+	    tail->set_next( seg );
+	} else // if tail == 0, then also head == 0
+	    head = seg;
 	tail = seg;
     }
-	
-    queue_segment * privatize_segment() {
-	if( tail->is_producing() || tail->is_full() )
-	    push_segment();
-	tail->set_producing();
-	return tail;
-    }
-	
-    queue_segment * insert_segment( queue_segment * after ) {
-	queue_segment * seg = queue_segment::create( tinfo );
-	if( after == tail ) tail = seg;
-	seg->set_next( after->get_next() );
-	after->set_next( seg );
-	// after->clear_producing();
-	seg->set_producing();
-	return seg;
-    }
-	
-    void pop_segment() {
-	if( head != tail ) { // Always retain at least one segment
-	    queue_segment * p = head->get_next();
-	    delete head;
-	    head = p;
-	}
-    }
-	
+
 public:
     bool empty() const volatile {
-	return head->is_empty() && !head->is_producing() && head == tail;
+	return !head
+	    || ( head->is_empty() && !head->is_producing() && head == tail );
     }
 
     void* pop() {
 	do {
-	    while( head->is_empty() && head->is_producing() ) {
+	    while( !head || ( head->is_empty() && head->is_producing() ) ) {
 		// busy wait
 	    }
 	    if( !head->is_empty() ) {
 		void * value = head->pop();
 		/*
+		*/
 		errs() << "pop from queue " << head << ": value="
 		       << std::dec << *(int*)value << ' ' << *head << "\n";
-		*/
+		assert( value );
 		return value;
 	    }
 	    if( !head->is_producing() ) {
@@ -103,67 +204,21 @@ public:
 	errs() << "No more data for consumer!!! head = "<< head
 	       << " tail=" << tail
 	       << ' ' << *head <<"\n";
+	errs() << "newline\n";
 	return 0;
     }
 	
-    void push( void * value, queue_segment** qs ) {
-	if((*qs)->is_full()) {
-	    queue_segment *new_q = queue_segment::create( tinfo );
-			
-	    if(*qs == tail){	//pushing a segment
-		errs()<<"inserting segment--------------------------- at the end!\n";
-		tail->set_next(new_q);
-		tail = new_q;
-	    }
-	    else {
-		errs()<<"inserting segment---------------------------2\n";
-		new_q->set_next((*qs)->get_next()); //inserting a segment
-		(*qs)->set_next(new_q);
-	    }
-	    new_q->set_producing((*qs)->is_producing());
-	    (*qs)->clear_producing();
-	    (*qs) = new_q;
-	}
-	errs() << "push on queue " << *qs << "\n";
-	/*
-	errs() << "push on queue " << *qs << ": value=" << std::dec
-	       << *(int*)value << ' ' << **qs << "\n";
-	*/
-	(*qs)->push(value);
-    }
-	
-public:
-    void add_ref() { __sync_fetch_and_add( &(refcnt), 1 ); } // atomic!
-    void del_ref() {
-	assert( refcnt > 0 );
-	// Check equality to 1 because we check value before decrement.
-	if( __sync_fetch_and_add( &(refcnt), -1 ) == 1 ) { // atomic!
-	    del_ref_delete();
-	}
+    void push( void * value, const q_typeinfo & tinfo ) {
+	if( !tail || tail->is_full() )
+	    push_segment( tinfo );
+	errs() << "push on queue segment " << tail << "\n";
+	tail->push( value );
     }
 };
 
-void segmented_queue::del_ref_delete() {
-    delete this;
-}
-
-namespace segmented_queue_allocator_ns {
-typedef alc::mmap_alloc_policy<segmented_queue, sizeof(segmented_queue)> mmap_align_pol;
-typedef alc::freelist_alloc_policy<segmented_queue, mmap_align_pol, 64> list_align_pol;
-typedef alc::allocator<segmented_queue, list_align_pol> alloc_type;
-}
-typedef segmented_queue_allocator_ns::alloc_type segmented_queue_allocator;
-
-extern __thread segmented_queue_allocator * segm_queue_allocator;
-void * segmented_queue::operator new ( size_t size ) {
-    if( !segm_queue_allocator )
-	segm_queue_allocator = new segmented_queue_allocator();
-    return segm_queue_allocator->allocate( 1 );
-}
-void segmented_queue::operator delete( void * p ) {
-    if( !segm_queue_allocator ) // we may deallocate blocks allocated elsewhere
-	segm_queue_allocator = new segmented_queue_allocator();
-    return segm_queue_allocator->deallocate( (segmented_queue *)p, 1 );
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue & seg ) {
+    return os << '{' << seg.get_head() << ", " << seg.get_tail() << '}';
 }
 
 }//namespace obj

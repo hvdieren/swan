@@ -28,6 +28,10 @@ private:
 	: q( tinfo, buffer ), next( 0 ), producing( false ) {
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
     }
+public:
+    ~queue_segment() {
+	errs() << "queue_segment destruct: " << this << "\n";
+    }
 	
 public:
     // Allocate control fields and data buffer in one go
@@ -43,7 +47,7 @@ public:
     bool is_empty() const volatile { return q.empty(); }
     bool is_producing()  const volatile { return producing; }
     void set_producing( bool p = true ) volatile { producing = p; }
-    void clear_producing() volatile { producing = false; }
+    void clr_producing() volatile { producing = false; }
 	
     // Linking segments in a list
     queue_segment * get_next() const { return next; }

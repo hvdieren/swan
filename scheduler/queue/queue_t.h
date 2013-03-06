@@ -20,7 +20,10 @@ class popdep_tags : public popdep_tags_base {
     tkt_metadata::tag_t rd_tag;
 
 public:
-    popdep_tags( queue_version<queue_metadata> * parent ) : queue( parent ) { }
+    popdep_tags( queue_version<queue_metadata> * parent )
+	: queue( parent, false ) { }
+
+    queue_version<queue_metadata> * get_queue_version() { return &queue; }
 };
 
 // Pushdep (output) dependency tags
@@ -30,7 +33,10 @@ class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
     queue_version<queue_metadata> queue;
 
 public:
-    pushdep_tags( queue_version<queue_metadata> * parent ) : queue( parent ) { }
+    pushdep_tags( queue_version<queue_metadata> * parent )
+	: queue( parent, true ) { }
+
+    queue_version<queue_metadata> * get_queue_version() { return &queue; }
 };
 
 // queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
@@ -135,8 +141,8 @@ public:
     void push(T value) { queue_v->push( value ); }
 	
     void clear_producing() {
-	queue_segment* pqs = (this->queue_v->get_private_queue_segment());
-	pqs->clear_producing();
+	// queue_segment* pqs = (this->queue_v->get_private_queue_segment());
+	// pqs->clear_producing();
     }
 };
 

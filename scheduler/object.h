@@ -1317,19 +1317,20 @@ struct cleanup_tags_functor {
 template<typename MetaData_, typename Task>
 struct release_functor {
     Task * fr;
-    release_functor( Task * fr_ ) : fr( fr_ ) { fr->start_deregistration(); }
+    bool is_stack;
+    release_functor( Task * fr_, bool is_stack_ )
+	: fr( fr_ ), is_stack( is_stack_ ) { fr->start_deregistration(); }
     ~release_functor() { fr->stop_deregistration(); }
 
     // In the default case, the internal obj_instance equals the external
     // obj_instance.
     template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & sa ) {
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & sa ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, sa );
 	if( !std::is_void< T >::value ) // tokens
-	{
 	    obj_ext.get_version()->del_ref();
-	}
 	return true;
     }
 
@@ -1357,23 +1358,23 @@ struct release_functor {
     }
 #endif
 
-    template<typename T>
-    bool operator () ( pushdep<T> obj_ext,
-		       typename pushdep<T>::dep_tags & tags ) {
-	typedef typename pushdep<T>::metadata_t MetaData;
-	dep_traits<MetaData, Task, pushdep>::arg_release( fr, obj_ext, tags );
-	obj_ext.get_version()->get_private_queue_segment()->clear_producing();
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
+	// Reduce queue hypermaps - reduce before allowing siblings to launch
+	// TODO: What if returning from a stack frame and not calling release?
+	queue_version<MetaData> * qv = obj_int.get_version();
+	// qv->lock(); // do not relinquish the lock anymore!
+	qv->reduce_hypermaps( is_pushdep<DepTy<T>>::value, is_stack );
+
+	// For queues, release must be performed always on the external version
+	// which is the "parent" of the internal version.
+	DepTy<T> obj_ext
+	    = DepTy<T>::create( obj_int.get_version()->get_parent() );
+	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, tags );
 	return true;
     }
-
-    template<typename T>
-    bool operator () ( popdep<T> obj_ext,
-		       typename popdep<T>::dep_tags & tags ) {
-	typedef typename popdep<T>::metadata_t MetaData;
-	dep_traits<MetaData, Task, popdep>::arg_release( fr, obj_ext, tags );
-	return true;
-    }
-
 };
 
 // Grab functor
@@ -1415,6 +1416,9 @@ public:
 	    // queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
 	// obj_ext.get_version()->add_ref();
 
+	// TODO: make sure this code gets called also on a stack frame,
+	// in case the parent frame gets stolen and this one is converted to full!
+	obj_int = pushdep<T>::create( tags.get_queue_version() );
 	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
@@ -1429,6 +1433,7 @@ public:
 	    // queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
 	// obj_ext.get_version()->add_ref();
 
+	obj_int = popdep<T>::create( tags.get_queue_version() );
 	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
 
 	return true;
@@ -1467,8 +1472,8 @@ static inline void arg_cleanup_tags_fn( Task * fr ) {
 
 // A "release function" to store inside the dep_traits.
 template<typename MetaData, typename Task>
-static inline void arg_release_fn( Task * fr ) {
-    release_functor<MetaData, Task> fn( fr );
+static inline void arg_release_fn( Task * fr, bool is_stack ) {
+    release_functor<MetaData, Task> fn( fr, is_stack );
     arg_apply_stored_fn( fn, fr->get_task_data() );
     cleanup_tags_functor fn;
     arg_apply_stored_fn( fn, fr->get_task_data() );
@@ -1503,8 +1508,8 @@ static inline void arg_cleanup_tags_fn( Task * fr ) {
 
 // A "release function" to store inside the dep_traits.
 template<typename MetaData, typename Task, typename... Tn>
-static inline void arg_release_fn( Task * fr ) {
-    release_functor<MetaData, Task> fn( fr );
+static inline void arg_release_fn( Task * fr, bool is_stack ) {
+    release_functor<MetaData, Task> fn( fr, is_stack );
     cleanup_tags_functor cf;
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
@@ -1565,6 +1570,8 @@ struct dgrab_functor {
 	// The internal queue_version also points to the new version
 	// obj_ext.get_version()->add_ref();
 	// obj_int = pushdep<T>::create( obj_ext.get_version() ); // redundant?
+	obj_int = pushdep<T>::create( tags.get_queue_version() );
+	assert( obj_int.get_version()->get_parent() == obj_ext.get_version() );
 	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
@@ -1577,6 +1584,8 @@ struct dgrab_functor {
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
 	// obj_ext.get_version()->add_ref();
+	obj_int = popdep<T>::create( tags.get_queue_version() );
+	assert( obj_int.get_version()->get_parent() == obj_ext.get_version() );
 	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
@@ -2570,7 +2579,7 @@ public:
 // ------------------------------------------------------------------------
 class obj_dep_traits {
     typedef void (*issue_fn_t)( task_metadata *, obj_dep_traits * );
-    typedef void (*release_fn_t)( task_metadata * );
+    typedef void (*release_fn_t)( task_metadata *, bool is_stack );
     typedef void (*cleanup_fn_t)( task_metadata * );
 
     enum state_t {
@@ -2606,12 +2615,12 @@ protected:
     }
 
 public:
-    void release_deps( task_metadata * fr ) {
+    void release_deps( task_metadata * fr, bool is_stack ) {
 	if( enabled() ) {
 #if STORED_ANNOTATIONS
-	    arg_release_fn<obj_metadata,task_metadata>( fr );
+	    arg_release_fn<obj_metadata,task_metadata>( fr, is_stack );
 #else
-	    (*release_fn)( fr );
+	    (*release_fn)( fr, is_stack );
 #endif
 	} else if( state != s_nodep ) {
 #if STORED_ANNOTATIONS
@@ -2743,13 +2752,14 @@ struct task_graph_traits {
 	typename stack_frame_traits<StackFrame>::metadata_ty * ofr
 	    = stack_frame_traits<StackFrame>::get_metadata( fr );
 	assert( !ofr->enabled() || fr->get_parent()->is_full() );
-	ofr->release_deps( ofr );
+	ofr->release_deps( ofr, true );
     }
     static void
     release_task( PendingFrame * fr ) {
 	typename stack_frame_traits<PendingFrame>::metadata_ty * ofr
 	    = stack_frame_traits<PendingFrame>::get_metadata( fr );
 	assert( ofr->enabled() );
+	assert( 0 && "When does this get called?" );
 	ofr->release_deps( ofr );
     }
     static QueuedFrame *
@@ -2759,7 +2769,7 @@ struct task_graph_traits {
 	typename stack_frame_traits<FullFrame>::metadata_ty * opf
 	    = stack_frame_traits<FullFrame>::get_metadata( fr->get_parent() );
 	// assert( !ofr->enabled() || fr->get_parent()->is_full() );
-	ofr->release_deps( ofr );
+	ofr->release_deps( ofr, false );
 	return (QueuedFrame *)opf->get_ready_task_after( ofr );
     }
     static void
