@@ -985,11 +985,9 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
 	    = popdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
 	tags->rd_tag  = md->get_reader_tag();
-	tags->wr_tag  = md->get_writer_tag();
 	md->add_reader();
 	errs() << "issue pop: " << *md
 	       << " rd_tag=" << tags->rd_tag
-	       << " wr_tag=" << tags->wr_tag
 	       << "\n";
     }
     template<typename T>
@@ -998,21 +996,13 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
 	popdep<T> obj_ext
 	    = popdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	errs() << "ready pop: " << *md
-	       << " rd_tag=" << tags.rd_tag
-	       << " wr_tag=" << tags.wr_tag
-	       << "\n";
-	// TODO: wait for previous pop cohort to finish
-	// return md->chk_reader_tag( tags.rd_tag )
-	    // & md->chk_writer_tag( tags.wr_tag );
-	return true;
+	return md->chk_reader_tag( tags.rd_tag );
     }
     template<typename T>
     static
     bool arg_ini_ready( const popdep<T> & obj_ext ) {
-	// const tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	// return !md->has_readers() & !md->has_writers();
-	return true;
+	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_readers();
     }
     template<typename T>
     static
@@ -1021,7 +1011,6 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
 	popdep<T> obj_ext
 	    = popdep<T>::create( obj_int.get_version()->get_parent() );
 	obj_ext.get_version()->get_metadata()->del_reader();
-	errs() << "release pop: " << *obj_ext.get_version()->get_metadata() << "\n";
     }
 };
 
@@ -1035,23 +1024,18 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
 	pushdep<T> obj_ext
 	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->rd_tag = md->get_reader_tag();
 	md->add_writer();
     }
     template<typename T>
     static
     bool arg_ready( pushdep<T> & obj_int,
 		    typename pushdep<T>::dep_tags & tags ) {
-	pushdep<T> obj_ext
-	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	return md->chk_reader_tag( tags.rd_tag );
+	return true;
     }
     template<typename T>
     static
     bool arg_ini_ready( const pushdep<T> & obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	return !md->has_readers();
+	return true;
     }
     template<typename T>
     static
@@ -1061,7 +1045,6 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
 	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
 	md->del_writer();
-	errs() << "release push: " << *md << "\n";
     }
 };
 
