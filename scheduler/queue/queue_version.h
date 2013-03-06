@@ -266,7 +266,7 @@ private:
 	if( fleft ) {
 	    // We need the lock to avoid the left sibling from terminating
 	    // while we update the right "hypermap".
-	    fleft->lock();
+	    fleft->lock(); // --- locking bug detected: race with delete of fleft
 	lock();
 	    fleft->right.reduce_head( q );
 	    fleft->unlock();
