@@ -47,68 +47,6 @@ public:
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
 
-    void reduce_head( segmented_queue & right ) {
-	// lock(); right.lock();
-	if( !head ) {
-	    head = right.head;
-	    right.head = 0;
-	} else if( tail ) {
-	    tail->set_next( right.head );
-	    tail = right.tail;
-	    right.head = 0;
-	    right.tail = 0;
-	} else { // head and no tail
-	    assert( !right.head && !right.tail );
-	}
-#if 0
-	if( !head ) {
-	    // assert( tail == 0 && "tail must be nil when head is nil" );
-	    if( tail ) {
-		tail->set_next( right.head );
-		tail = right.tail;
-	    } else
-		head = right.head;
-	    right.head = 0;
-	} else {
-	    // When merging a new head, the previous contending tasks must
-	    // have finished completely, and therefore they must have reduced
-	    // the tail pointer also.
-	    assert( tail != 0 && "invalid tail in reduce_head" );
-	    tail->set_next( right.head );
-	    tail = right.tail;
-	    right.head = 0;
-	}
-#endif
-	// unlock(); right.unlock();
-    }
-
-    void reduce_tail( segmented_queue & right ) {
-	// Reduce fresh pop-user into parent's children when tail != 0
-	if( tail->is_producing() ) {
-	    // errs() << "reduce_tail: clear producing in " << tail << "\n";
-	    tail->set_next( right.head ); // link to next first - race cond!
-	    // From now on, is_producing() fails and tail may be deleted
-	    // but clearing is redundant as we have set the next pointer...
-	    // tail->clr_producing(); // this may be accessing a deleted tail!
-	} else {
-	    tail->set_next( right.head );
-	}
-	tail = 0;
-	right.head = 0;
-#if 0
-	// When head is NULL on tail reduction, it means the head was
-	// reduced upwards of the current frame. We expect the same to
-	// happen for the reduction of the tail.
-	if( !tail ) {
-	    tail = right.tail;
-	    right.tail = 0;
-	} else {
-	    assert( head != 0 && "head must be non-nil when tail is non-nil" );
-	    right.tail = 0;
-	}
-#endif
-    }
-
     void take( segmented_queue & from ) {
 	*this = from;
 	from.head = from.tail = 0;
@@ -123,23 +61,6 @@ public:
     void take_tail( segmented_queue & from ) {
 	tail = from.tail;
 	from.tail = 0;
-    }
-
-    segmented_queue & full_reduce( segmented_queue & right ) {
-/*
-	if( !tail ) {
-	    assert( !head );
-	    *this = right;
-	} else if( right.head ) {
-	    // assert( right.tail );
-	    tail->set_next( right.head );
-	    tail = right.tail; // may be 0
-	    right.head = 0;
-	    right.tail = 0;
-	}
-	return *this;
-*/
-	return merge_reduce( right );
     }
 
     segmented_queue & merge_reduce( segmented_queue & right ) {
@@ -161,6 +82,21 @@ public:
 	return *this;
     }
  
+    // Special case of merge_reduce for publishing queue head:
+    // We know that right.head != 0 and right.tail == 0
+    void reduce_tail( segmented_queue & right ) {
+	assert( right.head != 0 && "assumption of special reduction case" );
+	assert( right.tail == 0 && "assumption of special reduction case" );
+
+	// Reduce fresh pop-user into parent's children when tail != 0
+	if( !tail ) {
+	} else {
+	    tail->set_next( right.head ); // link to next first - race cond!
+	    tail = 0;
+	    right.head = 0;
+	}
+    }
+
     // Check if queue is owned locally (head and tail != 0). Deallocate all
     // empty/non-producing segments.
     void cleanup() {

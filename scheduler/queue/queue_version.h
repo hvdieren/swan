@@ -144,7 +144,7 @@ public:
 */
 
 	// Reducing everything into a single queue
-	children.full_reduce( user.full_reduce( right ) );
+	children.merge_reduce( user.merge_reduce( right ) );
 
 	// Clear producing flag on user tail, but only after reducing lists.
 	// Segment becomes final when
@@ -259,7 +259,7 @@ private:
 	    fleft->lock(); // --- locking bug detected: race with delete of fleft - lock parent as well even though we don't need the parent in this case to avoid deletion of fleft between if( fleft ) and fleft->lock()
 	lock();
 	    parent->unlock();
-	    fleft->right.reduce_head( q );
+	    fleft->right.merge_reduce( q );
 	    fleft->unlock();
 	unlock();
 	    // errs() << "NOOP to left: " << fleft << " right=" << fleft->right << "\n";
@@ -279,10 +279,8 @@ private:
 	    bool cont = false;
 	    if( parent->children.get_tail() )
 		parent->children.reduce_tail( q );
-	    else if( parent->user.get_tail() )
-		parent->user.reduce_tail( q );
 	    else {
-		parent->queue.reduce_head( q );
+		parent->queue.merge_reduce( q );
 		cont = true;
 	    }
 /*
@@ -410,7 +408,9 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    user.push_segment( tinfo );
-	    push_head( user );
+	    segmented_queue q;
+	    q.take_head( user );
+	    push_head( q );
 	}
 	user.push( reinterpret_cast<void *>( &t ), tinfo );
     }
