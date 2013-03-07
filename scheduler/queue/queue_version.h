@@ -19,6 +19,9 @@ public:
     typedef MetaData metadata_t;
 
 private:
+    enum qmode_t { qm_push=1, qm_pop=2, qm_pushpop=3 };
+
+private:
     metadata_t metadata;
     // queue_version for pop only needs queue
     // queue_version for push only needs user, children, right
@@ -33,6 +36,7 @@ private:
     queue_version<MetaData> * fleft, * fright;
     queue_version<MetaData> * const parent;
     cas_mutex mutex;
+    qmode_t qmode;
 
 /*
     pad_multiple<CACHE_ALIGNMENT, sizeof(metadata_t)
@@ -50,7 +54,8 @@ protected:
     // Normal constructor, called from queue_t constructor
     queue_version( q_typeinfo tinfo_ )
 	: tinfo( tinfo_ ),
-	  chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ) {
+	  chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
+	  qmode( qm_pushpop ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -63,7 +68,8 @@ public:
     // This code is written with pushdep in mind; may need to be specialized
     // to popdep
     queue_version( queue_version<metadata_t> * qv, bool push )
-	: tinfo( qv->tinfo ), chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ) {
+	: tinfo( qv->tinfo ), chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
+	  qmode( push ? qm_push : qm_pop ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -81,9 +87,13 @@ public:
 	    parent->chead = parent->ctail = this;
 	}
 	unlock();
+
+	// init_hypermaps( push );
+
 	parent->unlock();
 
-	init_hypermaps( push );
+	if( !push )
+	    pop_head( queue );
 
 	errs() << "QV nest constructor for: " << this
 	       << " user=" << user
@@ -104,7 +114,7 @@ public:
 	// Take a lock on parent's user because parent body may be executing
 	// and modifying user hypermap concurrently.
 	// Do not lock this (child) because user is private.
-	parent->lock();
+	// parent->lock();
 	if( push ) {
 	    // TODO: initialize user from parent->user (move it over)
 
@@ -114,13 +124,16 @@ public:
 	    // queue = segmented_queue( 0, 0 ); -- defaults ok
 	} else { // pop
 	    // user.take_head( parent->user );
-	    queue.take_head( parent->queue );
+	    // TODO: possible race if multiple pops, first pop sees NULL,
+	    // then queue head posted, then second pop takes it.
+	    // queue.take_head( parent->queue );
+	    pop_head( queue );
 	    // queue = parent->queue;
 	    // user = segmented_queue( 0, 0 ); -- defaults ok
 	    // children = segmented_queue( 0, 0 ); -- defaults ok
 	    // right = segmented_queue( 0, 0 ); -- defaults ok
 	}
-	parent->unlock();
+	// parent->unlock();
     }
 
     void reduce_hypermaps( bool push, bool is_stack ) {
@@ -184,10 +197,12 @@ public:
 		// if( seg && seg != parent->user.get_tail() ) {
 		// seg->next != 0 only if no tail pointing to it, therefore,
 		// cannot extend it further after reduction
+/*
 		if( seg && seg->get_next() ) {
 		    errs() << "clear producing " << seg << "\n";
 		    seg->clr_producing();
 		}
+*/
 		errs() << "Reduce hypermaps on " << this
 		       << " parent: " << parent
 		       << " user=" << parent->user
@@ -204,7 +219,7 @@ public:
 	    // (the pop is always the oldest when it executes).
 	    parent->queue.take_head( queue );
 
-	    parent->children.merge_reduce( children );
+	    parent->children.merge_reduce( children ); // assert children == 0?
 	    if( is_stack )
 		parent->user.merge_reduce( parent->children );
 	}
@@ -263,11 +278,14 @@ private:
     // of elements in the queue.
     void push_head( segmented_queue & q ) {
 	errs() << "push_head on " << this << " head=" << q.get_head() << "\n";
+	if( parent ) // lock parent to avoid deletion of fleft
+	    parent->lock();
 	if( fleft ) {
 	    // We need the lock to avoid the left sibling from terminating
 	    // while we update the right "hypermap".
-	    fleft->lock(); // --- locking bug detected: race with delete of fleft
+	    fleft->lock(); // --- locking bug detected: race with delete of fleft - lock parent as well even though we don't need the parent in this case to avoid deletion of fleft between if( fleft ) and fleft->lock()
 	lock();
+	    parent->unlock();
 	    fleft->right.reduce_head( q );
 	    fleft->unlock();
 	unlock();
@@ -276,7 +294,6 @@ private:
 	    // We do not need to lock the parent because the parent cannot
 	    // terminate while we reduce the hypermap. Are there other reasons
 	    // for concurrency issues?
-	    parent->lock();
 	lock();
 	    errs() << "to parent: " << parent
 		   << " user=" << parent->user
@@ -319,30 +336,6 @@ private:
 	}
     }
 
-#if 0
-    // The tail is pushed up only one level. This is similar to a normal
-    // reduction.
-    void push_tail( segmented_queue & q ) {
-	lock();
-	if( fleft ) {
-	    // We need the lock to avoid the left sibling from terminating
-	    // while we update the right "hypermap".
-	    fleft->lock();
-	    fleft->right.reduce_tail( q );
-	    fleft->unlock();
-	} else {
-	    // We do not need to lock the parent because the parent cannot
-	    // terminate while we reduce the hypermap. Are there other reasons
-	    // for concurrency issues?
-	    assert( parent );
-	    parent->lock();
-	    parent->children.reduce_tail( q );
-	    parent->unlock();
-	}
-	unlock();
-    }
-#endif
-
     // Find the head of the queue for concurrently popping results.
     // We assume that there are no other popdep tasks on the same queue
     // executing, so the other running queue-dep tasks, if any, have pushdep
@@ -354,13 +347,34 @@ private:
 	// We do not need to lock the parent because the parent cannot
 	// terminate while we reduce the hypermap. Are there other reasons
 	// for concurrency issues?
+
 	parent->lock();
+	// We should not take the parent->queue if there is an older
+	// outstanding pop. It is more efficient to test using metadata,
+	// but that is not easily accessible here.
+	// Moreover, it makes sense to label a popdep as not ready based
+	// on metadata in the dependency tracking code.
+	for( queue_version * qv = parent->chead; qv; qv=qv->fright ) {
+	    if( qv == this )
+		break;
+	    else if( unsigned(qv->qmode) & unsigned(qm_pop) ) {
+		parent->unlock();
+		return;
+	    }
+	}
+
 	lock();
-	queue_segment * seg = parent->queue.get_head();
+	// queue_segment * seg = parent->queue.get_head();
+	q.take_head( parent->queue );
+	queue_segment * seg = q.get_head();
+
+	errs() << "pop_head on " << this << " seg1=" << seg
+	       << " parent=" << parent
+	       << " parent.queue=" << parent->queue
+	       << "\n";
+
 	parent->unlock();
 	unlock();
-
-	errs() << "pop_head on " << this << " seg1=" << seg << "\n";
 
 	if( !seg && parent->parent )
 	    // TODO: restrict recursion to pop-only frames, or
@@ -369,7 +383,7 @@ private:
 	else {
 	    // this creates a second copy of the head, but it is not owned
 	    // because the tail is NULL.
-	    q.set_head( seg );
+	    // q.set_head( seg );
 	    assert( !q.get_tail() && "tail must be NULL when popping head" );
 	}
     }

@@ -86,9 +86,13 @@ public:
 	// Reduce fresh pop-user into parent's children when tail != 0
 	if( tail->is_producing() ) {
 	    errs() << "reduce_tail: clear producing in " << tail << "\n";
-	    tail->clr_producing();
+	    tail->set_next( right.head ); // link to next first - race cond!
+	    // From now on, is_producing() fails and tail may be deleted
+	    // but clearing is redundant as we have set the next pointer...
+	    // tail->clr_producing(); // this may be accessing a deleted tail!
+	} else {
+	    tail->set_next( right.head );
 	}
-	tail->set_next( right.head );
 	tail = 0;
 	right.head = 0;
 #if 0
@@ -106,7 +110,7 @@ public:
     }
 
     void take_head( segmented_queue & from ) {
-	head = from.head;
+	head = *const_cast<queue_segment * volatile * >( &from.head );
 	from.head = 0;
 	assert( from.tail == 0 && "queue only has head?" );
     }
@@ -159,16 +163,6 @@ public:
     }
 
 public:
-    // Always retain at least one segment in the queue, because we own
-    // the head, but we do not always own the tail, so we cannot change the
-    // tail.
-    void pop_segment() {
-	queue_segment * seg = head->get_next();
-	if( seg ) {
-	    delete head;
-	    head = seg;
-	}
-    }
     void push_segment( const q_typeinfo & tinfo ) {
 	queue_segment * seg = queue_segment::create( tinfo );
 	seg->set_producing();
@@ -201,8 +195,12 @@ public:
 		return;
 	    }
 	    if( !head->is_producing() ) {
-		if( head->get_next() ) {
-		    pop_segment(); 
+		// Always retain at least one segment in the queue,
+		// because we own the head, but we do not always own the tail,
+		// so we cannot change the tail.
+		if( queue_segment * seg = head->get_next() ) {
+		    delete head;
+		    head = seg;
 		} else
 		    break; 
 	    }
