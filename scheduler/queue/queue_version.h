@@ -1,3 +1,5 @@
+// -*- c++ -*-
+
 // TODO/NOTES
 // + push - pop - push - pop: advertising
 //   the queue from the second push will not send it to the second pop. 
@@ -5,7 +7,8 @@
 //   pop is not obliged to consume all elements from the queue, in which case
 //   the second pop must see them. So the second pop is serialized wrt the
 //   first.
-// -*- c++ -*-
+// + check whether all queue segments are properly deleted.
+// + implement pushpopdep
 
 #ifndef QUEUE_QUEUE_VERSION_H
 #define QUEUE_QUEUE_VERSION_H
@@ -326,6 +329,9 @@ private:
 	// but that is not easily accessible here.
 	// Moreover, it makes sense to label a popdep as not ready based
 	// on metadata in the dependency tracking code.
+	// TODO: also check on child pop's: spawn popdep; q.pop();
+	// The following code would be useful only when supporting pushpopdeps
+#if 0
 	for( queue_version * qv = parent->chead; qv; qv=qv->fright ) {
 	    if( qv == this )
 		break;
@@ -334,6 +340,7 @@ private:
 		return;
 	    }
 	}
+#endif
 
 	lock();
 	// queue_segment * seg = parent->queue.get_head();
