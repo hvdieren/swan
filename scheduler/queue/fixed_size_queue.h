@@ -81,7 +81,7 @@ public:
     template<typename T>
     bool pop( T & t ) {
 	if( empty() ) {
-	    errs() << "Q " << this << " empty in pop\n";
+	    // errs() << "Q " << this << " empty in pop\n";
 	    return false;
 	} else {
 	    char* value = &buffer[head];

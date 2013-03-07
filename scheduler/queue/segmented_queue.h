@@ -32,7 +32,7 @@ public:
     segmented_queue() : head( 0 ), tail( 0 ) { }
     ~segmented_queue() {
 	// Ownership is determined when both head and tail are non-NULL.
-	errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
+	// errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
@@ -85,7 +85,7 @@ public:
     void reduce_tail( segmented_queue & right ) {
 	// Reduce fresh pop-user into parent's children when tail != 0
 	if( tail->is_producing() ) {
-	    errs() << "reduce_tail: clear producing in " << tail << "\n";
+	    // errs() << "reduce_tail: clear producing in " << tail << "\n";
 	    tail->set_next( right.head ); // link to next first - race cond!
 	    // From now on, is_producing() fails and tail may be deleted
 	    // but clearing is redundant as we have set the next pointer...
@@ -107,6 +107,11 @@ public:
 	    right.tail = 0;
 	}
 #endif
+    }
+
+    void take( segmented_queue & from ) {
+	*this = from;
+	from.head = from.tail = 0;
     }
 
     void take_head( segmented_queue & from ) {
@@ -189,9 +194,9 @@ public:
 	    if( !head->is_empty() ) {
 		head->pop( t );
 		/*
-		*/
 		errs() << "pop from queue " << head << ": value="
 		       << std::dec << t << ' ' << *head << "\n";
+		*/
 		return;
 	    }
 	    if( !head->is_producing() ) {
@@ -205,17 +210,19 @@ public:
 		    break; 
 	    }
 	} while( true );
+/*
 	errs() << "No more data for consumer!!! head = "<< head
 	       << " tail=" << tail
 	       << ' ' << *head <<"\n";
 	errs() << "newline\n";
+*/
 	abort();
     }
 	
     void push( void * value, const q_typeinfo & tinfo ) {
 	if( !tail || tail->is_full() )
 	    push_segment( tinfo );
-	errs() << "push on queue segment " << tail << "\n";
+	// errs() << "push on queue segment " << tail << "\n";
 	tail->push( value );
     }
 };

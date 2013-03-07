@@ -30,8 +30,8 @@ private:
     }
 public:
     ~queue_segment() {
-	errs() << "queue_segment destruct: " << this << "\n";
-	errs() << "newline\n";
+	// errs() << "queue_segment destruct: " << this << "\n";
+	// errs() << "newline\n";
     }
 	
 public:

@@ -986,9 +986,6 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
 	tags->rd_tag  = md->get_reader_tag();
 	md->add_reader();
-	errs() << "issue pop: " << *md
-	       << " rd_tag=" << tags->rd_tag
-	       << "\n";
     }
     template<typename T>
     static
