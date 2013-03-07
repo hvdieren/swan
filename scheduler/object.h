@@ -1474,6 +1474,23 @@ public:
 #endif
 };
 
+// Hypermap reduce functor
+struct hypermap_reduce_functor {
+    // For most tags types, this will basically be a no-op
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> obj_int, typename DepTy<T>::dep_tags & tags ) {
+	return true;
+    }
+
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+	obj_int.get_version()->reduce_sync();
+	return true;
+    }
+};
+
 #if STORED_ANNOTATIONS
 // An "initialize tags function" to initialize tags.
 template<typename Task>
@@ -1486,6 +1503,13 @@ static inline void arg_initialize_tags_fn( Task * fr ) {
 template<typename Task>
 static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
     cleanup_tags_functor fn( is_stack );
+    arg_apply_stored_fn( fn, fr->get_task_data() );
+}
+
+// A "hypermap reduce function".
+template<typename Task, typename... Tn>
+static inline void arg_hypermap_reduce_fn( Task * fr ) {
+    hypermap_reduce_functor fn;
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1523,6 +1547,15 @@ static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<cleanup_tags_functor,Tn...>( fn, args, tags );
+}
+
+// A "hypermap reduce function".
+template<typename Task, typename... Tn>
+static inline void arg_hypermap_reduce_fn( Task * fr ) {
+    hypermap_reduce_functor fn;
+    char * args = fr->get_task_data().get_args_ptr();
+    char * tags = fr->get_task_data().get_tags_ptr();
+    arg_apply_fn<hypermap_reduce_functor,Tn...>( fn, args, tags );
 }
 
 // A "release function" to store inside the dep_traits.
@@ -2027,6 +2060,7 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
 			      , (void(*)(Task *, obj_dep_traits *))0
 			      , &arg_release_fn<MetaData,Task,Tn...>
 			      , &arg_cleanup_tags_fn<Task,Tn...>
+			      , &arg_hypermap_reduce_fn<Task,Tn...>
 #endif
 		);
 	    ofr->template create< Tn...>(
@@ -2041,6 +2075,7 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
 			      , &arg_issue_fn<MetaData,Task,Tn...>
 			      , &arg_release_fn<MetaData,Task,Tn...>
 			      , &arg_cleanup_tags_fn<Task,Tn...>
+			      , &arg_hypermap_reduce_fn<Task,Tn...>
 #endif
 		);
 	    ofr->template create<Tn...>(
@@ -2600,6 +2635,7 @@ class obj_dep_traits {
     typedef void (*issue_fn_t)( task_metadata *, obj_dep_traits * );
     typedef void (*release_fn_t)( task_metadata *, bool );
     typedef void (*cleanup_fn_t)( task_metadata *, bool );
+    typedef void (*reduce_fn_t)( task_metadata * );
 
     enum state_t {
 	s_nodep,
@@ -2610,6 +2646,7 @@ class obj_dep_traits {
     issue_fn_t issue_fn;
     release_fn_t release_fn;
     cleanup_fn_t cleanup_fn;
+    reduce_fn_t reduce_fn;
 #endif
     state_t state;
     bool pad[7]; // this padding is here because inherited_size<> does not work
@@ -2627,6 +2664,7 @@ protected:
 #if !STORED_ANNOTATIONS
 	release_fn = odt->release_fn;
 	cleanup_fn = odt->cleanup_fn;
+	reduce_fn = odt->reduce_fn;
 #endif
 	state = s_issued;
 	finalize[0].swap( odt->finalize[0] );
@@ -2650,17 +2688,29 @@ public:
 	}
     }
 
+    void reduce( task_metadata * fr ) {
+	if( enabled() ) {
+#if STORED_ANNOTATIONS
+	    arg_hypermap_reduce_fn<obj_metadata,task_metadata>( fr );
+#else
+	    (*reduce_fn)( fr );
+#endif
+	}
+    }
+
     void enable_deps( bool already_enabled
 #if !STORED_ANNOTATIONS
 		      , issue_fn_t grfn
 		      , release_fn_t refn
 		      , cleanup_fn_t cffn
+		      , reduce_fn_t rdfn
 #endif
 	) {
 #if !STORED_ANNOTATIONS
 	issue_fn = grfn;
 	release_fn = refn;
 	cleanup_fn = cffn;
+	reduce_fn = rdfn;
 #endif
 	state = already_enabled ? s_issued : s_notissued;
     }
@@ -2684,7 +2734,13 @@ public:
 	v->add_ref();
 	finalize[tasking].push_back( v );
     }
-    void run_finalizers( bool tasking ) {
+    void run_finalizers( task_metadata * fr, bool tasking ) {
+	// For every hyperqueue argument, perform the reduction 
+	// USER <- CHILDREN + USER
+	if( !tasking )
+	    reduce( fr );
+
+	// For reduction<M> object usage
 	// errs() << "run_finalizers tasking=" << tasking << "\n";
 #if OBJECT_REDUCTION
 	if( tasking ) {
@@ -2818,7 +2874,7 @@ struct task_graph_traits {
     run_finalizers( StackFrame * fr, bool tasking ) {
 	typename stack_frame_traits<StackFrame>::metadata_ty * ofr
 	    = stack_frame_traits<StackFrame>::get_metadata( fr );
-	ofr->run_finalizers( tasking );
+	ofr->run_finalizers( ofr, tasking );
     }
 
     // Actions on a full_frame

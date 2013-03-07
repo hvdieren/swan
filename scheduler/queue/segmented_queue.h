@@ -55,7 +55,6 @@ public:
     void take_head( segmented_queue & from ) {
 	head = *const_cast<queue_segment * volatile * >( &from.head );
 	from.head = 0;
-	assert( from.tail == 0 && "queue only has head?" );
     }
 
     void take_tail( segmented_queue & from ) {
@@ -63,7 +62,7 @@ public:
 	from.tail = 0;
     }
 
-    segmented_queue & merge_reduce( segmented_queue & right ) {
+    segmented_queue & reduce( segmented_queue & right ) {
 	if( !tail ) {
 	    if( !head )
 		head = right.head;
@@ -82,25 +81,32 @@ public:
 	return *this;
     }
  
-    // Special case of merge_reduce for publishing queue head:
+    // Special case of reduce for publishing queue head:
     // We know that right.head != 0 and right.tail == 0
-    void reduce_tail( segmented_queue & right ) {
+    segmented_queue & reduce_trailing( segmented_queue & right ) {
 	assert( right.head != 0 && "assumption of special reduction case" );
 	assert( right.tail == 0 && "assumption of special reduction case" );
 
 	// Reduce fresh pop-user into parent's children when tail != 0
 	if( !tail ) {
+	    if( !head )
+		head = right.head;
+	    right.head = 0;
+	    right.tail = 0;
 	} else {
 	    tail->set_next( right.head ); // link to next first - race cond!
 	    tail = 0;
 	    right.head = 0;
 	}
+	return *this;
     }
 
-    // Check if queue is owned locally (head and tail != 0). Deallocate all
-    // empty/non-producing segments.
-    void cleanup() {
-	// TODO
+    void swap( segmented_queue & right ) {
+	queue_segment * h = right.head, * t = right.tail;
+	right.head = head;
+	right.tail = tail;
+	head = h;
+	tail = t;
     }
 
 public:

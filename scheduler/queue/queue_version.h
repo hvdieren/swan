@@ -119,6 +119,11 @@ public:
 */
     }
 
+    void reduce_sync() {
+	children.reduce( user );
+	children.swap( user );
+    }
+
     void reduce_hypermaps( bool push, bool is_stack ) {
 	// Do conversion of hypermaps when a child finishes:
 	//  * merge children - user - right
@@ -144,7 +149,7 @@ public:
 */
 
 	// Reducing everything into a single queue
-	children.merge_reduce( user.merge_reduce( right ) );
+	children.reduce( user.reduce( right ) );
 
 	// Clear producing flag on user tail, but only after reducing lists.
 	// Segment becomes final when
@@ -157,22 +162,19 @@ public:
 	       << " result is: children=" << children << "\n";
 */
 
-	// Deallocate if possible
-	children.cleanup();
-
 	// Move up hierarchy
 	if( push ) {
 	    if( fleft ) {
 		// fleft->lock();
-		fleft->right.merge_reduce( children );
+		fleft->right.reduce( children );
 		// errs() << "Reduce hypermaps on " << this << " left: " << fleft
 		       // << " right=" << fleft->right << "\n";
 		// fleft->unlock();
 	    } else {
 		assert( parent );
-		parent->children.merge_reduce( children );
+		parent->children.reduce( children );
 		if( is_stack )
-		    parent->user.merge_reduce( parent->children );
+		    parent->user.reduce( parent->children );
 /*
 		errs() << "Reduce hypermaps on " << this
 		       << " parent: " << parent
@@ -190,9 +192,9 @@ public:
 	    // (the pop is always the oldest when it executes).
 	    parent->queue.take_head( queue );
 
-	    parent->children.merge_reduce( children ); // assert children == 0?
+	    parent->children.reduce( children ); // assert children == 0?
 	    if( is_stack )
-		parent->user.merge_reduce( parent->children );
+		parent->user.reduce( parent->children );
 	}
 
 /*
@@ -250,59 +252,45 @@ private:
     // The head is pushed up as far as possible, without affecting the order
     // of elements in the queue.
     void push_head( segmented_queue & q ) {
-	// errs() << "push_head on " << this << " head=" << q.get_head() << "\n";
+	// --- locking bug detected: race with delete of fleft - lock parent as well even though we don't need the parent in this case to avoid deletion of fleft between if( fleft ) and fleft->lock()
 	if( parent ) // lock parent to avoid deletion of fleft
 	    parent->lock();
 	if( fleft ) {
 	    // We need the lock to avoid the left sibling from terminating
 	    // while we update the right "hypermap".
-	    fleft->lock(); // --- locking bug detected: race with delete of fleft - lock parent as well even though we don't need the parent in this case to avoid deletion of fleft between if( fleft ) and fleft->lock()
-	lock();
+	    fleft->lock();
+	    lock();
 	    parent->unlock();
-	    fleft->right.merge_reduce( q );
+
+	    fleft->right.reduce_trailing( q );
+
 	    fleft->unlock();
-	unlock();
-	    // errs() << "NOOP to left: " << fleft << " right=" << fleft->right << "\n";
+	    unlock();
 	} else if( parent ) {
 	    // We do not need to lock the parent because the parent cannot
 	    // terminate while we reduce the hypermap. Are there other reasons
 	    // for concurrency issues?
-	lock();
-/*
-	    errs() << "to parent: " << parent
-		   << " user=" << parent->user
-		   << " children=" << parent->children
-		   << " right=" << parent->right
-		   << " queue=" << parent->queue
-		   << "\n";
-*/
+	    lock();
+
 	    bool cont = false;
 	    if( parent->children.get_tail() )
-		parent->children.reduce_tail( q );
+		parent->children.reduce_trailing( q );
 	    else {
-		parent->queue.merge_reduce( q );
+		parent->queue.reduce_trailing( q );
 		cont = true;
 	    }
-/*
-	    errs() << "now parent is: " << parent
-		   << " user=" << parent->user
-		   << " children=" << parent->children
-		   << " right=" << parent->right
-		   << " queue=" << parent->queue
-		   << "\n";
-*/
+
 	    parent->unlock();
-	unlock();
+	    unlock();
 
 	    // The parent cannot disappear while the child is executing.
 	    // We need to lock the grandparent while pushing because a
 	    // consumer may be accessing the segmented_queue as we are
 	    // initializing it.
-	// Recursion must stop at first encountered frame with push and pop
-	// possibilities, ie, queue_t or pushpopdep if we introduce it.
+	    // Recursion must stop at first encountered frame with push and pop
+	    // possibilities, ie, queue_t or pushpopdep if we introduce it.
 	    if( cont && parent->parent )
 		parent->push_head( parent->queue );
-	    // errs() << "to parent: " << parent << " queue=" << parent->queue << "\n";
 	} else {
 	    // If we do not have a parent, then the push terminates.
 	    // Do nothing here.
@@ -360,32 +348,11 @@ private:
 	    //       if oldest pop in pop+push frame
 	    parent->pop_head( q );
 	else {
-	    // this creates a second copy of the head, but it is not owned
-	    // because the tail is NULL.
-	    // q.set_head( seg );
 	    assert( !q.get_tail() && "tail must be NULL when popping head" );
 	}
     }
 
 public:
-    ~queue_version() {
-/*
-	errs() << "QV destructor for: " << this
-	       << " user=" << user
-	       << " children=" << children
-	       << " right=" << right
-	       << " queue=" << queue
-	       << "\n";
-*/
-
-	// only for queue_t and to enable dealloc of segments ?
-	// queue.merge_reduce( user );
-
-	// lock(); // avoid anyone updating while we destruct by leaving locked
-	// unlink();
-	// TODO: what if no release_deps() called?
-    }
-	
     const metadata_t * get_metadata() const { return &metadata; }
     metadata_t * get_metadata() { return &metadata; }
 
