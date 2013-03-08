@@ -79,6 +79,26 @@ void consumer( int s, int n, int delay, popdep<int> q ) {
     }
 }
 
+void consumer2( int s, int n, int delay, popdep<int> q ) {
+    int i=0;
+    while( !q.empty() ) {
+	int j = q.pop();
+	iolock();
+	errs() << "consume: " << j << '\n';
+	iounlock();
+	if( s+i != j ) {
+	    errs() << "ERROR: expected " << s+i << " got " << j << "\n";
+	    abort();
+	}
+	usleep( delay );
+	++i;
+    }
+    if( i != n ) {
+	errs() << "ERROR: expected " << n << " values, got " << i << "\n";
+	abort();
+    }
+}
+
 void zpipe( int dummy ) {
     queue_t<int> queue;
     // TODO: Add a check for emptiness in consumer!
@@ -88,11 +108,13 @@ void zpipe( int dummy ) {
 
 // Add variable delays to producers, delaying first producer significantly
 // compared to second, and so on.
-void apipe( int n, int producers_, int consumers, int delay ) {
+void apipe( int n, int producers_, int consumers_, int delay ) {
     queue_t<int> queue;
     int np, nc;
     int producers = producers_ < 0 ? -producers_ : producers_;
     int produce_rec = producers_ < 0;
+    int consumers = consumers_ < 0 ? -consumers_ : consumers_;
+    int consume_open = consumers_ < 0;
 
     np = (n + (producers-1)) / producers;
     if( produce_rec )
@@ -105,8 +127,12 @@ void apipe( int n, int producers_, int consumers, int delay ) {
 
     nc = (n + (consumers-1)) / consumers;
     for( int i=0; i < consumers; ++i )
-	spawn( consumer, nc*i, std::min(n-i*nc, nc),
-	       delay, (popdep<int>)queue );
+	if( consume_open )
+	    spawn( consumer2, nc*i, std::min(n-i*nc, nc),
+		   delay, (popdep<int>)queue );
+	else
+	    spawn( consumer, nc*i, std::min(n-i*nc, nc),
+		   delay, (popdep<int>)queue );
 
     ssync();
 }

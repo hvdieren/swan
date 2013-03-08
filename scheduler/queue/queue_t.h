@@ -140,10 +140,12 @@ public:
     // void push(T & value) { queue_v->push( value ); }
     void push(T value) { queue_v->push( value ); }
 	
+/*
     void clear_producing() {
 	// queue_segment* pqs = (this->queue_v->get_private_queue_segment());
 	// pqs->clear_producing();
     }
+*/
 };
 
 template<typename T>
@@ -170,9 +172,8 @@ public:
 	return t;
     }
 	
-    bool empty() {
-	return this->queue_v->empty();
-    }
+    bool empty() { return queue_v->empty(); }
+
     popdep<T> operator=(popdep<T> input) {
 	this->queue_v = input.queue_v;
 	return *this;

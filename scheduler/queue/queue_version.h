@@ -7,8 +7,14 @@
 //   pop is not obliged to consume all elements from the queue, in which case
 //   the second pop must see them. So the second pop is serialized wrt the
 //   first.
+//   CONSEQUENCE: pop has a RIGHT field
+// + pop has a USER field, when initializing the hypermaps, it inherits parent's
+//   USER
 // + check whether all queue segments are properly deleted.
 // + implement pushpopdep
+// + parameterize queue_t with fixed-size-queue length
+// + microbenchmark with only a pop task that does an empty() check on the queue
+//   this will currently spin forever.
 
 #ifndef QUEUE_QUEUE_VERSION_H
 #define QUEUE_QUEUE_VERSION_H
@@ -102,6 +108,8 @@ public:
 	// child's USER hypermap. The child's other hypermaps remain empty.
 	if( unsigned(qmode) & unsigned(qm_push) ) {
 	    user.take( parent->user );
+	    if( user.get_tail() )
+		user.get_tail()->set_producing();
 	}
 
 	parent->unlock();
@@ -207,6 +215,19 @@ public:
 */
 
 	unlink();
+
+	// ???
+	if( push && parent->qmode == qm_pushpop
+	    && ( !parent->chead
+		 || (unsigned(parent->chead->qmode) & unsigned(qm_pop) ) ) ) {
+	    if( is_stack ) {
+		if( parent->user.get_tail() )
+		    parent->user.get_tail()->clr_producing();
+	    } else {
+		if( parent->children.get_tail() )
+		    parent->children.get_tail()->clr_producing();
+	    }
+	}
 
 	if( parent )
 	    parent->unlock();
@@ -385,6 +406,17 @@ public:
     const q_typeinfo & get_tinfo() { return tinfo; }
 	
     // bool empty() { return this->payload->empty(); } How to do this?
+
+    // Only for pop!
+    bool empty() {
+	// Make sure we have a local, usable queue. Busy-wait if necessary
+	// until we have made contact with the task that pushes.
+	while( !queue.get_head() ) {
+	    pop_head( queue );
+	    sched_yield();
+	}
+	return queue.empty();
+    }
 };
 
 } //namespace obj

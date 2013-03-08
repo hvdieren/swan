@@ -122,16 +122,44 @@ public:
     }
 
 public:
-    bool empty() const volatile {
-	return !head
-	    || ( head->is_empty() && !head->is_producing() && head == tail );
+    bool empty() {
+	assert( head );
+
+	// Is there anything in the queue? If so, return not empty
+	if( likely( !head->is_empty() ) )
+	    return false;
+
+	// TODO: split remainder off in non-inlineable procedure?
+
+	// As long as nothing has appeared in the queue and the producing
+	// flag is on, we don't really know if the queue is empty or not.
+	// Spin.
+	do {
+	    while( head->is_empty() && head->is_producing() ) {
+		// busy wait
+		sched_yield();
+	    }
+	    if( !head->is_empty() )
+		return false;
+	    else if( !head->is_producing() ) {
+		if( queue_segment * seg = head->get_next() ) {
+		    delete head;
+		    head = seg;
+		} else {
+		    return true;
+		}
+	    }
+	} while( true );
     }
 
     template<typename T>
     void pop( T & t ) {
+	// TODO: merge code with empty()?
+
 	do {
 	    while( !head || ( head->is_empty() && head->is_producing() ) ) {
 		// busy wait
+		sched_yield();
 	    }
 	    if( !head->is_empty() ) {
 		head->pop( t );
