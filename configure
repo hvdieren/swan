@@ -4530,7 +4530,7 @@ fi;
 
 fi
 
-ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/bzip2f/src_cilk++/Makefile benchmarks/bzip2f/src_wf/Makefile benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/bzip2f/src_cilk++/Makefile benchmarks/bzip2f/src_wf/Makefile benchmarks/bzip2f/src_wfq/Makefile benchmarks/fft/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
 
 ac_config_commands="$ac_config_commands exec-scripts-create.sh"
 
@@ -5239,6 +5239,7 @@ do
     "benchmarks/Makefile.wf") CONFIG_FILES="$CONFIG_FILES benchmarks/Makefile.wf" ;;
     "benchmarks/bzip2f/src_cilk++/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_cilk++/Makefile" ;;
     "benchmarks/bzip2f/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_wf/Makefile" ;;
+    "benchmarks/bzip2f/src_wfq/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_wfq/Makefile" ;;
     "benchmarks/fft/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/fft/src_wf/Makefile" ;;
     "benchmarks/jacobi/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/jacobi/src_wfo/Makefile" ;;
     "benchmarks/jacobi/src_wfo/create.sh") CONFIG_FILES="$CONFIG_FILES benchmarks/jacobi/src_wfo/create.sh" ;;
