@@ -1,0 +1,64 @@
+#!/bin/sh
+set -e
+dest="$1"
+shift
+mkdir -p "${dest}"
+cp -p blocksort.c \
+      huffman.c \
+      crctable.c \
+      randtable.c \
+      compress.c \
+      decompress.c \
+      bzlib.c \
+      bzip2.c \
+      bzip2recover.c \
+      bzlib.h \
+      bzlib_private.h \
+      Makefile \
+      LICENSE \
+      bzip2.1 \
+      bzip2.1.preformatted \
+      bzip2.txt \
+      words0 \
+      words1 \
+      words2 \
+      words3 \
+      sample1.ref \
+      sample2.ref \
+      sample3.ref \
+      sample1.bz2 \
+      sample2.bz2 \
+      sample3.bz2 \
+      cilktest1 \
+      dlltest.c \
+      manual.html \
+      manual.pdf \
+      manual.ps \
+      README \
+      README.COMPILATION.PROBLEMS \
+      README.XML.STUFF \
+      CHANGES \
+      libbz2.def \
+      libbz2.dsp \
+      dlltest.dsp \
+      makefile.msc \
+      unzcrash.c \
+      spewG.c \
+      mk251.c \
+      mkruns.c \
+      bzdiff \
+      bzdiff.1 \
+      bzmore \
+      bzmore.1 \
+      bzgrep \
+      bzgrep.1 \
+      Makefile-libbz2_so \
+      bz-common.xsl \
+      bz-fo.xsl \
+      bz-html.xsl \
+      bzip.css \
+      entities.xml \
+      manual.xml \
+      format.pl \
+      xmlproc.sh \
+      "${dest}"

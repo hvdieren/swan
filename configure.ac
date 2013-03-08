@@ -75,6 +75,8 @@ AC_CONFIG_FILES([Makefile
 		 scheduler/Makefile
 		 tests/Makefile
 		 benchmarks/Makefile.wf
+		 benchmarks/bzip2f/src_cilk++/Makefile
+		 benchmarks/bzip2f/src_wf/Makefile
 		 benchmarks/fft/src_wf/Makefile
 		 benchmarks/jacobi/src_wfo/Makefile
 		 benchmarks/jacobi/src_wfo/create.sh

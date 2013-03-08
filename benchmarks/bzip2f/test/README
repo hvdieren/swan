@@ -1,0 +1,4 @@
+Just use it to compress any file or archive.
+
+To test for correctness of the cilk++ implementation, use "make check" at the cilk_src directory.  To test for performance, use file or archive with size more than 10Mbytes, such as compressing c++ compiler sources.
+  

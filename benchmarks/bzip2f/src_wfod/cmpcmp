@@ -1,0 +1,22 @@
+#!/bin/sh
+# Run this with standard input redirected from a list of files.
+# Filenames with spaces may not work.  The script compresses
+# each file with ./bzip -P and decompresses with whatever bzip2
+# is first in ${PATH}.  Every ninth filename is printed as a
+# sort of progress indicator.
+set -e
+bzip=./bzip2
+c=1
+export CILK_NPROC=3
+while read file ; do
+    let 'c=c%9+1'
+    if ${bzip} -P${c} < "${file}" > "/tmp/$$.z" ; then
+	bzip2 -dc "/tmp/$$.z" | cmp "${file}" -
+    else
+	echo "Error $? compressing (-P${c}) ${file}" 1>&2
+	exit 2
+    fi
+    if test "${c}" = "9" ; then
+	echo "${file}"
+    fi
+done

@@ -1,0 +1,11 @@
+Description of the benchmark
+
+bzip2 is a popular package for file compression.
+
+Parallelization using Cilk++
+bzip2 compresses blocks rather than infinite byte streams. Cilk++ bzip2 compresses several blocks in parallel. Even though the compression can run in parallell, the compressed data must be written in order. A block can be written immediately only if all earlier blocks have been written. Otherwise it must be held in memory until earlier blocks are done. Cilk++ bzip2 implements this behavior in Cilk++ using a data structure called stream reducer. 
+
+Refer to blog post http://software.intel.com/en-us/articles/a-parallel-bzip2/ for details.
+
+Notes hvdieren:
+Base version is bzip2_1.0.5
