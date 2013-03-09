@@ -325,20 +325,17 @@ private:
     // the youngest pushdep task), but we look at the common parent, where
     // the head segment has been pushed up, if it has been created already.
     void pop_head( segmented_queue & q ) {
-	if( parent )
-	    parent->pop_head_self( q );
-	else
-	    pop_head_self( q );
-    }
+	if( !parent ) {
+	    q.take_head( parent->queue );
+	    return;
+	}
 
-private:
-    void pop_head_self( segmented_queue & q ) {
-	// assert( parent );
+
 	// We do not need to lock the parent because the parent cannot
 	// terminate while we reduce the hypermap. Are there other reasons
 	// for concurrency issues?
 
-	lock();
+	parent->lock();
 	// We should not take the parent->queue if there is an older
 	// outstanding pop. It is more efficient to test using metadata,
 	// but that is not easily accessible here.
@@ -347,32 +344,35 @@ private:
 	// TODO: also check on child pop's: spawn popdep; q.pop();
 	// The following code would be useful only when supporting pushpopdeps
 #if 0
-	for( queue_version * qv = chead; qv; qv=qv->fright ) {
+	for( queue_version * qv = parent->chead; qv; qv=qv->fright ) {
 	    if( qv == this )
 		break;
 	    else if( unsigned(qv->qmode) & unsigned(qm_pop) ) {
-		unlock();
+		parent->unlock();
 		return;
 	    }
 	}
 #endif
 
+	lock();
 	// queue_segment * seg = parent->queue.get_head();
-	q.take_head( queue );
+	q.take_head( parent->queue );
 	queue_segment * seg = q.get_head();
 
 /*
-	errs() << "pop_head_self on " << this << " seg1=" << seg
-	       << " queue=" << queue
+	errs() << "pop_head on " << this << " seg1=" << seg
+	       << " parent=" << parent
+	       << " parent.queue=" << parent->queue
 	       << "\n";
 */
 
+	parent->unlock();
 	unlock();
 
-	if( !seg && parent )
+	if( !seg && parent->parent )
 	    // TODO: restrict recursion to pop-only frames, or
 	    //       if oldest pop in pop+push frame
-	    parent->pop_head_self( q );
+	    parent->pop_head( q );
 	else {
 	    assert( !q.get_tail() && "tail must be NULL when popping head" );
 	}
