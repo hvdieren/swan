@@ -22,7 +22,9 @@
 // -*- c++ -*-
 #include "wf_interface.h"
 
+extern int main( int argc, char * argv[] ) __attribute__((weak));
+
 int main( int argc, char * argv[] ) {
-    extern int my_main( int, char ** );
+    extern int my_main( int, char ** ) __attribute__((weak));
     return run( my_main, argc, argv );
 }
