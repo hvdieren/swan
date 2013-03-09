@@ -46,6 +46,10 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #endif
+#ifdef __linux
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
 #ifdef __cilkplusplus
 #include <cilk.h>
 #endif

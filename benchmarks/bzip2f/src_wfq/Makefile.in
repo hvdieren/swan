@@ -52,7 +52,7 @@ CILKLINK=$(SCHEDULERS_DIR)/libschedulers.a
 else
 #CILKLINK=-Wl,-Bstatic -lcilkrts -Wl,-Bdynamic -lpthread
 #CILKLINK=-Wl,-Bstatic $(SCHEDULERS_DIR)/libschedulers.a -Wl,-Bdynamic -lpthread
-CILKLINK=$(SCHEDULERS_DIR)/libschedulers.a -lpthread
+CILKLINK=$(PKG_LIBS)
 endif
 
 BIGFILES=-D_FILE_OFFSET_BITS=64
