@@ -539,7 +539,11 @@ public:
 	    stack_ptr = &mem[DataSize];
 #else
 	    stack_ptr = get_task_data().get_args_ptr();
-	    assert( &mem[0] <= stack_ptr && stack_ptr < &mem[DataSize] );
+	    // If we have zero arguments, then stack_ptr may coincide
+	    // with the end of range
+	    assert( &mem[0] <= stack_ptr );
+            assert( stack_ptr < &mem[DataSize] || as_ == 0 );
+            assert( stack_ptr <= &mem[DataSize] || as_ != 0 );
 #endif
 
 	    check_alignment();
