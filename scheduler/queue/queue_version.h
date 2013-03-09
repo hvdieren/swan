@@ -325,11 +325,7 @@ private:
     // the youngest pushdep task), but we look at the common parent, where
     // the head segment has been pushed up, if it has been created already.
     void pop_head( segmented_queue & q ) {
-	if( !parent ) {
-	    q.take_head( parent->queue );
-	    return;
-	}
-
+	assert( parent );
 
 	// We do not need to lock the parent because the parent cannot
 	// terminate while we reduce the hypermap. Are there other reasons
@@ -417,7 +413,8 @@ public:
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	while( !queue.get_head() ) {
-	    pop_head( queue );
+	    if( parent )
+		pop_head( queue );
 	    sched_yield();
 	}
 	return queue.empty();
