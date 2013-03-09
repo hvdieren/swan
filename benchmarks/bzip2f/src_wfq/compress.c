@@ -1661,7 +1661,7 @@ static void BZ2_compressBlockWFOr(EState *s,
 				  const unsigned char *begin,
 				  const unsigned char *end,
 				  obj::pushdep<EState*>);
-static void BZ2_writeBlockWFO(EState *s, writer *output);
+//static void BZ2_writeBlockWFO(EState *s, writer *output);
 
 static unsigned int run_length_encode(unsigned char *,
 				      uint32_t *crc_out,
@@ -1712,6 +1712,64 @@ void finishCompressWFO(int verbosity, int bytes_in, writer * output)
     if (verbosity)
 	report(bytes_in, ((output->total + 7) / 8));
 }
+
+static void
+BZ2_compressBlockWFO_leaf(EState *s)
+{
+    BZ_FINALISE_CRC(s->blockCRC);
+    s->numZ = 0; /* flushed after every block */
+
+    if (s->verbosity >= 2)
+        VPrintf2("    block crc = 0x%08x, size = %d\n", s->blockCRC, s->nblock);
+
+    BZ2_blockSort(s);
+    s->zbits = (UChar*) (&((UChar*)s->arr2)[s->nblock]);
+
+    /* Write header, CRC, bits */
+    bsPutUChar(s, 0x31);
+    bsPutUChar(s, 0x41);
+    bsPutUChar(s, 0x59);
+    bsPutUChar(s, 0x26);
+    bsPutUChar(s, 0x53);
+    bsPutUChar(s, 0x59);
+    bsPutUInt32(s, s->blockCRC);
+    bsW(s,1,0);
+    bsW(s, 24, s->origPtr);
+    generateMTFValues(s);
+    sendMTFValues(s);
+    bsFinishWriteWFO(s);
+}
+
+void
+BZ2_compressBlockWFO(EState *s, obj::pushdep<EState *> out)
+{
+    leaf_call( BZ2_compressBlockWFO_leaf, s );
+    out.push( s );
+}
+
+static int
+BZ2_writeBlockWFO_leaf(EState *s, writer *output_) {
+    writer &output = *output_;
+    output.write((const unsigned char *)s->zbits, s->numZ,
+		 bitblock(s->bsBuff >> 24, s->bsLive),
+		 s->blockCRC);
+
+    int count = s->nblock;
+
+    free(s->arr1);
+    free(s->arr2);
+    free(s->ftab);
+    free(s);
+
+    return count;
+}
+
+/*
+void
+BZ2_writeBlockWFO(EState *s, writer *output_ ) {
+    leaf_call( BZ2_writeBlockWFO_leaf, s, output_ );
+}
+*/
 
 
 int
@@ -1783,9 +1841,8 @@ BZ2_compressFileWFO_stage3(obj::popdep<EState *> in, writer *output )
 {
     while( !in.empty() ) {
 	EState * s = in.pop();
-	spawn( BZ2_writeBlockWFO, s, output );
+	leaf_call( BZ2_writeBlockWFO_leaf, s, output );
     }
-    ssync();
 }
 
 int
@@ -1832,62 +1889,6 @@ BZ2_compressFileWFO (FILE *in, FILE *out,
     leaf_call(fflush, out);
 
     return ferror(out) ? BZ_IO_ERROR : BZ_OK;
-}
-
-static void
-BZ2_compressBlockWFO_leaf(EState *s)
-{
-    BZ_FINALISE_CRC(s->blockCRC);
-    s->numZ = 0; /* flushed after every block */
-
-    if (s->verbosity >= 2)
-        VPrintf2("    block crc = 0x%08x, size = %d\n", s->blockCRC, s->nblock);
-
-    BZ2_blockSort(s);
-    s->zbits = (UChar*) (&((UChar*)s->arr2)[s->nblock]);
-
-    /* Write header, CRC, bits */
-    bsPutUChar(s, 0x31);
-    bsPutUChar(s, 0x41);
-    bsPutUChar(s, 0x59);
-    bsPutUChar(s, 0x26);
-    bsPutUChar(s, 0x53);
-    bsPutUChar(s, 0x59);
-    bsPutUInt32(s, s->blockCRC);
-    bsW(s,1,0);
-    bsW(s, 24, s->origPtr);
-    generateMTFValues(s);
-    sendMTFValues(s);
-    bsFinishWriteWFO(s);
-}
-
-void
-BZ2_compressBlockWFO(EState *s, obj::pushdep<EState *> out)
-{
-    leaf_call( BZ2_compressBlockWFO_leaf, s );
-    out.push( s );
-}
-
-static int
-BZ2_writeBlockWFO_leaf(EState *s, writer *output_) {
-    writer &output = *output_;
-    output.write((const unsigned char *)s->zbits, s->numZ,
-		 bitblock(s->bsBuff >> 24, s->bsLive),
-		 s->blockCRC);
-
-    int count = s->nblock;
-
-    free(s->arr1);
-    free(s->arr2);
-    free(s->ftab);
-    free(s);
-
-    return count;
-}
-
-void
-BZ2_writeBlockWFO(EState *s, writer *output_ ) {
-    leaf_call( BZ2_writeBlockWFO_leaf, s, output_ );
 }
 
 /* Copy the buffer accumulating CRC and doing run length
