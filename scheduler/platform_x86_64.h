@@ -854,6 +854,33 @@ struct arg_passing_struct4<
 			       APS_classify_struct<M1, M2, M3, M4> > {
 };
 
+// Default case: struct with 5 members, passed by implicit reference.
+// Trigger a compile-time assertion failure. We inherit from arg_passing<>
+// with a scalar to limit compiler errors on non-existing template members.
+// Do not use arg_passing_struct5 on non-structure things!
+template<size_t ireg, size_t freg, size_t loff, typename T, typename M1,
+	 typename M2, typename M3, typename M4, typename M5, typename Enable = void>
+struct arg_passing_struct5 : arg_passing_by_mem<ireg,freg,loff> {
+    // In general, passing structs (with 1 member) directly is not allowed!
+    static_assert( !std::is_class<T>::value,
+		   "x86-64 calling convention: Should not pass 5-member "
+		   "structs directly as function arguments!" );
+};
+
+// Trivial struct - 5 non-static data members. Implements packing
+// small values in single 8-word (e.g. struct { short; short; }).
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename M1, typename M2, typename M3, typename M4, typename M5>
+struct arg_passing_struct5<
+    ireg, freg, loff, T, M1, M2, M3, M4, M5,
+    typename std::enable_if<std::is_class<T>::value
+			    && std::has_trivial_default_constructor<T>::value
+			    && std::has_trivial_destructor<T>::value
+			    >::type >
+    : public arg_passing_tuple<ireg, freg, loff, T,
+			       APS_classify_struct<M1, M2, M3, M4, M5> > {
+};
+
 // Count how many 8-words of memory arguments there are
 // Always inline because called from load_reg_args() function.
 template<size_t ireg, size_t freg>
