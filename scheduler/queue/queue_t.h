@@ -76,7 +76,7 @@ protected:
 // queue_t: programmer's instance of a queue
 
 template<typename T>
-class queue_t : public queue_version<queue_metadata>
+class queue_t : protected queue_version<queue_metadata>
 {
 public:
     queue_t() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
@@ -87,6 +87,13 @@ public:
 	
     queue_segment* privatize_segment() {
 	return *(this->queue_v->privatize_segment());
+    }
+
+    bool empty() { return queue_version<queue_metadata>::empty(); }
+    T pop() {
+	T t;
+	queue_version<queue_metadata>::pop( t );
+	return t;
     }
 	
     template<typename DepTy>
