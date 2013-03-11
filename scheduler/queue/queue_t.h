@@ -123,22 +123,14 @@ template<typename T>
 class pushdep : public queue_base<queue_metadata>
 {
 public:
-	typedef tkt_metadata queue_tkt_metadata;
-	typedef queue_tkt_metadata metadata_t;
+    typedef queue_metadata metadata_t;
     typedef pushdep_tags dep_tags;
     typedef pushdep_type_tag _object_tag;
 	
 	// For concepts: need not be implemented, must be non-static and public
     void is_object_decl(void);
 
-    operator pushdep<T>() { 
-	pushdep<T> newpush;
-	// this->queue_v->set_instance((queue_base*)&newpush);
-	// newpush.set_version(this->queue_v);
-	return newpush;
-    }
-	
-    static pushdep<T> create( queue_version<metadata_t>* v ) {
+    static pushdep<T> create( queue_version<metadata_t> * v ) {
 	pushdep<T> dep;
 	dep.queue_v = v;
 	return dep;
@@ -146,34 +138,24 @@ public:
     
     // void push(T & value) { queue_v->push( value ); }
     void push(T value) { queue_v->push( value ); }
-	
-/*
-    void clear_producing() {
-	// queue_segment* pqs = (this->queue_v->get_private_queue_segment());
-	// pqs->clear_producing();
-    }
-*/
 };
 
 template<typename T>
 class popdep : public queue_base<queue_metadata>
 {
 public:
-	typedef tkt_metadata queue_tkt_metadata;
-	typedef queue_tkt_metadata metadata_t;
+    typedef queue_metadata metadata_t;
     typedef popdep_tags dep_tags;
     typedef popdep_type_tag _object_tag;
 	
-	// For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
 	
-    static popdep<T> create(queue_version<metadata_t>* v) {
-	popdep<T>  newpop;
+    static popdep<T> create( queue_version<metadata_t> * v ) {
+	popdep<T> newpop;
 	newpop.queue_v = v;
 	return newpop;
     }
 	
-    T pop()	{
+    T pop() {
 	T t;
 	queue_v->pop( t );
 	return t;
@@ -181,10 +163,9 @@ public:
 	
     bool empty() { return queue_v->empty(); }
 
-    popdep<T> operator=(popdep<T> input) {
-	this->queue_v = input.queue_v;
-	return *this;
-    }
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 } //end namespace obj
