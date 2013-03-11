@@ -257,9 +257,6 @@ struct truedep_type_tag { };
 struct popdep_type_tag { };
 struct pushdep_type_tag { };
 
-
-
-
 // Generic types to support concepts
 typedef char small_type;
 struct large_type
@@ -1424,18 +1421,8 @@ public:
     bool operator () ( pushdep<T> & obj_int,
 		       typename pushdep<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
-	// No renaming yet, unless we pass the same argument multiple times
-	// assert( obj_ext.get_version() == obj_int.get_version() );
-
-	// We need to apply the grab on the external queue_version
-	// pushdep<T> obj_ext
-	    // = pushdep<T>::create( obj_int.get_version()->get_parent() );
-
-	// obj_ext.get_version()->add_ref();
-
 	// TODO: make sure this code gets called also on a stack frame,
 	// in case the parent frame gets stolen and this one is converted to full!
-	// obj_int = pushdep<T>::create( tags.get_queue_version() ); -- moved to initags
 	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
@@ -1444,15 +1431,6 @@ public:
     bool operator () ( popdep<T> & obj_int,
 		       typename popdep<T>::dep_tags & tags ) {
 	typedef typename popdep<T>::metadata_t MetaData;
-
-	// Create a new queue_version with a new queue segment
-	// popdep<T> obj_ext
-	    // = popdep<T>::create( obj_int.get_version()->get_parent() );
-	// obj_ext = popdep<T>::create(
-	    // queue_version<MetaData>::nest( obj_int.get_version(), &obj_int ) );
-	// obj_ext.get_version()->add_ref();
-
-	// obj_int = popdep<T>::create( tags.get_queue_version() ); -- moved to initags
 	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
 
 	return true;
@@ -1613,17 +1591,8 @@ struct dgrab_functor {
     bool operator () ( pushdep<T> obj_ext, pushdep<T> & obj_int,
 		       typename pushdep<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
-	// assert( obj_ext.get_version() == obj_int.get_version() );
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
-	// Create a new queue_version with a new queue segment
-	// obj_int = pushdep<T>::create( queue_version<MetaData>::nest(
-		// 			  obj_ext.get_version(), &obj_int ) );
-	// The internal queue_version also points to the new version
-	// obj_ext.get_version()->add_ref();
-	// obj_int = pushdep<T>::create( obj_ext.get_version() ); // redundant?
-	// obj_int = pushdep<T>::create( tags.get_queue_version() );
-	// assert( obj_int.get_version()->get_parent() == obj_ext.get_version() );
 	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
@@ -1632,12 +1601,8 @@ struct dgrab_functor {
     bool operator () ( popdep<T> obj_ext, popdep<T> & obj_int,
 		       typename popdep<T>::dep_tags & tags ) {
 	typedef typename popdep<T>::metadata_t MetaData;
-	// assert( obj_ext.get_version() == obj_int.get_version() );	
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
-	// obj_ext.get_version()->add_ref();
-	// obj_int = popdep<T>::create( tags.get_queue_version() );
-	// assert( obj_int.get_version()->get_parent() == obj_ext.get_version() );
 	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
