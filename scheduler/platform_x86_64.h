@@ -583,12 +583,12 @@ struct tuple_prefix<T0, std::tuple<T...> > {
 
 // Pre-declaration
 template<typename... T>
-struct APS_classify_struct;
+struct APS_classify_struct_part;
 
 template<size_t off, arg_pass_class ap, ap_accept aa, typename... T>
 struct APS_split;
 
-// APS_split and APS_classify_struct have two fields:
+// APS_split and APS_classify_struct* have two fields:
 // * static const arg_pass_class value
 //   If the value is ap_mem, then the whole structure is passed in memory
 // * static constexpr array<arg_pass_class,N> value8
@@ -621,7 +621,7 @@ struct APS_split<off,ap,ap_reject,T0,T...> {
 template<size_t off, arg_pass_class ap, typename T0, typename... T>
 struct APS_split<off,ap,ap_full,T0,T...> {
     typedef APS_combine<ap,APS_classify<T0>::value> eightbyte;
-    typedef APS_classify_struct<T...> remainder;
+    typedef APS_classify_struct_part<T...> remainder;
     static const arg_pass_class value = 
 	APS_combine<eightbyte::value,remainder::value>::value;
     typedef typename tuple_prefix<typename ap_type_of<value>::type,
@@ -652,22 +652,78 @@ struct APS_split<off,ap_mem,aa,T0,T...> {
     typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
 };
 
-// Calling interface. Need to check for total size of structure: this must
-// always be constrained within 4 8-bytes and a size larger than 2 8-bytes
-// is allowed only if the first 8-byte is SSE. If these conditions are not met,
-// then the structure is passed in memory.
-// Empty structure/base case
+// Internal interface.
 template<>
-struct APS_classify_struct<> {
+struct APS_classify_struct_part<> {
     static const arg_pass_class value = ap_none;
     typedef std::tuple<> type;
 };
 
 template<typename T0, typename... T>
-struct APS_classify_struct<T0,T...>
+struct APS_classify_struct_part<T0,T...>
     : public APS_split<0,ap_none,APS_accept<0,T0>::value,T0,T...> {
 };
 
+// Calling interface. Need to check for total size of structure: this must
+// always be constrained within 4 8-bytes and a size larger than 2 8-bytes
+// is allowed only if the first 8-byte is SSE. If these conditions are not met,
+// then the structure is passed in memory.
+// Empty structure/base case
+template<typename... T>
+struct leading_sse;
+
+// The type tuple is empty for ap_none and ap_mem.
+template<>
+struct leading_sse<std::tuple<>> : std::integral_constant<bool,true> { };
+
+template<typename T0, typename... T>
+struct leading_sse<std::tuple<T0,T...>>
+    : std::integral_constant<bool,false> { };
+    
+template<typename... T>
+struct leading_sse<std::tuple<ap_sse_ty,T...>>
+    : std::integral_constant<bool,true> { };
+    
+template<size_t size, typename split, typename = void>
+struct two_eightbyte_rule {
+    static const bool value = true;
+};
+
+template<size_t size, typename split>
+struct two_eightbyte_rule<size, split,
+			  typename std::enable_if<(size > 2*8)
+    && !leading_sse<typename split::type>::value>::type> {
+    static const bool value = false;
+};
+
+template<size_t size, typename split, typename = void>
+struct APS_classify_struct_select : split { };
+
+template<size_t size, typename split>
+struct APS_classify_struct_select<size, split,
+				  typename std::enable_if<!two_eightbyte_rule<size,split>::value>::type> {
+    static const arg_pass_class value = ap_mem;
+    typedef typename split::type type;
+};
+
+template<size_t size, typename... T>
+struct APS_classify_struct_size;
+
+template<size_t size>
+struct APS_classify_struct_size<size> : APS_classify_struct_part<> { };
+
+template<size_t size, typename T0, typename... T>
+struct APS_classify_struct_size<size,T0,T...>
+    : APS_classify_struct_select<size,
+				 APS_split<0,ap_none,APS_accept<0,T0>::value,T0,T...> > {
+};
+
+template<typename ST, typename... T>
+struct APS_classify_struct
+// : APS_classify_struct_size<abi_arg_size<ST>(), T...> {
+    : APS_classify_struct_size<sizeof(ST), T...> {
+};
+				 
 // ----------------------------------------------------------------------
 // Case of passing structure in memory
 template<size_t ireg, size_t freg, size_t loff, typename T,
@@ -897,9 +953,6 @@ template<size_t ireg, size_t freg, typename T0, typename... Tn>
 fun_constexpr size_t count_mem_words() {
     return ( arg_passing<ireg, freg, 0, T0>::in_reg ? 0 : abi_arg_size<T0>() )
 	+ count_mem_words<ireg+arg_passing<ireg, freg, 0, T0>::ibump, freg+arg_passing<ireg, freg, 0, T0>::fbump, Tn...>();
-    // typedef arg_passing<ireg, freg, 0, T0> arg_pass;
-    // return ( arg_pass::in_reg ? 0 : abi_arg_size<T0>() )
-	// + count_mem_words<ireg+arg_pass::ibump, freg+arg_pass::fbump, Tn...>();
 }
 
 template<typename... Tn>
