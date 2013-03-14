@@ -1303,13 +1303,26 @@ struct initialize_tags_functor {
 // Tags cleanup functor
 struct cleanup_tags_functor {
     bool is_stack;
-    cleanup_tags_functor( bool is_stack_ ) : is_stack( is_stack_ ) { }
+    bool is_released;
+    cleanup_tags_functor( bool is_stack_, bool is_released_ ) 
+	: is_stack( is_stack_ ), is_released( is_released_ ) { }
 
     // For most tags types, this will basically be a no-op
     template<typename T, template<typename U> class DepTy>
-    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    typename std::enable_if<!is_cinoutdep<DepTy<T>>::value
+			&& !is_queue_dep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::dep_tags tags_t;
+	tags.~tags_t();
+	return true;
+    }
+
+    template<typename T>
+    bool operator() ( cinoutdep<T> obj_ext,
+		      typename cinoutdep<T>::dep_tags & tags ) {
+	if( !is_released )
+	    obj_ext.get_version()->get_metadata()->commutative_release();
+	typedef typename cinoutdep<T>::dep_tags tags_t;
 	tags.~tags_t();
 	return true;
     }
@@ -1480,7 +1493,7 @@ static inline void arg_initialize_tags_fn( Task * fr ) {
 // A "cleanup tags function" to initialize tags.
 template<typename Task>
 static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, false );
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1496,7 +1509,7 @@ template<typename MetaData, typename Task>
 static inline void arg_release_fn( Task * fr, bool is_stack ) {
     release_functor<MetaData, Task> fn( fr, is_stack );
     arg_apply_stored_fn( fn, fr->get_task_data() );
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, true );
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1521,7 +1534,7 @@ static inline void arg_initialize_tags_fn( Task * fr ) {
 // A "cleanup tags function" to initialize tags.
 template<typename Task, typename... Tn>
 static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, false );
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<cleanup_tags_functor,Tn...>( fn, args, tags );
@@ -1540,7 +1553,7 @@ static inline void arg_hypermap_reduce_fn( Task * fr ) {
 template<typename MetaData, typename Task, typename... Tn>
 static inline void arg_release_fn( Task * fr, bool is_stack ) {
     release_functor<MetaData, Task> fn( fr, is_stack );
-    cleanup_tags_functor cf( is_stack );
+    cleanup_tags_functor cf( is_stack, true );
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<release_functor<MetaData, Task>,Tn...>( fn, args, tags );
@@ -1571,6 +1584,7 @@ struct dgrab_functor {
     Task * fr;
     obj_dep_traits * odt;
     bool is_ready;
+    template<typename... Tn>
     dgrab_functor( Task * fr_, obj_dep_traits * odt_, bool is_ready_ )
 	: fr( fr_ ), odt( odt_ ), is_ready( is_ready_ ) { }
 
@@ -1855,8 +1869,7 @@ template<typename MetaData, typename Task, typename... Tn>
 static inline void arg_dgrab_fn( Task * fr, obj_dep_traits * odt, bool wakeup, Tn & ... an ) {
 	
     dgrab_functor<MetaData, Task> gfn( fr, odt, !wakeup );
-    
-	fr->template start_registration<Tn...>();
+    fr->template start_registration<Tn...>();
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
 #if STORED_ANNOTATIONS
