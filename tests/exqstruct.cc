@@ -12,7 +12,7 @@ typedef struct test {
 	// int value3;
 	// int value4;
 	// int value5;
-	char* str;
+	char const * str;
 	char ch1;
 	char ch2;
 	// int value6;
