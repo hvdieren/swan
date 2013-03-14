@@ -30,7 +30,7 @@ current_version.h: refresh_version
 
 refresh_version:
 	$(ECHO) if [ ! -f current_version.h ] ; then touch current_version.h ; fi
-	$(ECHO) if [ which svnversion ] ; then svnversion | sed -e 's/^/#define SVN_VERSION "/;s/$$/"/' > current_version.h.new ; else echo '#define SVN_VERSION "none"' > current_version.h.new ; fi
+	$(ECHO) svnversion | sed -e 's/^/#define SVN_VERSION "/;s/$$/"/' > current_version.h.new
 	$(ECHO) if cmp current_version.h.new current_version.h > /dev/null; then rm current_version.h.new ; else mv current_version.h.new current_version.h ; fi
 
 wf_main.o: current_version.h
