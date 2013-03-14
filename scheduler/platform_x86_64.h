@@ -718,6 +718,8 @@ struct APS_classify_struct_size<size,T0,T...>
 				 APS_split<0,ap_none,APS_accept<0,T0>::value,T0,T...> > {
 };
 
+// Alternative strategy is to derive number of eightbytes from the length
+// of the tuple type in APS_split
 template<typename ST, typename... T>
 struct APS_classify_struct
 // : APS_classify_struct_size<abi_arg_size<ST>(), T...> { -- TODO
