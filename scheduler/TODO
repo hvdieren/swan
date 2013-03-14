@@ -4,6 +4,8 @@
 * cleanup functors code: all of them should be workable without the MetaData
   template type argument, as we can figure out MetaData from the DepTy.
 
+* object.h: error in obj_payload in padding declaration.
+
 * count number of times something is renamed, how many in,out,in/out args
 
 * in debugging mode, check that all spawns have finished
