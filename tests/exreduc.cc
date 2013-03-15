@@ -197,7 +197,7 @@ void task( int n, indep<int>, reduction<Monad> r ) {
     out() << "task " << n << " working on "
 	  << r.get_version() << "\n";
     iounlock();
-    Monad::action( r.get_ptr(), n );
+    Monad::action( (typename Monad::value_type*)r, n );
 }
 
 template<typename Monad>
@@ -210,7 +210,7 @@ void ptask( int n, indep<int>, reduction<Monad> r ) {
 	  << threadid << "\n";
     iounlock();
     
-    auto peek = Monad::peek( r.get_ptr() );
+    auto peek = Monad::peek( (typename Monad::value_type*)r );
 
     object_t<int> d;
     // if( n%2 )
@@ -219,7 +219,7 @@ void ptask( int n, indep<int>, reduction<Monad> r ) {
 	spawn( delay, (outdep<int>)d );
 
     usleep( 100000 );
-    Monad::action( r.get_ptr(), peek, n );
+    Monad::action( (typename Monad::value_type*)r, peek, n );
 
     iolock();
     out() << "ptask " << n << " working on "
@@ -233,21 +233,21 @@ void ptask( int n, indep<int>, reduction<Monad> r ) {
 template<typename Monad>
 void waste( outdep<typename Monad::value_type> r ) {
     iolock();
-    Monad::write( "waste reduction output", r.get_ptr(), false );
+    Monad::write( "waste reduction output", (typename Monad::value_type*)r, false );
     iounlock();
 }
 
 template<typename Monad>
 void output( indep<typename Monad::value_type> r, bool b, int i ) {
     iolock();
-    Monad::write( "reduction from task", r.get_ptr(), b, i );
+    Monad::write( "reduction from task", (typename Monad::value_type*)r, b, i );
     iounlock();
 }
 
 template<typename Monad>
 void between( inoutdep<typename Monad::value_type> r ) {
     iolock();
-    Monad::write( "between: reduction from task", r.get_ptr() );
+    Monad::write( "between: reduction from task", (typename Monad::value_type*)r );
     iounlock();
 }
 
@@ -261,7 +261,7 @@ void test( int nr, int ni, int dd ) {
     object_t<typename Monad::value_type> redu;
     object_t<int> d;
 
-    Monad::identity( redu.get_ptr() );
+    Monad::identity( (typename Monad::value_type*)redu );
 
     out() << "Reduction test harness: reduction-tasks=" << (nr>0?nr:-nr)
 	  << " parallel=" << (nr<0?"yes":"no")
@@ -288,7 +288,8 @@ void test( int nr, int ni, int dd ) {
 	    spawn( waste<Monad>, (outdep<typename Monad::value_type>)redu );
     ssync();
 
-    Monad::write( "reduction after sync", redu.get_ptr(), ni >= 0, nr>0?nr:-nr );
+    Monad::write( "reduction after sync",
+		  (typename Monad::value_type*)redu, ni >= 0, nr>0?nr:-nr );
 }
 
 template<typename Monad>
@@ -296,7 +297,7 @@ void test2( int nr, int ni, int dd ) {
     object_t<typename Monad::value_type> redu;
     object_t<int> d;
 
-    Monad::identity( redu.get_ptr() );
+    Monad::identity( (typename Monad::value_type*)redu );
 
     out() << "Reduction test harness 2: reduction-tasks=" << (nr>0?nr:-nr)
 	  << " parallel=" << (nr<0?"yes":"no")
@@ -322,12 +323,13 @@ void test2( int nr, int ni, int dd ) {
 	    spawn( waste<Monad>, (outdep<typename Monad::value_type>)redu );
     ssync();
 
-    Monad::write( "reduction after sync", redu.get_ptr(), ni >= 0, 2*(nr>0?nr:-nr) );
+    Monad::write( "reduction after sync", (typename Monad::value_type*)redu, ni >= 0, 2*(nr>0?nr:-nr) );
 
     for( int i=0; i < nr; ++i )
 	spawn( task<Monad>, 2*nr+i, (indep<int>)d, (reduction<Monad>)redu );
     ssync();
-    Monad::write( "reduction after 2nd sync", redu.get_ptr(), ni >= 0, 3*(nr>0?nr:-nr) );
+    Monad::write( "reduction after 2nd sync",
+		  (typename Monad::value_type*)redu, ni >= 0, 3*(nr>0?nr:-nr) );
 }
 
 
