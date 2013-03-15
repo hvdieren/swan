@@ -92,7 +92,7 @@ public:
 	    if( !head )
 		head = right.head;
 	    right.head = 0;
-	    right.tail = 0;
+	    // right.tail = 0;
 	} else {
 	    tail->set_next( right.head ); // link to next first - race cond!
 	    tail = 0;

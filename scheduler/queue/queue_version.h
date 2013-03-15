@@ -121,6 +121,7 @@ public:
 	       << " right=" << right
 	       << " queue=" << queue
 	       << " parent=" << parent
+	       << " parent->user=" << parent->user
 	       << " parent->queue=" << parent->queue
 	       << " push=" << push
 	       << "\n";

@@ -91,6 +91,8 @@ class obj_dep_traits;
 template<class MetaData> class queue_base;
 template<class T> class pushdep;
 template<class T> class popdep;
+template<class T> class pushpopdep;
+template<class T> class prefixdep;
 template<class T> class queue_t;
 template<class MetaData> class queue_version;
 #include "queue/typeinfo.h"
@@ -256,6 +258,8 @@ struct truedep_type_tag { };
 //QUEUE_T
 struct popdep_type_tag { };
 struct pushdep_type_tag { };
+struct pushpopdep_type_tag { };
+struct prefixdep_type_tag { };
 
 // Generic types to support concepts
 typedef char small_type;
@@ -333,11 +337,17 @@ struct is_pushdep : is_object_with_tag<T, pushdep_type_tag> { };
 template<typename T>
 struct is_popdep : is_object_with_tag<T, popdep_type_tag> { };
 template<typename T>
+struct is_pushpopdep : is_object_with_tag<T, pushpopdep_type_tag> { };
+template<typename T>
+struct is_prefixdep : is_object_with_tag<T, prefixdep_type_tag> { };
+template<typename T>
 struct is_queue_dep
     : std::integral_constant<bool,
-			     is_object_with_tag<T, pushdep_type_tag>::value
-			     || is_object_with_tag<T, popdep_type_tag>::value> {
-};
+			     is_object_with_tag<T, pushpopdep_type_tag>::value
+			     || is_object_with_tag<T, popdep_type_tag>::value
+			     || is_object_with_tag<T, pushdep_type_tag>::value
+			     || is_object_with_tag<T, prefixdep_type_tag>::value
+			     > { };
 
 // ------------------------------------------------------------------------
 // Classes to support versioning of objects

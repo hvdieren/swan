@@ -7,39 +7,104 @@
 
 namespace obj {
 
+// Base classes for dependency tags
+
+template<typename QMetaData>
+class queuedep_tags_base : public all_tags_base {
+    queue_version<QMetaData> queue;
+
+public:
+    queuedep_tags_base( queue_version<QMetaData> * parent, bool is_push )
+	: queue( parent, is_push ) { }
+
+    queue_version<QMetaData> * get_queue_version() { return &queue; }
+};
+
+
+template<typename QMetaData>
+class popdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    popdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>( parent, false ) { }
+};
+
+template<typename QMetaData>
+class pushpopdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    pushpopdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>( parent, true ) { }
+};
+
+template<typename QMetaData>
+class pushdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    pushdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>( parent, true ) { }
+};
+
+template<typename QMetaData>
+class prefixdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    prefixdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>( parent, false ) { }
+};
+
+
+
+
+// For taskgraph specific scheme
+
+// TODO: generalize this.
 typedef tkt_metadata queue_metadata;
 
-struct popdep_tags_base : public all_tags_base { };
-struct pushdep_tags_base : public all_tags_base { };
-
-// Popdep (input) dependency tags - fully serialized with other popdeps
-class popdep_tags : public popdep_tags_base {
+// Popdep (input) dependency tags - fully serialized with other pop and pushpop
+class popdep_tags : public popdep_tags_base<queue_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    queue_version<queue_metadata> queue;
     tkt_metadata::tag_t rd_tag;
 
 public:
     popdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, false ) { }
+	: popdep_tags_base( parent ) { }
+};
 
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
+// Pushpopdep (input/output) dependency tags - fully serialized with other
+// pop and pushpop
+class pushpopdep_tags : public pushpopdep_tags_base<queue_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    pushpopdep_tags( queue_version<queue_metadata> * parent )
+	: pushpopdep_tags_base( parent ) { }
 };
 
 // Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
+class pushdep_tags : public pushdep_tags_base<queue_metadata>,
+		     public serial_dep_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    queue_version<queue_metadata> queue;
 
 public:
     pushdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, true ) { }
-
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
+	: pushdep_tags_base( parent ) { }
 };
 
-// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
+// Prefixdep (output) dependency tags
+class prefixdep_tags : public prefixdep_tags_base<queue_metadata>,
+		       public serial_dep_tags {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    prefixdep_tags( queue_version<queue_metadata> * parent )
+	: prefixdep_tags_base( parent ) { }
+};
+
+// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep,
+// pushpopdep, prefixdep.
 // This class may not have non-trival constructors nor destructors in order to
 // reap the simplified x86-64 calling conventions for small structures (the
 // only case we support), in particular for passing pushdep and popdep
@@ -84,28 +149,29 @@ public:
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
+    operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
+    operator prefixdep<T>()  const { return create_dep_ty< prefixdep<T> >(); }
 	
-    queue_segment* privatize_segment() {
-	return *(this->queue_v->privatize_segment());
-    }
-
+    // The queue_t works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
+
     T pop() {
 	T t;
 	queue_version<queue_metadata>::pop( t );
 	return t;
     }
+
+    void push( T & t ) {
+	queue_version<queue_metadata>::push( t );
+    }
 	
+private:
     template<typename DepTy>
     DepTy create_dep_ty() const {
 	DepTy od;
 	od.queue_v = get_nc_version();
 	return od;
     }
-
-    // segmented_queue *get_queue() {
-	// return get_queue();
-    // }
 
 protected:
     queue_version<metadata_t> * get_nc_version() const {
@@ -167,6 +233,12 @@ public:
     // For concepts: need not be implemented, must be non-static and public
     void is_object_decl(void);
 };
+
+template<typename T>
+class pushpopdep;
+
+template<typename T>
+class prefixdep;
 
 } //end namespace obj
 
