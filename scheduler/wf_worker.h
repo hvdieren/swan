@@ -23,7 +23,7 @@
 #ifndef WF_WORKER_H
 #define WF_WORKER_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <unistd.h>
 #include <csetjmp>

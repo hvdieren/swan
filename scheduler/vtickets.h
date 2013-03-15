@@ -41,7 +41,7 @@
 #include <cstdint>
 #include <iostream>
 
-#include "config.h"
+#include "swan_config.h"
 #include "wf_frames.h"
 #include "lfllist.h"
 #include "lock.h"

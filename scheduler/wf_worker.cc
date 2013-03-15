@@ -19,7 +19,7 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <sched.h>
 #include <errno.h>
@@ -278,6 +278,9 @@ worker_state::random_steal() {
     // ? (island + num/inc) : (num - inc*island_size);
 
     assert( victim < nthreads && "victim out of range" );
+    // TODO: the stealable attribute does not take into
+    // account if there are ready data-flow siblings of
+    // the spawn deque top.
     if( victim == id || !ws[victim].sd.stealable() ) {
 	// backoff.update( false );
 	return;

@@ -23,7 +23,7 @@
 #ifndef SETUP_STACK_H
 #define SETUP_STACK_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 #include <cstdint>

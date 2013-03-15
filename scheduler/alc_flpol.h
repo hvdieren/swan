@@ -23,7 +23,7 @@
 #ifndef ALC_FLPOL_H
 #define ALC_FLPOL_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <limits>
 #include <vector>

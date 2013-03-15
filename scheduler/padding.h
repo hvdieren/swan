@@ -23,7 +23,7 @@
 #ifndef PADDING_H
 #define PADDING_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 

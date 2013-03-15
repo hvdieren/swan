@@ -23,7 +23,7 @@
 #ifndef PLATFORM_X86_64_H
 #define PLATFORM_X86_64_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cstdint>
 #include <cstring>

@@ -20,7 +20,7 @@
  */
 
 // -*- c++ -*-
-#include "config.h"
+#include "swan_config.h"
 
 #include <cstdlib>
 #include <cstdio>

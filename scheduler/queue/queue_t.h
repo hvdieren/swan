@@ -8,6 +8,7 @@
 namespace obj {
 
 typedef tkt_metadata queue_metadata;
+// typedef ecgtg_metadata queue_metadata;
 
 struct popdep_tags_base : public all_tags_base { };
 struct pushdep_tags_base : public all_tags_base { };

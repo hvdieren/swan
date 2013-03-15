@@ -32,7 +32,7 @@
 #ifndef OBJECT_H
 #define OBJECT_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <type_traits>
 #include <iostream>
@@ -376,9 +376,14 @@ public:
     }
 
     template<typename T>
-    static void construct( void * ptr ) {
+    static typename std::enable_if<!std::is_void<T>::value>::type
+    construct( void * ptr ) {
 	new (ptr) T();
     }
+
+    template<typename T>
+    static typename std::enable_if<std::is_void<T>::value>::type
+    construct( void * ptr ) { }
 
     void destruct( void * ptr ) {
 	if( dfn )

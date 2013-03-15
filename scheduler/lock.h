@@ -23,7 +23,7 @@
 #ifndef LOCK_H
 #define LOCK_H
 
-#include "config.h"
+#include "swan_config.h"
 
 // Prefer to use std::mutex, if available.
 #include <pthread.h>

@@ -23,7 +23,7 @@
 #ifndef WF_TASK_H
 #define WF_TASK_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 #include <cstdint>

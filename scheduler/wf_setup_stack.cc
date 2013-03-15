@@ -19,7 +19,7 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <csetjmp>
 

@@ -23,7 +23,7 @@
 #ifndef WF_INTERFACE_H
 #define WF_INTERFACE_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <type_traits>
 #include <tr1/type_traits>

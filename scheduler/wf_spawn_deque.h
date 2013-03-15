@@ -23,7 +23,7 @@
 #ifndef SPAWN_DEQUE_H
 #define SPAWN_DEQUE_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 
