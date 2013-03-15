@@ -103,12 +103,12 @@ public:
 	: prefixdep_tags_base( parent ) { }
 };
 
-// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep,
+// queue_base: an instance of a queue, base class for hyperqueue, pushdep, popdep,
 // pushpopdep, prefixdep.
 // This class may not have non-trival constructors nor destructors in order to
 // reap the simplified x86-64 calling conventions for small structures (the
 // only case we support), in particular for passing pushdep and popdep
-// as direct arguments. We don't support this for queue_t.
+// as direct arguments. We don't support this for hyperqueue.
 template<typename MetaData>
 class queue_base
 {
@@ -116,7 +116,7 @@ public:
     typedef MetaData metadata_t;
 
     template<typename T>
-    friend class queue_t;
+    friend class hyperqueue;
 
 protected:
     queue_version<metadata_t> * queue_v;
@@ -138,13 +138,13 @@ protected:
     }
 };
 
-// queue_t: programmer's instance of a queue
+// hyperqueue: programmer's instance of a queue
 
 template<typename T>
-class queue_t : protected queue_version<queue_metadata>
+class hyperqueue : protected queue_version<queue_metadata>
 {
 public:
-    queue_t() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
+    hyperqueue() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
     }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
@@ -152,7 +152,7 @@ public:
     operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
     operator prefixdep<T>()  const { return create_dep_ty< prefixdep<T> >(); }
 	
-    // The queue_t works in push/pop mode and so supports empty, pop and push.
+    // The hyperqueue works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
 
     T pop() {
@@ -254,8 +254,8 @@ namespace platform_x86_64 {
 // a compile-time error will be triggered). This approach is a low-cost
 // way to by-pass the lack of data member introspection in C++.
 template<size_t ireg, size_t freg, size_t loff, typename T>
-struct arg_passing<ireg, freg, loff, obj::queue_t<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::queue_t<T>, obj::queue_version<typename obj::queue_t<T>::metadata_t> *> {
+struct arg_passing<ireg, freg, loff, obj::hyperqueue<T> >
+    : arg_passing_struct1<ireg, freg, loff, obj::hyperqueue<T>, obj::queue_version<typename obj::hyperqueue<T>::metadata_t> *> {
 };
 
 template<size_t ireg, size_t freg, size_t loff, typename T>

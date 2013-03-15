@@ -93,7 +93,7 @@ template<class T> class pushdep;
 template<class T> class popdep;
 template<class T> class pushpopdep;
 template<class T> class prefixdep;
-template<class T> class queue_t;
+template<class T> class hyperqueue;
 template<class MetaData> class queue_version;
 #include "queue/typeinfo.h"
 //-----------------------------------------------------------------------
