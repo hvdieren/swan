@@ -79,12 +79,16 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/bzip2f/src_wf/Makefile
 		 benchmarks/bzip2f/src_wfq/Makefile
 		 benchmarks/fft/src_wf/Makefile
+		 benchmarks/lu/src_wf/Makefile
+		 benchmarks/lu/src_wfo/Makefile
+		 benchmarks/strassen/src_wf/Makefile
 		 benchmarks/jacobi/src_wfo/Makefile
 		 benchmarks/jacobi/src_wfo/create.sh
 		 benchmarks/ubench/src_wf/Makefile
 		 benchmarks/ubench/src_wf/gen.pl
 		 benchmarks/ubench/src_wf/create.sh
 		 benchmarks/matmul2/src_wfo/Makefile
+		 benchmarks/rectmul_bis/src_wf/Makefile
 		 benchmarks/rectmul_bis/src_wfo/Makefile
 		 benchmarks/rectmul_bis/src_wfo/create.sh
 		 benchmarks/cholesky2/src_wfo/Makefile

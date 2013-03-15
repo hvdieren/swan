@@ -1,0 +1,20 @@
+srcdir=@srcdir@
+VPATH=$(srcdir)
+top_builddir=@top_builddir@
+
+PROG=lu
+
+include ../../Makefile.wf
+include $(top_builddir)/util/Makefile.use_us
+
+$(PROG): $(PROG).cc $(top_builddir)/util/getoptions.o
+$(PROG): $(SCHEDULER_GOALS)
+
+# To include getoptions.h
+MYFLAGS = -I$(top_builddir)/util -I../common -I$(srcdir)/../common
+
+CFLAGS += $(MYFLAGS)
+CXXFLAGS += $(MYFLAGS)
+
+clean:
+	rm -f $(PROG)

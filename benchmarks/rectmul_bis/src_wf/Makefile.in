@@ -1,0 +1,28 @@
+srcdir=@srcdir@
+VPATH=$(srcdir)
+top_builddir=@top_builddir@
+
+PROG=rectmul
+
+include ../../Makefile.wf
+include $(top_builddir)/util/Makefile.use_us
+
+cblas_dir=$(HOME)
+
+$(PROG): LDLIBS+=-lgoto2_barcelona-r1.13
+
+$(PROG): $(PROG).cc $(top_builddir)/util/getoptions.o
+$(PROG): $(SCHEDULER_GOALS)
+
+# To include getoptions.h
+MYFLAGS = -I$(top_builddir)/util -I../common -I$(srcdir)/../common
+MYFLAGS += -I$(cblas_dir)/include -L$(cblas_dir)/lib
+
+CFLAGS += -I../common
+CXXFLAGS += -I../common
+
+getoptions.o: ../common/getoptions.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f getoptions.o $(PROG)
