@@ -130,7 +130,6 @@ void wf_initialize() {
 #if !defined(__APPLE__)
     // Get the initial thread affinity for the initial thread.
     // All threads will be scheduled to this set in round-robin fashion.
-#if !defined( __APPLE__ )
     cpu_set_t cpu_hint;
     unsigned cpu_current;
     unsigned cpu_max = sizeof(cpu_hint)*8;
