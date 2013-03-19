@@ -15,11 +15,18 @@
 // + parameterize queue_t with fixed-size-queue length
 // + microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
+//
+// For prefix dependence types
+// + distinguish circular/non-circular usage of queue segment
+// + wait on all prior pops
+// + starting head is always known when prefixdep is ready (arg_ready in tickets)
+// + 
 
 #ifndef QUEUE_QUEUE_VERSION_H
 #define QUEUE_QUEUE_VERSION_H
 
 #include <sched.h>
+#include <iostream>
 
 #include "swan/queue/segmented_queue.h"
 
@@ -28,14 +35,19 @@ namespace obj {
 template<typename MetaData>
 class queue_base;
 
+enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3, qf_fixed=4, qf_known=8 };
+
+inline std::ostream & operator << ( std::ostream & os, queue_flags_t f );
+
 template<typename MetaData>
 class queue_version
 {
 public:
     typedef MetaData metadata_t;
+    enum qmode_t { qm_pushpop=3, qm_push=1, qm_pop=2, qm_prefix=6, qm_suffix=5 };
 
 private:
-    enum qmode_t { qm_push=1, qm_pop=2, qm_pushpop=3 };
+    typedef queue_flags_t flags_t;
 
 private:
     metadata_t metadata;
@@ -52,7 +64,8 @@ private:
     queue_version<MetaData> * fleft, * fright;
     queue_version<MetaData> * const parent;
     cas_mutex mutex;
-    qmode_t qmode;
+    flags_t flags;
+    size_t logical; // logical head position of this procedure in whole queue
 
 /*
     pad_multiple<CACHE_ALIGNMENT, sizeof(metadata_t)
@@ -71,11 +84,11 @@ protected:
     queue_version( q_typeinfo tinfo_ )
 	: tinfo( tinfo_ ),
 	  chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
-	  qmode( qm_pushpop ) {
+	  flags( flags_t( qf_pushpop | qf_known ) ), logical( 0 ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	// errs() << "QV queue_t constructor for: " << this << "\n";
+	errs() << "QV queue_t constructor for: " << this << "\n";
     }
 	
     // Argument passing constructor, called from grab/dgrab interface.
@@ -83,14 +96,26 @@ protected:
 public:
     // This code is written with pushdep in mind; may need to be specialized
     // to popdep
-    queue_version( queue_version<metadata_t> * qv, bool push )
+    queue_version( queue_version<metadata_t> * qv,
+		   qmode_t qmode, size_t fixed_length )
 	: tinfo( qv->tinfo ), chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
-	  qmode( push ? qm_push : qm_pop ) {
+	  flags( flags_t(qmode | ( qv->flags & qf_known )) ),
+	  logical( qv->logical ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
+	assert( flags_t(qmode & qv->flags) == flags_t(qmode & ~qf_fixed)
+		&& "increasing set of permissions on a spawn" );
+
 	// Link in frame with siblings and parent
 	parent->lock();
+
+	// Update parent flags and logical. Flags require lock due to
+	// non-atomic update.
+	qv->flags = (qmode & qf_fixed)
+	    ? qv->flags : flags_t(qv->flags & ~qf_known);
+	qv->logical += fixed_length;
+
 	lock();
 	if( parent->ctail ) {
 	    parent->ctail->lock();
@@ -106,25 +131,23 @@ public:
 
 	// In case of a push, move over the parent's USER hypermap to the
 	// child's USER hypermap. The child's other hypermaps remain empty.
-	if( unsigned(qmode) & unsigned(qm_push) ) {
+	// if( unsigned(flags) & unsigned(qf_push) ) {
 	    user.take( parent->user );
 	    if( user.get_tail() )
 		user.get_tail()->set_producing();
-	}
+	// }
 
 	parent->unlock();
 
-/*
 	errs() << "QV nest constructor for: " << this
 	       << " user=" << user
-	       << " children=" << children
-	       << " right=" << right
-	       << " queue=" << queue
 	       << " parent=" << parent
 	       << " parent->user=" << parent->user
 	       << " parent->queue=" << parent->queue
-	       << " push=" << push
+	       << " flags=" << flags
+	       << " logical head=" << logical
 	       << "\n";
+/*
 */
     }
 
@@ -218,9 +241,9 @@ public:
 	unlink();
 
 	// ???
-	if( push && parent->qmode == qm_pushpop
+	if( push && (parent->flags & qf_pushpop) == qf_pushpop
 	    && ( !parent->chead
-		 || (unsigned(parent->chead->qmode) & unsigned(qm_pop) ) ) ) {
+		 || (unsigned(parent->chead->flags) & unsigned(qf_pop) ) ) ) {
 	    if( is_stack ) {
 		if( parent->user.get_tail() )
 		    parent->user.get_tail()->clr_producing();
@@ -344,7 +367,7 @@ private:
 	for( queue_version * qv = parent->chead; qv; qv=qv->fright ) {
 	    if( qv == this )
 		break;
-	    else if( unsigned(qv->qmode) & unsigned(qm_pop) ) {
+	    else if( unsigned(qv->flags) & unsigned(qf_pop) ) {
 		parent->unlock();
 		return;
 	    }
@@ -387,6 +410,7 @@ public:
     void pop( T & t ) {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
+	errs() << "pop QV=" << this << " logical=" << logical << "\n";
 	while( !queue.get_head() ) {
 	    pop_head( queue );
 	    sched_yield();
@@ -421,6 +445,28 @@ public:
 	return queue.empty();
     }
 };
+
+std::ostream & operator << ( std::ostream & os, queue_flags_t f ) {
+    char const * sep = "";
+    if( f & qf_push ) {
+	os << sep << "push";
+	sep = "|";
+    }
+    if( f & qf_pop ) {
+	os << sep << "pop";
+	sep = "|";
+    }
+    if( f & qf_fixed ) {
+	os << sep << "fixed";
+	sep = "|";
+    }
+    if( f & qf_known ) {
+	os << sep << "known";
+	sep = "|";
+    }
+    return os;
+}
+
 
 } //namespace obj
 

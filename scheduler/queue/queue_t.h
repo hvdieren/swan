@@ -14,8 +14,10 @@ class queuedep_tags_base : public all_tags_base {
     queue_version<QMetaData> queue;
 
 public:
-    queuedep_tags_base( queue_version<QMetaData> * parent, bool is_push )
-	: queue( parent, is_push ) { }
+    queuedep_tags_base( queue_version<QMetaData> * parent,
+			typename queue_version<QMetaData>::qmode_t mode,
+			size_t fixed_length = 0 )
+	: queue( parent, mode, fixed_length ) { }
 
     queue_version<QMetaData> * get_queue_version() { return &queue; }
 };
@@ -25,28 +27,32 @@ template<typename QMetaData>
 class popdep_tags_base : public queuedep_tags_base<QMetaData> {
 public:
     popdep_tags_base( queue_version<QMetaData> * parent )
-	: queuedep_tags_base<QMetaData>( parent, false ) { }
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_pop ) { }
 };
 
 template<typename QMetaData>
 class pushpopdep_tags_base : public queuedep_tags_base<QMetaData> {
 public:
     pushpopdep_tags_base( queue_version<QMetaData> * parent )
-	: queuedep_tags_base<QMetaData>( parent, true ) { }
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_pushpop ) { }
 };
 
 template<typename QMetaData>
 class pushdep_tags_base : public queuedep_tags_base<QMetaData> {
 public:
     pushdep_tags_base( queue_version<QMetaData> * parent )
-	: queuedep_tags_base<QMetaData>( parent, true ) { }
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_push ) { }
 };
 
 template<typename QMetaData>
 class prefixdep_tags_base : public queuedep_tags_base<QMetaData> {
 public:
-    prefixdep_tags_base( queue_version<QMetaData> * parent )
-	: queuedep_tags_base<QMetaData>( parent, false ) { }
+    prefixdep_tags_base( queue_version<QMetaData> * parent, size_t length )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_prefix, length ) { }
 };
 
 
@@ -81,8 +87,7 @@ public:
 };
 
 // Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base<queue_metadata>,
-		     public serial_dep_tags {
+class pushdep_tags : public pushdep_tags_base<queue_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
 
@@ -92,15 +97,14 @@ public:
 };
 
 // Prefixdep (output) dependency tags
-class prefixdep_tags : public prefixdep_tags_base<queue_metadata>,
-		       public serial_dep_tags {
+class prefixdep_tags : public prefixdep_tags_base<queue_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
     tkt_metadata::tag_t rd_tag;
 
 public:
-    prefixdep_tags( queue_version<queue_metadata> * parent )
-	: prefixdep_tags_base( parent ) { }
+    prefixdep_tags( queue_version<queue_metadata> * parent, size_t length )
+	: prefixdep_tags_base( parent, length ) { }
 };
 
 // queue_base: an instance of a queue, base class for hyperqueue, pushdep, popdep,
@@ -150,7 +154,9 @@ public:
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
     operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
-    operator prefixdep<T>()  const { return create_dep_ty< prefixdep<T> >(); }
+    prefixdep<T> prefix( size_t n )  const {
+	return create_dep_ty< prefixdep<T> >( n );
+    }
 	
     // The hyperqueue works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
@@ -167,9 +173,19 @@ public:
 	
 private:
     template<typename DepTy>
-    DepTy create_dep_ty() const {
+    typename std::enable_if<!is_prefixdep<DepTy>::value, DepTy>::type
+    create_dep_ty() const {
 	DepTy od;
 	od.queue_v = get_nc_version();
+	return od;
+    }
+
+    template<typename DepTy>
+    typename std::enable_if<is_prefixdep<DepTy>::value, DepTy>::type
+    create_dep_ty( size_t n ) const {
+	DepTy od;
+	od.queue_v = get_nc_version();
+	od.count = n;
 	return od;
     }
 
@@ -238,7 +254,37 @@ template<typename T>
 class pushpopdep;
 
 template<typename T>
-class prefixdep;
+class prefixdep : public queue_base<queue_metadata> {
+public:
+    typedef queue_metadata metadata_t;
+    typedef prefixdep_tags dep_tags;
+    typedef prefixdep_type_tag _object_tag;
+    size_t count;
+	
+    static prefixdep<T> create( queue_version<metadata_t> * v, size_t n ) {
+	prefixdep<T> d;
+	d.queue_v = v;
+	d.count = n;
+	return d;
+    }
+	
+    T pop() {
+	T t;
+	assert( count > 0 && "No more remaing pops allowed" );
+	queue_v->pop( t );
+	count--;
+	return t;
+    }
+	
+    // We must consume the whole prefix
+    bool empty() const { return count == 0; }
+
+    size_t get_length() const { return count; }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
 
 } //end namespace obj
 
@@ -266,6 +312,11 @@ struct arg_passing<ireg, freg, loff, obj::popdep<T> >
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::pushdep<T> >
     : arg_passing_struct1<ireg, freg, loff, obj::pushdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *> {
+};
+
+template<size_t ireg, size_t freg, size_t loff, typename T>
+struct arg_passing<ireg, freg, loff, obj::prefixdep<T> >
+    : arg_passing_struct2<ireg, freg, loff, obj::prefixdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *, size_t> {
 };
 
 } // namespace platform_x86_64
