@@ -778,6 +778,8 @@ struct APT_iter<ireg,freg,loff> {
     static const size_t fnext = freg;
     static const size_t lnext = loff;
 
+    static const bool base_case = true;
+
     static inline void load() __attribute__((always_inline)) { }	
 };
 
@@ -795,7 +797,13 @@ struct APT_iter<ireg,freg,loff,T0,T...> {
     static const size_t fnext = pn::fnext;
     static const size_t lnext = pn::lnext;
 
+    static const bool base_case = false;
+
     static inline void load() __attribute__((always_inline)) {
+	// If not base case, then in_reg must be equal in all components
+	static_assert( pn::base_case || p0::in_reg == pn::in_reg,
+		       "Classification must have resolved to all in registers "
+		       "or all in memory" );
 	p0::load();
 	pn::load();
     }	
