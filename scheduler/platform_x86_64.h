@@ -625,7 +625,7 @@ struct APS_split<off,ap_none,aa> {
 template<size_t off, arg_pass_class ap, typename T0, typename... T>
 struct APS_split<off,ap,ap_reject,T0,T...> {
     static const arg_pass_class value = ap_mem;
-    typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
+    typedef std::tuple<ap_mem_ty> type;
 };
 
 // C. Specialization: aa = ap_full -> combine 8byte and continue
@@ -721,7 +721,7 @@ template<size_t size, typename split>
 struct APS_classify_struct_select<size, split,
 				  typename std::enable_if<!two_eightbyte_rule<size,split>::value>::type> {
     static const arg_pass_class value = ap_mem;
-    typedef typename split::type type;
+    typedef std::tuple<ap_mem_ty> type;
 };
 
 template<size_t size, typename... T>
