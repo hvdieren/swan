@@ -31,6 +31,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <tuple>
+#include <iostream>
 
 #define __vasm__ __asm__ __volatile__
 
@@ -467,6 +468,16 @@ enum arg_pass_class {
     // ap_complex_x87, -- currently not supported
     ap_mem
 };
+
+inline std::ostream & operator << ( std::ostream & os, arg_pass_class ap ) {
+    switch( ap ) {
+    case ap_none: return os << "arg_pass_class::none";
+    case ap_int: return os << "arg_pass_class::int";
+    case ap_sse: return os << "arg_pass_class::sse";
+    case ap_mem: return os << "arg_pass_class::mem";
+    }
+    return os;
+}
 
 struct ap_none_ty { };
 struct ap_int_ty { };
