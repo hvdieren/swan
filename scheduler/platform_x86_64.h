@@ -648,11 +648,18 @@ struct APS_split<off,ap,ap_continue,T0> {
     typedef std::tuple<typename ap_type_of<value>::type> type;
 };
 
-// D.2. More fields of structure
+// D.2. More fields of structure. "Each field of an object is classified
+// recursively so that always two fields are considered." The previous
+// field's classification is summarized here in ap and we are in the case where
+// the current field should be merged with that eight-byte (ap_continue).
 template<size_t off, arg_pass_class ap, typename T0, typename T1, typename... T>
-struct APS_split<off,ap,ap_continue,T0,T1,T...> :
-	APS_split<off+sizeof(T0),APS_combine<ap,APS_classify<T0>::value>::value,
-		  APS_accept<off+sizeof(T0),T1>::value, T1, T...> {
+struct APS_split<off,ap,ap_continue,T0,T1,T...> {
+    typedef APS_combine<ap,APS_classify<T0>::value> eightbyte;
+    typedef APS_classify_struct_part<T1,T...> remainder;
+    static const arg_pass_class value = 
+	APS_combine<eightbyte::value,remainder::value>::value;
+    typedef typename tuple_prefix<typename ap_type_of<eightbyte::value>::type,
+				  typename remainder::type>::type type;
 };
 
 // E. Specialization: ap == ap_mem -> all in memory as soon as one eightbyte
