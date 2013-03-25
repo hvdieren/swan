@@ -705,6 +705,11 @@ static inline bool arg_apply3_fn( Fn & fn, size_t (*off)(size_t), char * __restr
 // These functors step over a list of stack-stored arguments and a list
 // of stack-stored dep_tags.
 // ------------------------------------------------------------------------
+template<typename Fn, typename AL>
+static inline bool arg_apply_fnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
+    return true;
+}
+
 template<typename Fn, typename AL, typename T>
 static inline bool arg_apply_fnr( Fn & fn, AL al, char * __restrict__ a, char * __restrict__ s ) {
     return apply_functor<Fn,T>( fn, a+al.template get<T>(), s );
