@@ -66,7 +66,9 @@ private:
     // queue_version for pop only needs queue
     // queue_version for push only needs user, children, right
     // queue_t (and potentially pushpopdep) requires all 4
-    segmented_queue user, children, right, queue;
+    segmented_queue children, right;
+    segmented_queue_push user;
+    segmented_queue_pop queue;
     // TODO: SPECIALIZE case for queue_t and deps where queue_t holds tinfo
     // and deps have only a pointer to it (for compactness).
     q_typeinfo tinfo;
@@ -201,11 +203,16 @@ public:
     }
 
     ~queue_version() {
-	queue.erase( qindex ); // TODO: should be 0,0
-	children.erase( qindex ); // TODO: should be 0,0
+	// These assertions limit the work to perform in erase():
+	// 1. Queue is head-only (tail is always 0), so cannot own queue
+	// 2. Children must have been reduced into user and un-owned
+	// 3. Right must have been reduced into user, so empty
+	assert( !children.get_head()
+		&& "QV::children must be un-owned on destruct" );
+	assert( !right.get_head() && !right.get_tail()
+		&& "QV::right must be empty on destruct" );
+
 	user.erase( qindex );
-	right.erase( qindex ); // TODO: should be 0,0
-	errs() << "QV destruct:  " << *this << "\n";
     }
 
     void reduce_sync() {
@@ -413,20 +420,6 @@ private:
 	}
     }
 
-    // Find the head of the queue for concurrently popping results.
-    // We assume that there are no other popdep tasks on the same queue
-    // executing, so the other running queue-dep tasks, if any, have pushdep
-    // usage. For this reason, we do not look at the left sibling (that is
-    // the youngest pushdep task), but we look at the common parent, where
-    // the head segment has been pushed up, if it has been created already.
-    void pop_head( segmented_queue & q ) {
-	// Search the index
-	if( parent ) {
-	    parent->pop_head( q );
-	} else {
-	    q.set_head( qindex.lookup( q.get_logical() ) );
-	}
-    }
 
 public:
     const metadata_t * get_metadata() const { return &metadata; }
@@ -445,10 +438,19 @@ private:
 		errs() << "\n";
 		abort();
 	    }
+	    // Find the head of the queue for concurrently popping results.
+	    // Simple case: there are no other popdep tasks on the same queue
+	    // executing, so the other running queue-dep tasks, if any, have
+	    // pushdep usage. For this reason, we do not look at the left
+	    // sibling (that is the youngest pushdep task), but we look at the
+	    // common parent, where the head segment has been pushed up, if it
+	    // has been created already.
+	    // More complicated case (current): use the queue_index to figure
+	    // out what queue segment starts at the required logical position.
 	    while( !queue.get_head() ) {
-		pop_head( queue );
-		errs() << "ensure sched_yield\n";
 		sched_yield();
+		// Search the index
+		queue.set_head( qindex.lookup( queue.get_logical() ) );
 	    }
 	}
     }

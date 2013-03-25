@@ -99,6 +99,85 @@ public:
 };
 
 
+template<typename L, typename R>
+L & reduce( L & left, R & right, queue_index & idx ) {
+    if( !left.get_tail() ) {
+	if( !left.get_head() ) {
+	    left.set_head( right.get_head() );
+	    left.set_logical( right.logical );
+	}
+	left.set_tail( right.get_tail() );
+	// right.reset() ???
+	right.set_head( 0 );
+	right.set_tail( 0 );
+	right.set_logical( -1 );
+    } else if( right.get_head() ) {
+	if( left.get_tail()->get_logical_tail() >= 0 )
+	    set_logical_seq( right.get_head(),
+			     left.get_tail()->get_logical_tail(), idx );
+	left.get_tail()->set_next( right.get_head() );
+	left.set_tail( right.get_tail() ); // may be 0
+	// right.reset() ???
+	right.set_head( 0 );
+	right.set_tail( 0 );
+	right.set_logical( -1 );
+    } else {
+	assert( !right.get_tail() );
+    }
+    return left;
+}
+
+class segq_headtail {
+    queue_segment * head, * tail;
+
+    queue_segment * get_head() { return head; }
+    queue_segment * get_tail() { return tail; }
+    void set_head( queue_segment * head_ ) { head = head_; }
+    void set_tail( queue_segment * tail_ ) { tail = tail_; }
+
+    void reset() {
+	head = 0;
+    }
+};
+
+class segq_headonly {
+    queue_segment * head;
+
+    queue_segment * get_head() { return head; }
+    queue_segment * get_tail() { return 0; }
+    void set_head( queue_segment * head_ ) { head = head_; }
+    // void set_tail( queue_segment * tail_ ) { assert( !tail_ ); }
+
+    void reset() {
+	head = 0;
+    }
+};
+
+class segq_tailonly {
+    queue_segment * tail;
+
+    queue_segment * get_head() { return 0; }
+    queue_segment * get_tail() { return tail; }
+    // void set_head( queue_segment * head_ ) { assert( !head_ ); }
+    void set_tail( queue_segment * tail_ ) { tail = tail_; }
+
+    void reset() {
+	tail = 0;
+    }
+};
+
+class segmented_queue;
+class segmented_queue_pop;
+class segmented_queue_push;
+
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue & seg );
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue_push & seg );
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue_pop & seg );
+
+
 // TODO: create base class with reduce functionality and subclasses
 // with either push or pop functionality. We will never push and pop from
 // the same segmented_queue. Rather, a pushpopdep procedure will push to user
@@ -110,20 +189,10 @@ public:
 // pushes to the same hyperqueue will push to different segments by
 // construction. Pops may occur concurrently on the same segments, as may
 // pop and push.
-class segmented_queue
-{
-private:
+class segmented_queue {
+protected:
     queue_segment * head, * tail;
     long logical;
-    size_t volume_pop;
-    size_t volume_push;
-    // TODO: and probably a lock as well for prod/consumer parallelism
-    // Can we avoid the lock if the consumer will leave at least one segment,
-    // ie it will never read/modify tail, and only modify head if gaining access
-    // at which time the producer will not modify head anymore, ie, first set
-    // head to non-zero, then never touch again, and on the other side, wait
-    // until head is non-zero, only then modify
-    // (Sounds like a good match with temporal logic.)
 
     // head may be NULL and tail non-NULL. In this case, the list has been
     // reduced but we know that the current segmented_queue is the last such
@@ -133,13 +202,9 @@ private:
     // NOTE: there may be multiple links to a tail segment. How do we update
     // them?
 
-    friend inline std::ostream &
-    operator << ( std::ostream & os, const segmented_queue & seg );
-
 public: 
     segmented_queue()
-	: head( 0 ), tail( 0 ), logical( -1 ), volume_pop( 0 ),
-	  volume_push( 0 ) { }
+	: head( 0 ), tail( 0 ), logical( -1 ) { }
     void erase( queue_index & idx ) {
 	// Ownership is determined when both head and tail are non-NULL.
 	errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
@@ -167,15 +232,8 @@ public:
 
     long get_logical() const { return logical; }
     void set_logical( long logical_ ) { logical = logical_; }
-    size_t get_volume_pop() const { return volume_pop; }
-    size_t get_volume_push() const { return volume_push; }
 
     void take( segmented_queue & from ) {
-/*
-	*this = from;
-	from.head = from.tail = 0;
-	from.logical = -1;
-*/
 	std::swap( *this, from );
     }
 
@@ -192,6 +250,7 @@ public:
 	from.tail = 0;
     }
 
+private:
     // Beware of race condition between propagating logical position
     // versus pushing new segment and updating logical position.
     // Should be ok if link before update position.
@@ -205,6 +264,7 @@ public:
 	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
     }
 
+public:
     segmented_queue & reduce( segmented_queue & right, queue_index & idx ) {
 	if( !tail ) {
 	    if( !head ) {
@@ -267,8 +327,16 @@ public:
 */
 	std::swap( *this, right );
     }
+};
 
-public:
+class segmented_queue_push : public segmented_queue {
+    size_t volume_push;
+
+public: 
+    segmented_queue_push() : volume_push( 0 ) { }
+
+    size_t get_volume_push() const { return volume_push; }
+
     void push_segment( const q_typeinfo & tinfo, long logical_pos,
 		       queue_index & idx ) {
 	logical = logical_pos; // tail ? tail->get_logical_tail() : -1;
@@ -285,7 +353,25 @@ public:
 	    idx.insert( tail );
     }
 
-public:
+    void push( void * value, const q_typeinfo & tinfo, queue_index & idx ) {
+	assert( tail );
+	if( tail->is_full() )
+	    push_segment( tinfo, tail->get_logical_tail(), idx );
+	errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
+	tail->push( value );
+	volume_push++;
+    }
+};
+
+class segmented_queue_pop : public segmented_queue {
+    size_t volume_pop;
+
+public: 
+    segmented_queue_pop() : volume_pop( 0 ) { }
+
+    size_t get_volume_pop() const { return volume_pop; }
+
+private:
     void await( queue_index & idx ) {
 	assert( head );
 
@@ -308,7 +394,8 @@ public:
 		    errs() << "head " << head << " runs out, pop segment (empty)\n";
 		    // Are we totally done with this segment?
 		    // TODO: this may introduce a data race and not deallocate
-		    // some segments as a result...
+		    // some segments as a result. Or even dealloc more than
+		    // once...
 		    bool erase
 			= head->get_volume_pop() == head->get_volume_push();
 
@@ -316,7 +403,7 @@ public:
 			// Every segment with known logical position should
 			// be slotted??
 			assert( seg->get_slot() >= 0 );
-			set_logical_seq( seg, logical, idx );
+			// Redundant: set_logical_seq( seg, logical, idx );
 		    }
 
 		    // Compute our new position based on logical_pos, which is
@@ -349,6 +436,7 @@ public:
 	} while( true );
     }
 
+public:
     bool empty( queue_index & idx ) {
 	assert( head );
 
@@ -389,23 +477,7 @@ public:
 	}
 
 	assert( !head->is_producing() );
-
-/*
-	errs() << "No more data for consumer!!! head = "<< head
-	       << " tail=" << tail
-	       << ' ' << *head <<"\n";
-	errs() << "newline\n";
-*/
 	abort();
-    }
-	
-    void push( void * value, const q_typeinfo & tinfo, queue_index & idx ) {
-	assert( tail );
-	if( tail->is_full() )
-	    push_segment( tinfo, tail->get_logical_tail(), idx );
-	errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
-	tail->push( value );
-	volume_push++;
     }
 };
 
@@ -414,7 +486,23 @@ operator << ( std::ostream & os, const segmented_queue & seg ) {
     return os << '{' << seg.get_head()
 	      << ", " << seg.get_tail()
 	      << ", @" << seg.get_logical()
+	      << '}';
+}
+
+std::ostream &
+operator << ( std::ostream & os, const segmented_queue_push & seg ) {
+    return os << '{' << seg.get_head()
+	      << ", " << seg.get_tail()
+	      << ", @" << seg.get_logical()
 	      << "+" << seg.get_volume_push()
+	      << '}';
+}
+
+std::ostream &
+operator << ( std::ostream & os, const segmented_queue_pop & seg ) {
+    return os << '{' << seg.get_head()
+	      << ", " << seg.get_tail()
+	      << ", @" << seg.get_logical()
 	      << "-" << seg.get_volume_pop()
 	      << '}';
 }
