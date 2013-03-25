@@ -164,45 +164,6 @@ private:
     }
 };
 
-class segq_headtail {
-    queue_segment * head, * tail;
-
-    queue_segment * get_head() { return head; }
-    queue_segment * get_tail() { return tail; }
-    void set_head( queue_segment * head_ ) { head = head_; }
-    void set_tail( queue_segment * tail_ ) { tail = tail_; }
-
-    void reset() {
-	head = tail = 0;
-    }
-};
-
-class segq_headonly {
-    queue_segment * head;
-
-    queue_segment * get_head() { return head; }
-    queue_segment * get_tail() { return 0; }
-    void set_head( queue_segment * head_ ) { head = head_; }
-    // void set_tail( queue_segment * tail_ ) { assert( !tail_ ); }
-
-    void reset() {
-	head = 0;
-    }
-};
-
-class segq_tailonly {
-    queue_segment * tail;
-
-    queue_segment * get_head() { return 0; }
-    queue_segment * get_tail() { return tail; }
-    // void set_head( queue_segment * head_ ) { assert( !head_ ); }
-    void set_tail( queue_segment * tail_ ) { tail = tail_; }
-
-    void reset() {
-	tail = 0;
-    }
-};
-
 class segmented_queue_base {
 protected:
     // Place-holder until we have allocated a queue_segment to hold
@@ -407,7 +368,7 @@ private:
 		    // Note: this case is executed only once per segment,
 		    // namely for the task that pops the tail of this segment.
 
-		    errs() << "head " << head << " runs out, pop segment (empty)\n";
+		    // errs() << "head " << head << " runs out, pop segment (empty)\n";
 		    // Are we totally done with this segment?
 		    // TODO: this may introduce a data race and not deallocate
 		    // some segments as a result. Or even dealloc more than
@@ -439,8 +400,6 @@ private:
 		    }
 
 		    head = seg;
-
-		    errs() << "Move head to: " << *head << "\n";
 		} else {
 		    // In this case, we know the queue is empty.
 		    // This may be an error or not, depending on whether
@@ -474,8 +433,6 @@ public:
 
     template<typename T>
     void pop( T & t, queue_index & idx ) {
-	errs() << "segmented_queue pop\n";
-
 	// Spin until the desired information appears in the queue.
 	await( idx );
 
@@ -484,11 +441,11 @@ public:
 	if( !head->is_empty( pos ) ) {
 	    head->pop( t, pos );
 	    volume_pop++;
-	    errs() << "pop from queue " << head << ": value="
-		   << std::dec << t << ' ' << *head
-		   << " SQ=" << *this
-		   << " position=" << pos
-		   << "\n";
+	    // errs() << "pop from queue " << head << ": value="
+		   // << std::dec << t << ' ' << *head
+		   // << " SQ=" << *this
+		   // << " position=" << pos
+		   // << "\n";
 	    return;
 	}
 
