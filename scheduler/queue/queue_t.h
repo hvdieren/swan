@@ -275,6 +275,8 @@ public:
 	count--;
 	return t;
     }
+
+    size_t get_index() const { return queue_v->get_index(); }
 	
     // We must consume the whole prefix
     bool empty() const { return count == 0; }

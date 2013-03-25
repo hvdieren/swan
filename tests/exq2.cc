@@ -69,11 +69,16 @@ void consumer( int s, int n, int delay, prefixdep<int> q ) {
     errs() << "Consumer with n=" << n << " q.count=" << q.count << "\n";
     for( int i=0; i < n; ++i ) {
 	int j = q.pop();
+	int idx = q.get_index();
 	iolock();
 	errs() << "consume: " << j << '\n';
 	iounlock();
 	if( s+i != j ) {
 	    errs() << "ERROR: expected " << s+i << " got " << j << "\n";
+	    abort();
+	}
+	if( j+1 != idx ) {
+	    errs() << "ERROR: index " << idx << " (+1) got " << j << "\n";
 	    abort();
 	}
 	usleep( delay );

@@ -77,16 +77,25 @@ public:
     // peek first element
     char* front() const { return &buffer[head]; }
 
+    bool is_produced( size_t pos ) const {
+	pos = (pos * tinfo.get_size()) & mask;
+	if( head <= tail )
+	    return head <= pos && pos < tail;
+	else
+	    return head <= pos || pos < tail;
+    }
+
     // returns NULL if pop fails
     template<typename T>
-    bool pop( T & t ) {
+    bool pop( T & t, size_t pos ) {
 	if( empty() ) {
 	    // errs() << "Q " << this << " empty in pop\n";
 	    return false;
 	} else {
-	    char* value = &buffer[head];
+	    char* value = &buffer[(pos*tinfo.get_size()) & mask];
 	    t = *reinterpret_cast<T *>( value );
-	    head = (head+tinfo.get_size()) & mask;
+	    if( ((pos*tinfo.get_size()) & mask) == head ) // Queue behavior (no concurrent pops)
+		head = (head+tinfo.get_size()) & mask;
 	    return true;
 	}
     }
