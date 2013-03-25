@@ -179,10 +179,8 @@ public:
 	}
 	unlock();
 
-	// In case of a push, move over the parent's USER hypermap to the
+	// Move over the parent's USER hypermap to the
 	// child's USER hypermap. The child's other hypermaps remain empty.
-	// if( unsigned(flags) & unsigned(qf_push) ) {
-	// }
 	user.take( parent->user );
 	if( user.get_tail() )
 	    user.get_tail()->set_producing();
@@ -280,12 +278,6 @@ public:
 */
 	    }
 	} else {
-	    // Nothing to do for pop
-	    // Put back the queue on the parent. As pops are fully serialized,
-	    // this should correctly re-initialize the queue on the parent
-	    // (the pop is always the oldest when it executes).
-	    // parent->queue.take_head( queue );
-
 	    parent->children.reduce( children, qindex ); // assert children == 0?
 	    if( is_stack )
 		parent->user.reduce( parent->children, qindex );
@@ -381,15 +373,6 @@ private:
 	    bool cont = !parent->children.get_tail();
 	    // stack/full distinction?
 	    parent->children.reduce( q, qindex );
-/*
-	    bool cont = false;
-	    if( parent->children.get_tail() )
-		parent->children.reduce_trailing( q );
-	    else {
-		parent->queue.reduce_trailing( q );
-		cont = true;
-	    }
-*/
 
 	    unlock();
             parent->unlock();
@@ -398,10 +381,8 @@ private:
 	    // We need to lock the grandparent while pushing because a
 	    // consumer may be accessing the segmented_queue as we are
 	    // initializing it.
-	    // Recursion must stop at first encountered frame with push and pop
-	    // possibilities, ie, queue_t or pushpopdep if we introduce it.
 	    // Do we really need this once we have the queue_index?
-	    if( cont /* && parent->parent */ )
+	    if( cont )
 		parent->push_head( parent->children );
 	} else {
 	    // ! parent
@@ -412,8 +393,6 @@ private:
 	    assert( children.get_head() );
 	    assert( !children.get_tail() );
 	    if( queue_segment * seg = children.get_head() ) {
-		errs() << "push_head QV=" << *this << " final push_head seg=" << *seg
-		       << "\n";
 		if( seg->get_slot() >= 0 )
 		    children.set_head( 0 ); // Moved to index
 	    }
@@ -477,6 +456,7 @@ public:
 	    errs() << "QV push ltail=" << logical_tail << "\n";
 	    user.push_segment( tinfo, logical_tail, qindex );
 
+	    // headonly_queue q = user.split();
 	    segmented_queue q;
 	    q.take_head( user );
 	    push_head( q );

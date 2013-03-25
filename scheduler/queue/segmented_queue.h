@@ -166,6 +166,20 @@ class segq_tailonly {
     }
 };
 
+class segmented_queue_base {
+protected:
+    // Place-holder until we have allocated a queue_segment to hold
+    // this value.
+    long logical;
+
+public:
+    segmented_queue_base() : logical( -1 ) { }
+
+    long get_logical() const { return logical; }
+    void set_logical( long logical_ ) { logical = logical_; }
+
+};
+
 class segmented_queue;
 class segmented_queue_pop;
 class segmented_queue_push;
@@ -189,10 +203,9 @@ operator << ( std::ostream & os, const segmented_queue_pop & seg );
 // pushes to the same hyperqueue will push to different segments by
 // construction. Pops may occur concurrently on the same segments, as may
 // pop and push.
-class segmented_queue {
+class segmented_queue : public segmented_queue_base {
 protected:
     queue_segment * head, * tail;
-    long logical;
 
     // head may be NULL and tail non-NULL. In this case, the list has been
     // reduced but we know that the current segmented_queue is the last such
@@ -203,13 +216,14 @@ protected:
     // them?
 
 public: 
-    segmented_queue()
-	: head( 0 ), tail( 0 ), logical( -1 ) { }
+    segmented_queue() : head( 0 ), tail( 0 ) { }
     void erase( queue_index & idx ) {
 	// Ownership is determined when both head and tail are non-NULL.
+	/*
 	errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
 	if( head ) errs() << "         head: " << *head << "\n"; 
 	if( tail ) errs() << "         tail: " << *tail << "\n"; 
+	*/
 
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
@@ -229,9 +243,6 @@ public:
     const queue_segment * get_tail() const { return tail; }
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
-
-    long get_logical() const { return logical; }
-    void set_logical( long logical_ ) { logical = logical_; }
 
     void take( segmented_queue & from ) {
 	std::swap( *this, from );
