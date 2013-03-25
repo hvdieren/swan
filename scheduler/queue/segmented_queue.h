@@ -99,71 +99,6 @@ public:
 };
 
 
-// A template traits class definition in order to allow the compiler
-// to specialize the reduce code to those cases where it is statically
-// known (by type) that either the head or tail is missing.
-template<typename L>
-struct reduction_traits {
-    template<typename R>
-    static
-    L & reduce( L & left, R & right, queue_index & idx ) {
-	if( !left.get_tail() ) {
-	    if( !left.get_head() ) {
-		left.set_head( right.get_head() );
-		left.set_logical( right.get_logical() );
-	    }
-	    left.set_tail( right.get_tail() );
-	    right.reset();
-	} else if( right.get_head() ) {
-	    if( left.get_tail()->get_logical_tail() >= 0 )
-		set_logical_seq( right.get_head(),
-				 left.get_tail()->get_logical_tail(), idx );
-	    left.get_tail()->set_next( right.get_head() );
-	    left.set_tail( right.get_tail() ); // may be 0
-	    right.reset();
-	} else {
-	    assert( !right.get_tail() );
-	}
-	return left;
-    }
-
-    template<typename R>
-    static
-    L & reduce_headonly( L & left, R & right, queue_index & idx ) {
-	assert( right.get_head() && !right.get_tail() );
-
-	if( !left.get_tail() ) {
-	    if( !left.get_head() ) {
-		left.set_head( right.get_head() );
-		left.set_logical( right.get_logical() );
-	    }
-	    right.reset();
-	} else {
-	    if( left.get_tail()->get_logical_tail() >= 0 )
-		set_logical_seq( right.get_head(),
-				 left.get_tail()->get_logical_tail(), idx );
-	    left.get_tail()->set_next( right.get_head() );
-	    left.set_tail( 0 );
-	    right.reset();
-	}
-	return left;
-    }
-
-private:
-    // Beware of race condition between propagating logical position
-    // versus pushing new segment and updating logical position.
-    // Should be ok if link before update position.
-    static void
-    set_logical_seq( queue_segment * seg, long logical, queue_index & idx ) {
-	assert( seg->get_logical_pos() < 0
-		&& "logical position must be unknown when updating" );
-	seg->set_logical_pos( logical );
-	idx.insert( seg );
-	if( queue_segment * nxt = seg->get_next() )
-	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
-    }
-};
-
 class segmented_queue_base {
 protected:
     // Place-holder until we have allocated a queue_segment to hold
@@ -266,19 +201,66 @@ public:
 public:
     segmented_queue &
     reduce( segmented_queue & right, queue_index & idx ) {
-	return reduction_traits<segmented_queue>::reduce( *this, right, idx );
+	if( !tail ) {
+	    if( !head ) {
+		head = right.get_head();
+		logical = right.get_logical();
+	    }
+	    tail = right.get_tail();
+	    right.reset();
+	} else if( right.get_head() ) {
+	    if( tail->get_logical_tail() >= 0 )
+		set_logical_seq( right.get_head(),
+				 tail->get_logical_tail(), idx );
+	    tail->set_next( right.get_head() );
+	    tail = right.get_tail(); // may be 0
+	    right.reset();
+	} else {
+	    assert( !right.get_tail() );
+	}
+	return *this;
     }
 
     segmented_queue &
     reduce_reverse( segmented_queue & left, queue_index & idx ) {
-	reduction_traits<segmented_queue>::reduce( left, *this, idx );
+	left.reduce( *this, idx );
 	std::swap( left, *this );
 	return *this;
     }
 
     segmented_queue &
     reduce_headonly( segmented_queue & right, queue_index & idx ) {
-	return reduction_traits<segmented_queue>::reduce_headonly( *this, right, idx );
+	assert( right.get_head() && !right.get_tail() );
+
+	if( !tail ) {
+	    if( !head ) {
+		head = right.get_head();
+		logical = right.get_logical();
+	    }
+	    right.reset();
+	} else {
+	    if( tail->get_logical_tail() >= 0 )
+		set_logical_seq( right.get_head(),
+				 tail->get_logical_tail(), idx );
+	    tail->set_next( right.get_head() );
+	    tail = 0;
+	    right.reset();
+	}
+	return *this;
+    }
+
+private:
+    // Beware of race condition between propagating logical position
+    // versus pushing new segment and updating logical position.
+    // Should be ok if link before update position.
+    static void
+    set_logical_seq( queue_segment * seg, long logical, queue_index & idx ) {
+	assert( seg->get_logical_pos() < 0
+		&& "logical position must be unknown when updating" );
+	seg->set_logical_pos( logical );
+	idx.insert( seg );
+	if( queue_segment * nxt = seg->get_next() )
+	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
     }
 };
 
@@ -423,7 +405,7 @@ public:
 	// for sure).
 	await( idx );
 
-	// Now check again. This resut is for sure.
+	// Now check again. This result is for sure.
 	return head->is_empty( get_index() );
     }
 
