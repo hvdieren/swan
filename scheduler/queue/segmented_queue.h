@@ -99,33 +99,70 @@ public:
 };
 
 
-template<typename L, typename R>
-L & reduce( L & left, R & right, queue_index & idx ) {
-    if( !left.get_tail() ) {
-	if( !left.get_head() ) {
-	    left.set_head( right.get_head() );
-	    left.set_logical( right.logical );
+// A template traits class definition in order to allow the compiler
+// to specialize the reduce code to those cases where it is statically
+// known (by type) that either the head or tail is missing.
+template<typename L>
+struct reduction_traits {
+    template<typename R>
+    static
+    L & reduce( L & left, R & right, queue_index & idx ) {
+	if( !left.get_tail() ) {
+	    if( !left.get_head() ) {
+		left.set_head( right.get_head() );
+		left.set_logical( right.get_logical() );
+	    }
+	    left.set_tail( right.get_tail() );
+	    right.reset();
+	} else if( right.get_head() ) {
+	    if( left.get_tail()->get_logical_tail() >= 0 )
+		set_logical_seq( right.get_head(),
+				 left.get_tail()->get_logical_tail(), idx );
+	    left.get_tail()->set_next( right.get_head() );
+	    left.set_tail( right.get_tail() ); // may be 0
+	    right.reset();
+	} else {
+	    assert( !right.get_tail() );
 	}
-	left.set_tail( right.get_tail() );
-	// right.reset() ???
-	right.set_head( 0 );
-	right.set_tail( 0 );
-	right.set_logical( -1 );
-    } else if( right.get_head() ) {
-	if( left.get_tail()->get_logical_tail() >= 0 )
-	    set_logical_seq( right.get_head(),
-			     left.get_tail()->get_logical_tail(), idx );
-	left.get_tail()->set_next( right.get_head() );
-	left.set_tail( right.get_tail() ); // may be 0
-	// right.reset() ???
-	right.set_head( 0 );
-	right.set_tail( 0 );
-	right.set_logical( -1 );
-    } else {
-	assert( !right.get_tail() );
+	return left;
     }
-    return left;
-}
+
+    template<typename R>
+    static
+    L & reduce_headonly( L & left, R & right, queue_index & idx ) {
+	assert( right.get_head() && !right.get_tail() );
+
+	if( !left.get_tail() ) {
+	    if( !left.get_head() ) {
+		left.set_head( right.get_head() );
+		left.set_logical( right.get_logical() );
+	    }
+	    right.reset();
+	} else {
+	    if( left.get_tail()->get_logical_tail() >= 0 )
+		set_logical_seq( right.get_head(),
+				 left.get_tail()->get_logical_tail(), idx );
+	    left.get_tail()->set_next( right.get_head() );
+	    left.set_tail( 0 );
+	    right.reset();
+	}
+	return left;
+    }
+
+private:
+    // Beware of race condition between propagating logical position
+    // versus pushing new segment and updating logical position.
+    // Should be ok if link before update position.
+    static void
+    set_logical_seq( queue_segment * seg, long logical, queue_index & idx ) {
+	assert( seg->get_logical_pos() < 0
+		&& "logical position must be unknown when updating" );
+	seg->set_logical_pos( logical );
+	idx.insert( seg );
+	if( queue_segment * nxt = seg->get_next() )
+	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
+    }
+};
 
 class segq_headtail {
     queue_segment * head, * tail;
@@ -136,7 +173,7 @@ class segq_headtail {
     void set_tail( queue_segment * tail_ ) { tail = tail_; }
 
     void reset() {
-	head = 0;
+	head = tail = 0;
     }
 };
 
@@ -181,6 +218,7 @@ public:
 };
 
 class segmented_queue;
+class segmented_queue_headonly;
 class segmented_queue_pop;
 class segmented_queue_push;
 
@@ -243,6 +281,12 @@ public:
     const queue_segment * get_tail() const { return tail; }
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
+    void set_tail( queue_segment * seg ) { tail = seg; }
+
+    void reset() {
+	head = tail = 0;
+	logical = -1;
+    }
 
     void take( segmented_queue & from ) {
 	std::swap( *this, from );
@@ -250,93 +294,54 @@ public:
 
     // Retain from.logical as we are keeping the from queue segment at the
     // same logical position!
-    void take_head( segmented_queue & from ) {
-	head = *const_cast<queue_segment * volatile * >( &from.head );
-	logical = from.logical;
-	from.head = 0;
-    }
-
-    void take_tail( segmented_queue & from ) {
-	tail = from.tail;
-	from.tail = 0;
-    }
-
-private:
-    // Beware of race condition between propagating logical position
-    // versus pushing new segment and updating logical position.
-    // Should be ok if link before update position.
-    static void set_logical_seq( queue_segment * seg, long logical,
-				 queue_index & idx ) {
-	assert( seg->get_logical_pos() < 0
-		&& "logical position must be unknown when updating" );
-	seg->set_logical_pos( logical );
-	idx.insert( seg );
-	if( queue_segment * nxt = seg->get_next() )
-	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
+    segmented_queue split() {
+	segmented_queue h;
+	h.head = head;
+	h.logical = logical;
+	head = 0;
+	return h;
     }
 
 public:
-    segmented_queue & reduce( segmented_queue & right, queue_index & idx ) {
-	if( !tail ) {
-	    if( !head ) {
-		head = right.head;
-		logical = right.logical;
-	    }
-	    tail = right.tail;
-	    right.head = 0;
-	    right.tail = 0;
-	    right.logical = -1;
-	} else if( right.head ) {
-	    if( tail->get_logical_tail() >= 0 )
-		set_logical_seq( right.head, tail->get_logical_tail(), idx );
-	    // assert( right.tail );
-	    tail->set_next( right.head );
-	    tail = right.tail; // may be 0
-	    right.head = 0;
-	    right.tail = 0;
-	    right.logical = -1;
-	} else {
-	    assert( !right.tail );
-	}
-	return *this;
+    segmented_queue &
+    reduce( segmented_queue & right, queue_index & idx ) {
+	return reduction_traits<segmented_queue>::reduce( *this, right, idx );
     }
- 
-    // Special case of reduce for publishing queue head:
-    // We know that right.head != 0 and right.tail == 0
-    segmented_queue & reduce_trailing( segmented_queue & right,
-				       queue_index & idx ) {
-	assert( right.head != 0 && "assumption of special reduction case" );
-	assert( right.tail == 0 && "assumption of special reduction case" );
 
-	// Reduce fresh pop-user into parent's children when tail != 0
-	if( !tail ) {
-	    if( !head ) {
-		head = right.head;
-		logical = right.logical;
-	    }
-	    right.head = 0;
-	    right.logical = -1;
-	    // right.tail = 0;
-	} else {
-	    if( tail->get_logical_tail() >= 0 )
-		set_logical_seq( right.head, tail->get_logical_tail(), idx );
-	    tail->set_next( right.head ); // link to next first - race cond!
-	    tail = 0;
-	    right.head = 0;
-	    right.logical = -1;
-	}
+    segmented_queue &
+    reduce_reverse( segmented_queue & left, queue_index & idx ) {
+	reduction_traits<segmented_queue>::reduce( left, *this, idx );
+	std::swap( left, *this );
 	return *this;
     }
 
-    void swap( segmented_queue & right ) {
-/*
-	queue_segment * h = right.head, * t = right.tail;
-	right.head = head;
-	right.tail = tail;
-	head = h;
-	tail = t;
-*/
-	std::swap( *this, right );
+    segmented_queue &
+    reduce_headonly( segmented_queue & right, queue_index & idx ) {
+	return reduction_traits<segmented_queue>::reduce_headonly( *this, right, idx );
+    }
+};
+
+class segmented_queue_headonly : public segmented_queue_base {
+protected:
+    queue_segment * head;
+
+public: 
+    segmented_queue_headonly() : head( 0 ) { }
+
+    queue_segment * get_tail() { return 0; }
+    queue_segment * get_head() { return head; }
+    const queue_segment * get_tail() const { return 0; }
+    const queue_segment * get_head() const { return head; }
+    void set_head( queue_segment * seg ) { head = seg; }
+    // void set_tail( queue_segment * seg ) { assert( !tail ); }
+
+    void reset() {
+	head = 0;
+	logical = -1;
+    }
+
+    void take( segmented_queue_headonly & from ) {
+	std::swap( *this, from );
     }
 };
 
@@ -374,7 +379,7 @@ public:
     }
 };
 
-class segmented_queue_pop : public segmented_queue {
+class segmented_queue_pop : public segmented_queue_headonly {
     size_t volume_pop;
 
 public: 

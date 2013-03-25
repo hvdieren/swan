@@ -214,8 +214,8 @@ public:
     }
 
     void reduce_sync() {
-	children.reduce( user, qindex );
-	children.swap( user );
+	// user <- children REDUCE user
+	user.reduce_reverse( children, qindex );
     }
 
     void reduce_hypermaps( bool push, bool is_stack ) {
@@ -350,8 +350,9 @@ private:
     // The head is pushed up as far as possible, without affecting the order
     // of elements in the queue.
     void push_head( segmented_queue & q ) {
-	// --- locking bug detected: race with delete of fleft - lock parent as well even though we don't need the parent in this case to avoid deletion of fleft between if( fleft ) and fleft->lock()
-	if( parent ) // lock parent to avoid deletion of fleft
+	// Note: lock parent even though we don't need the parent
+	// to avoid deletion of fleft between if( fleft ) and fleft->lock()
+	if( parent )
 	    parent->lock();
 	if( fleft ) {
 	    // We need the lock to avoid the left sibling from terminating
@@ -360,7 +361,7 @@ private:
 	    lock();
 	    parent->unlock();
 
-	    fleft->right.reduce_trailing( q, qindex );
+	    fleft->right.reduce_headonly( q, qindex );
 
 	    fleft->unlock();
 	    unlock();
@@ -372,7 +373,7 @@ private:
 
 	    bool cont = !parent->children.get_tail();
 	    // stack/full distinction?
-	    parent->children.reduce( q, qindex );
+	    parent->children.reduce_headonly( q, qindex );
 
 	    unlock();
             parent->unlock();
@@ -382,10 +383,12 @@ private:
 	    // consumer may be accessing the segmented_queue as we are
 	    // initializing it.
 	    // Do we really need this once we have the queue_index?
+	    // Yes. It helps to pro-actively link as much of the chain
+	    // as possible together without resorting to the index (which
+	    // wouldn't happen as all segments would remain "producing").
 	    if( cont )
 		parent->push_head( parent->children );
-	} else {
-	    // ! parent
+	} else { // ! parent
 	    // If we do not have a parent, then the push terminates.
 	    // Do nothing here.
 	    // Evaporate the segment pointer. It is registered in the index
@@ -456,9 +459,7 @@ public:
 	    errs() << "QV push ltail=" << logical_tail << "\n";
 	    user.push_segment( tinfo, logical_tail, qindex );
 
-	    // headonly_queue q = user.split();
-	    segmented_queue q;
-	    q.take_head( user );
+	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	user.push( reinterpret_cast<void *>( &t ), tinfo, qindex );
