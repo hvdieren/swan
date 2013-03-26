@@ -108,10 +108,11 @@ public:
 
 protected:
     // Normal constructor, called from queue_t constructor
-    queue_version( queue_index & qindex_ )
+    queue_version( queue_index & qindex_, size_t max_size_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
-	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ), max_size( 128 ) {
+	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ),
+	  max_size( max_size_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 

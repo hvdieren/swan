@@ -124,7 +124,7 @@ public:
 
 protected:
     queue_version<metadata_t> * queue_v;
-	
+
 public:
     const queue_version<metadata_t> * get_version() const { return queue_v; }
     queue_version<metadata_t> * get_version() { return queue_v; }
@@ -151,7 +151,8 @@ class hyperqueue : protected queue_version<queue_metadata>
     queue_index qindex;
 
 public:
-    hyperqueue() : queue_version<queue_metadata>( qindex ) { }
+    explicit hyperqueue( size_t size = 128 )
+	: queue_version<queue_metadata>( qindex, size ) { }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
