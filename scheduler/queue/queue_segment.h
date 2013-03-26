@@ -45,9 +45,9 @@ private:
     }
 
 public:
-    size_t insert( queue_segment * seg );
-    queue_segment * lookup( long logical ) const;
-    void replace( int slot, long logical, queue_segment * new_seg );
+    inline size_t insert( queue_segment * seg );
+    inline queue_segment * lookup( long logical ) const;
+    inline void replace( int slot, long logical, queue_segment * new_seg );
 
     // Lock is required in case vector resizes.
     void erase( size_t slot ) {
