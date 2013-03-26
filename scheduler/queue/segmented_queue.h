@@ -183,13 +183,8 @@ public:
 };
 
 class segmented_queue_push : public segmented_queue {
-    size_t volume_push;
-
 public: 
-    segmented_queue_push() : volume_push( 0 ) { }
-
-    // For printing (operator <<)
-    size_t get_volume_push() const { return volume_push; }
+    segmented_queue_push() { }
 
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, queue_index & idx ) {
@@ -219,7 +214,6 @@ public:
 	    push_segment<T>( tail->get_logical_tail(), max_size, idx );
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push( value );
-	volume_push++;
     }
 };
 
@@ -356,7 +350,6 @@ operator << ( std::ostream & os, const segmented_queue_push & seg ) {
     return os << '{' << seg.get_head()
 	      << ", " << seg.get_tail()
 	      << ", @" << seg.get_logical()
-	      << "+" << seg.get_volume_push()
 	      << '}';
 }
 
