@@ -26,13 +26,11 @@ class fixed_size_queue
     pad_multiple<CACHE_ALIGNMENT, sizeof(size_t)> pad1;
 
     // Cache block 2: unmodified during execution
-    const q_typeinfo tinfo; // HV: TODO: typeinfo should be removed from this class
     const size_t elm_size;
     const size_t size;
     const size_t mask;
     char * const buffer;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(q_typeinfo) + 3*sizeof(size_t)
-		 + sizeof(char *)> pad2;
+    pad_multiple<CACHE_ALIGNMENT, 3*sizeof(size_t) + sizeof(char *)> pad2;
 	
 private:
     static size_t log2_up( size_t uu ) {
@@ -53,17 +51,19 @@ private:
     }
 	
 public:
-    static size_t get_buffer_space( q_typeinfo tinfo ) {
+    template<typename T>
+    static size_t get_buffer_space() {
 	// Compute buffer size: MAX_SIZE elements of size dictated by typeinfo
+	q_typeinfo tinfo = q_typeinfo::create<T>();
 	size_t size = MAX_SIZE * tinfo.get_size();
 	size_t log_size = log2_up( size );
-	assert( log_size > 0 && (1<<(log_size-1)) < size
-		&& size <= (1<<log_size) );
-	return 1 << log_size;
+	assert( log_size > 0 && (size_t(1)<<(log_size-1)) < size
+		&& size <= (size_t(1)<<log_size) );
+	return size_t(1) << log_size;
     }
 
-    fixed_size_queue( q_typeinfo tinfo_, char * buffer_ )
-	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
+    fixed_size_queue( q_typeinfo tinfo, char * buffer_ )
+	: head( 0 ), tail( 0 ),
 	  elm_size( tinfo.get_size() ),
 	  size( q_typeinfo::roundup_pow2( MAX_SIZE * elm_size ) ),
 	  mask( size-1 ), buffer( buffer_ ) { 

@@ -54,7 +54,7 @@ public:
     template<typename T>
     static queue_segment * create( long logical ) {
 	q_typeinfo tinfo = q_typeinfo::create<T>();
-	size_t buffer_size = fixed_size_queue::get_buffer_space( tinfo );
+	size_t buffer_size = fixed_size_queue::get_buffer_space<T>();
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
 	char * buffer = &memory[sizeof(queue_segment)];
 	for( char * p=buffer; p < &memory[buffer_size]; p+=tinfo.get_size() ) {
