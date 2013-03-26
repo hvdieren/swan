@@ -5,7 +5,6 @@
 
 #include <stdio.h>
 #include <iostream>
-#include "swan/queue/typeinfo.h"
 #include "swan/queue/fixed_size_queue.h"
 
 namespace obj {

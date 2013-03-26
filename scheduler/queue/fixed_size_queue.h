@@ -63,7 +63,7 @@ private:
 	return v;
     }
 
-    // Compute buffer size: max_size elements of size dictated by q_typeinfo
+    // Compute buffer size: max_size elements of size rounded up to 8 bytes
     template<typename T>
     static size_t get_element_size() {
 	return roundup_pow2(((sizeof(T)+7)&~(size_t)7));
