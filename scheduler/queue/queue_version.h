@@ -10,11 +10,12 @@
 //   CONSEQUENCE: pop has a RIGHT field
 // + pop has a USER field, when initializing the hypermaps, it inherits parent's
 //   USER
-// + check whether all queue segments are properly deleted.
-// + implement pushpopdep
-// + parameterize queue_t with fixed-size-queue length
-// + microbenchmark with only a pop task that does an empty() check on the queue
+// + !!! check whether all queue segments are properly deleted.
+// + !!! implement pushpopdep
+// + !!! parameterize queue_t with fixed-size-queue length
+// + !!! microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
+// + !!! remove logical_head and tail from queue_version
 //
 // For prefix dependence types
 // + distinguish circular/non-circular usage of queue segment

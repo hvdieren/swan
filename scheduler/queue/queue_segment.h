@@ -9,6 +9,57 @@
 
 namespace obj {
 
+class queue_segment;
+
+class queue_index {
+    std::vector<queue_segment *> idx;
+    size_t used;
+    size_t size;
+    cas_mutex mutex;
+
+private:
+    void lock() { mutex.lock(); }
+    void unlock() { mutex.unlock(); }
+
+public:
+    queue_index() : used( 0 ), size( 0 ) { }
+
+private:
+    size_t get_free_position( queue_segment * seg ) {
+	lock();
+	for( size_t i=0; i < used; ++i ) {
+	    if( idx[i] == 0 ) {
+		idx[i] = seg;
+		unlock();
+		return i;
+	    }
+	}
+	if( used >= size ) {
+	    size += 16;
+	    idx.reserve( size );
+	}
+	size_t slot = used++;
+	idx[slot] = seg;
+	unlock();
+	return slot;
+    }
+
+public:
+    size_t insert( queue_segment * seg );
+    queue_segment * lookup( long logical ) const;
+    void replace( int slot, long logical, queue_segment * new_seg );
+
+    // Lock is required in case vector resizes.
+    void erase( size_t slot ) {
+	lock();
+	errs() << "Index " << this << " erase " << idx[slot]
+	       << " slot " << slot << "\n";
+	idx[slot] = 0;
+	unlock();
+    }
+
+};
+
 // NOTE:
 // If pushes occur concurrently on the same queue, then each will operate on
 // a distinct queue_segment. Pops may occur concurrently on the same segment.
@@ -85,9 +136,21 @@ public:
     }
     long get_logical_pos() const { return logical_pos; }
     void set_logical_pos( int logical_ ) {
-	errs() << "Update logical position of " << this
-	       << " from " << logical_pos << " to " << logical_ << "\n";
+	// errs() << "Update logical position of " << this
+	// << " from " << logical_pos << " to " << logical_ << "\n";
 	logical_pos = logical_;
+    }
+
+    // Beware of race condition between propagating logical position
+    // versus pushing new segment and updating logical position.
+    // Should be ok if link before update position.
+    void propagate_logical_pos( long logical, queue_index & idx ) {
+	assert( logical_pos < 0
+		&& "logical position must be unknown when updating" );
+	logical_pos = logical;
+	idx.insert( this );
+	if( next )
+	    next->propagate_logical_pos( get_logical_tail(), idx );
     }
 
     size_t get_volume_pop() const { return volume_pop; }
@@ -132,6 +195,52 @@ inline std::ostream & operator << ( std::ostream & os, queue_segment & seg ) {
 	      << " volume-pop=" << seg.volume_pop
 	      << " volume-push=" << seg.volume_push
 	      << " next=" << seg.next << ' ' << seg.q;
+}
+
+size_t queue_index::insert( queue_segment * seg ) {
+    assert( seg->get_logical_pos() >= 0 );
+    size_t slot = get_free_position( seg );
+    seg->set_slot( slot );
+    errs() << "Index " << this << " insert logical="
+	   << seg->get_logical_head() << '-'
+	   << seg->get_logical_tail()
+	   << " seg " << seg << " at slot " << slot
+	   << "\n";
+    return slot;
+}
+
+queue_segment * queue_index::lookup( long logical ) const {
+    errs() << "Index " << this << " lookup logical="
+	   << logical << "\n";
+    for( size_t i=0; i < used; ++i ) {
+	if( queue_segment * seg = idx[i] ) {
+	    errs() << "Index entry " << *seg << " logical="
+		   << seg->get_logical_head() << '-'
+		   << seg->get_logical_tail() << "\n";
+	    if( seg && seg->get_logical_head() <= logical
+		&& seg->get_logical_tail() > logical )
+		return seg;
+	}
+    }
+    return 0;
+}
+
+void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
+    queue_segment * seg = idx[slot];
+    assert( seg && "Segment not indexed" );
+    errs() << "Index replace " << seg << " @" << slot
+	   << " for new_seg=" << *new_seg
+	   << " at logical=" << logical << "\n";
+
+
+    if( new_seg->get_slot() >= 0 ) {
+	idx[slot] = 0;
+    } else {
+	idx[slot] = new_seg;
+	new_seg->set_slot( slot );
+    }
+    // Premature: must check that first half of segment is left unconsumed
+    seg->set_slot( -1 );
 }
 
 }//namespace obj

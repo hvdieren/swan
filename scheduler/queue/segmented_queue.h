@@ -8,96 +8,7 @@
 
 namespace obj {
 
-class queue_index {
-    std::vector<queue_segment *> idx;
-    size_t used;
-    size_t size;
-    cas_mutex mutex;
-
-private:
-    void lock() { mutex.lock(); }
-    void unlock() { mutex.unlock(); }
-
-public:
-    queue_index() : used( 0 ), size( 0 ) { }
-
-private:
-    size_t get_free_position( queue_segment * seg ) {
-	lock();
-	for( size_t i=0; i < used; ++i ) {
-	    if( idx[i] == 0 ) {
-		idx[i] = seg;
-		unlock();
-		return i;
-	    }
-	}
-	if( used >= size ) {
-	    size += 16;
-	    idx.reserve( size );
-	}
-	size_t slot = used++;
-	idx[slot] = seg;
-	unlock();
-	return slot;
-    }
-
-public:
-    size_t insert( queue_segment * seg ) {
-	assert( seg->get_logical_pos() >= 0 );
-	size_t slot = get_free_position( seg );
-	seg->set_slot( slot );
-	errs() << "Index " << this << " insert logical="
-	       << seg->get_logical_head() << '-'
-	       << seg->get_logical_tail()
-	       << " seg " << seg << " at slot " << slot
-	       << "\n";
-	return slot;
-    }
-
-    // Lock is required in case vector resizes.
-    void erase( size_t slot ) {
-	lock();
-	errs() << "Index " << this << " erase " << idx[slot]
-	       << " slot " << slot << "\n";
-	idx[slot] = 0;
-	unlock();
-    }
-
-    queue_segment * lookup( long logical ) const {
-	errs() << "Index " << this << " lookup logical="
-	       << logical << "\n";
-	for( size_t i=0; i < used; ++i ) {
-	    if( queue_segment * seg = idx[i] ) {
-		errs() << "Index entry " << *seg << " logical="
-		       << seg->get_logical_head() << '-'
-		       << seg->get_logical_tail() << "\n";
-		if( seg && seg->get_logical_head() <= logical
-		    && seg->get_logical_tail() > logical )
-		    return seg;
-	    }
-	}
-	return 0;
-    }
-
-    void replace( int slot, long logical, queue_segment * new_seg ) {
-	queue_segment * seg = idx[slot];
-	assert( seg && "Segment not indexed" );
-	errs() << "Index replace " << seg << " @" << slot
-	       << " for new_seg=" << *new_seg
-	       << " at logical=" << logical << "\n";
-
-
-	if( new_seg->get_slot() >= 0 ) {
-	    idx[slot] = 0;
-	} else {
-	    idx[slot] = new_seg;
-	    new_seg->set_slot( slot );
-	}
-	// Premature: must check that first half of segment is left unconsumed
-	seg->set_slot( -1 );
-    }
-};
-
+class queue_index;
 
 class segmented_queue_base {
 protected:
@@ -110,7 +21,6 @@ public:
 
     long get_logical() const { return logical; }
     void set_logical( long logical_ ) { logical = logical_; }
-
 };
 
 class segmented_queue;
@@ -209,8 +119,8 @@ public:
 	    right.reset();
 	} else if( right.get_head() ) {
 	    if( tail->get_logical_tail() >= 0 )
-		set_logical_seq( right.get_head(),
-				 tail->get_logical_tail(), idx );
+		right.get_head()->propagate_logical_pos(
+		    tail->get_logical_tail(), idx );
 	    tail->set_next( right.get_head() );
 	    tail = right.get_tail(); // may be 0
 	    right.reset();
@@ -239,27 +149,13 @@ public:
 	    right.reset();
 	} else {
 	    if( tail->get_logical_tail() >= 0 )
-		set_logical_seq( right.get_head(),
-				 tail->get_logical_tail(), idx );
+		right.get_head()->propagate_logical_pos( 
+		    tail->get_logical_tail(), idx );
 	    tail->set_next( right.get_head() );
 	    tail = 0;
 	    right.reset();
 	}
 	return *this;
-    }
-
-private:
-    // Beware of race condition between propagating logical position
-    // versus pushing new segment and updating logical position.
-    // Should be ok if link before update position.
-    static void
-    set_logical_seq( queue_segment * seg, long logical, queue_index & idx ) {
-	assert( seg->get_logical_pos() < 0
-		&& "logical position must be unknown when updating" );
-	seg->set_logical_pos( logical );
-	idx.insert( seg );
-	if( queue_segment * nxt = seg->get_next() )
-	    set_logical_seq( nxt, seg->get_logical_tail(), idx );
     }
 };
 
@@ -292,6 +188,7 @@ class segmented_queue_push : public segmented_queue {
 public: 
     segmented_queue_push() : volume_push( 0 ) { }
 
+    // For printing (operator <<)
     size_t get_volume_push() const { return volume_push; }
 
     template<typename T>
@@ -300,10 +197,12 @@ public:
 	queue_segment * seg = queue_segment::template create<T>( logical, max_size );
 	// seg->set_producing();
 	if( tail ) {
-	    tail->clr_producing();
 	    tail->set_next( seg );
-	} else // if tail == 0, then also head == 0
+	    tail->clr_producing();
+	} else {
+	    assert( !head && "if tail == 0, then also head == 0" );
 	    head = seg;
+	}
 	tail = seg;
 
 	if( logical >= 0 )
@@ -313,6 +212,9 @@ public:
     template<typename T>
     void push( T * value, size_t max_size, queue_index & idx ) {
 	assert( tail );
+	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
+	// then just wait a bit for the pop to catch up and avoid inserting
+	// a new segment.
 	if( tail->is_full() )
 	    push_segment<T>( tail->get_logical_tail(), max_size, idx );
 	errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
@@ -357,12 +259,18 @@ private:
 		    bool erase
 			= head->get_volume_pop() == head->get_volume_push();
 
-		    if( seg->get_logical_pos() < 0 ) {
-			// Every segment with known logical position should
-			// be slotted??
-			assert( seg->get_slot() >= 0 );
-			// Redundant: set_logical_seq( seg, logical, idx );
-		    }
+		    // Every segment linked from a known position (we can
+		    // only pop from a known position) should also be known.
+		    // However, there is a race condition in the reduction
+		    // and updating of the logicial position that may occur
+		    // (rarely) and that may imply that the value has not been
+		    // properly propagated yet. We fix the correctness aspect
+		    // of that here, propagating the position if needed.
+		    // There is also a potential performance aspect as in
+		    // case of those races we will not be able to find some
+		    // segments in the index during some time.
+		    if( seg->get_logical_pos() < 0 )
+			seg->propagate_logical_pos( head->get_logical_tail(), idx );
 
 		    // Compute our new position based on logical_pos, which is
 		    // constant (as opposed to head and tail which differ by
