@@ -89,6 +89,7 @@ private:
     // TODO: store this in queue_t and pass pointer to it in here, copy on
     // nesting. That will make the storage of the index unique per queue.
     queue_index & qindex;
+    size_t max_size;
 
 /*
     pad_multiple<CACHE_ALIGNMENT, sizeof(metadata_t)
@@ -109,7 +110,7 @@ protected:
     queue_version( queue_index & qindex_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
-	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ) {
+	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ), max_size( 128 ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -129,7 +130,8 @@ public:
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
 	  logical_head( qv->logical_head ),
-	  logical_tail( qv->logical_tail ), qindex( qv->qindex ) {
+	  logical_tail( qv->logical_tail ), qindex( qv->qindex ),
+	  max_size( qv->max_size ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -454,12 +456,12 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    errs() << "QV push ltail=" << logical_tail << "\n";
-	    user.push_segment<T>( logical_tail, qindex );
+	    user.push_segment<T>( logical_tail, max_size, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	user.push<T>( &t, qindex );
+	user.push<T>( &t, max_size, qindex );
     }
 
     // Only for pop!

@@ -13,8 +13,6 @@
 
 namespace obj {
 
-#define MAX_SIZE	128
-
 class fixed_size_queue
 {
     // Cache block 0: owned by producer
@@ -50,25 +48,53 @@ private:
 	}
     }
 	
+private:
+    // Credit:
+    // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+    static size_t roundup_pow2( size_t v ) {
+	v--;
+	v |= v>>1;
+	v |= v>>2;
+	v |= v>>4;
+	v |= v>>8;
+	v |= v>>16;
+	v |= v>>32;
+	v++;
+	return v;
+    }
+
+    // Compute buffer size: max_size elements of size dictated by q_typeinfo
+    template<typename T>
+    static size_t get_element_size() {
+	return roundup_pow2(((sizeof(T)+7)&~(size_t)7));
+    }
+
 public:
     template<typename T>
-    static size_t get_buffer_space() {
-	// Compute buffer size: MAX_SIZE elements of size dictated by typeinfo
-	q_typeinfo tinfo = q_typeinfo::create<T>();
-	size_t size = MAX_SIZE * tinfo.get_size();
+    static size_t get_buffer_space( size_t max_size ) {
+	size_t size = max_size * get_element_size<T>();
 	size_t log_size = log2_up( size );
 	assert( log_size > 0 && (size_t(1)<<(log_size-1)) < size
 		&& size <= (size_t(1)<<log_size) );
 	return size_t(1) << log_size;
     }
 
-    fixed_size_queue( q_typeinfo tinfo, char * buffer_ )
+private:
+    friend class queue_segment;
+
+    fixed_size_queue( typeinfo tinfo_, char * buffer_,
+		      size_t elm_size_, size_t max_size )
 	: head( 0 ), tail( 0 ),
-	  elm_size( tinfo.get_size() ),
-	  size( q_typeinfo::roundup_pow2( MAX_SIZE * elm_size ) ),
+	  elm_size( elm_size_ ),
+	  size( roundup_pow2( max_size * elm_size ) ),
 	  mask( size-1 ), buffer( buffer_ ) { 
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
+    }
+
+public:
+    ~fixed_size_queue() {
+// TODO: destruct
     }
 	
     bool empty() const volatile { return head == tail; }
