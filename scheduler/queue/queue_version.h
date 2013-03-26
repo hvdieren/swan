@@ -12,9 +12,10 @@
 //   USER
 // + !!! check whether all queue segments are properly deleted.
 // + !!! implement pushpopdep
+// + !!! factor queue_version in pushpop, pop, push versions?
 // + !!! microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
-// + !!! remove logical_head and tail from queue_version
+// + !!! remove logical_head from queue_version
 //
 // For prefix dependence types
 // + distinguish circular/non-circular usage of queue segment
@@ -213,6 +214,7 @@ public:
 	user.reduce_reverse( children, qindex );
     }
 
+    // TODO: replace push argument by checking flags
     void reduce_hypermaps( bool push, bool is_stack ) {
 	// Do conversion of hypermaps when a child finishes:
 	//  * merge children - user - right
