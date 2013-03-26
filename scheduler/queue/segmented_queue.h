@@ -294,10 +294,10 @@ public:
 
     size_t get_volume_push() const { return volume_push; }
 
-    void push_segment( const q_typeinfo & tinfo, long logical_pos,
-		       queue_index & idx ) {
+    template<typename T>
+    void push_segment( long logical_pos, queue_index & idx ) {
 	logical = logical_pos; // tail ? tail->get_logical_tail() : -1;
-	queue_segment * seg = queue_segment::create( tinfo, logical );
+	queue_segment * seg = queue_segment::template create<T>( logical );
 	// seg->set_producing();
 	if( tail ) {
 	    tail->clr_producing();
@@ -310,10 +310,11 @@ public:
 	    idx.insert( tail );
     }
 
-    void push( void * value, const q_typeinfo & tinfo, queue_index & idx ) {
+    template<typename T>
+    void push( T * value, queue_index & idx ) {
 	assert( tail );
 	if( tail->is_full() )
-	    push_segment( tinfo, tail->get_logical_tail(), idx );
+	    push_segment<T>( tail->get_logical_tail(), idx );
 	errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push( value );
 	volume_push++;

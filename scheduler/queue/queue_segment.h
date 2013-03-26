@@ -51,10 +51,16 @@ public:
 	
 public:
     // Allocate control fields and data buffer in one go
-    static queue_segment * create( q_typeinfo tinfo, long logical ) {
+    template<typename T>
+    static queue_segment * create( long logical ) {
+	q_typeinfo tinfo = q_typeinfo::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space( tinfo );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
 	char * buffer = &memory[sizeof(queue_segment)];
+	for( char * p=buffer; p < &memory[buffer_size]; p+=tinfo.get_size() ) {
+	    T * tp = reinterpret_cast<T *>( p );
+	    new (tp) T;
+	}
 	return new (memory) queue_segment( tinfo, logical, buffer );
     }
 
@@ -106,7 +112,8 @@ public:
 	__sync_fetch_and_add( &volume_pop, 1 );
     }
 	
-    void push( void * value ) {
+    template<typename T>
+    void push( T * value ) {
 	while( !q.push( value ) )
 	    sched_yield();
 	volume_push++;

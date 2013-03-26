@@ -151,8 +151,7 @@ class hyperqueue : protected queue_version<queue_metadata>
     queue_index qindex;
 
 public:
-    hyperqueue()
-	: queue_version<queue_metadata>( q_typeinfo::create<T>(), qindex ) { }
+    hyperqueue() : queue_version<queue_metadata>( qindex ) { }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }

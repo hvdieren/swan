@@ -69,9 +69,6 @@ private:
     segmented_queue children, right;
     segmented_queue_push user;
     segmented_queue_pop queue;
-    // TODO: SPECIALIZE case for queue_t and deps where queue_t holds tinfo
-    // and deps have only a pointer to it (for compactness).
-    q_typeinfo tinfo;
 
     // New fields
     queue_version<MetaData> * chead, * ctail;
@@ -96,7 +93,6 @@ private:
 /*
     pad_multiple<CACHE_ALIGNMENT, sizeof(metadata_t)
 		 + 3*sizeof(segmented_queue)
-		 + sizeof(q_typeinfo)
 		 + 5*sizeof(queue_version<metadata_t>*)
 		 + sizeof(cas_mutex)> padding;
 */
@@ -110,9 +106,8 @@ public:
 
 protected:
     // Normal constructor, called from queue_t constructor
-    queue_version( q_typeinfo tinfo_, queue_index & qindex_ )
-	: tinfo( tinfo_ ),
-	  chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
+    queue_version( queue_index & qindex_ )
+	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
 	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
@@ -131,7 +126,7 @@ public:
     // to popdep
     queue_version( queue_version<metadata_t> * qv,
 		   qmode_t qmode, size_t fixed_length )
-	: tinfo( qv->tinfo ), chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
+	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
 	  logical_head( qv->logical_head ),
 	  logical_tail( qv->logical_tail ), qindex( qv->qindex ) {
@@ -452,21 +447,21 @@ public:
 	ensure_queue_head();
 	queue.pop( t, qindex );
     }
+
+    // Potentially differentiate const T & t versus T && t
     template<typename T>
     void push( T t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    errs() << "QV push ltail=" << logical_tail << "\n";
-	    user.push_segment( tinfo, logical_tail, qindex );
+	    user.push_segment<T>( logical_tail, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	user.push( reinterpret_cast<void *>( &t ), tinfo, qindex );
+	user.push<T>( &t, qindex );
     }
 
-    const q_typeinfo & get_tinfo() { return tinfo; }
-	
     // Only for pop!
     bool empty() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary

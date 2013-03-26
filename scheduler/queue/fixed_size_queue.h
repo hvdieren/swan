@@ -27,10 +27,11 @@ class fixed_size_queue
 
     // Cache block 2: unmodified during execution
     const q_typeinfo tinfo; // HV: TODO: typeinfo should be removed from this class
+    const size_t elm_size;
     const size_t size;
     const size_t mask;
     char * const buffer;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(q_typeinfo) + 2*sizeof(size_t)
+    pad_multiple<CACHE_ALIGNMENT, sizeof(q_typeinfo) + 3*sizeof(size_t)
 		 + sizeof(char *)> pad2;
 	
 private:
@@ -63,7 +64,8 @@ public:
 
     fixed_size_queue( q_typeinfo tinfo_, char * buffer_ )
 	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
-	  size( q_typeinfo::roundup_pow2( MAX_SIZE * tinfo.get_size() ) ),
+	  elm_size( tinfo.get_size() ),
+	  size( q_typeinfo::roundup_pow2( MAX_SIZE * elm_size ) ),
 	  mask( size-1 ), buffer( buffer_ ) { 
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
@@ -71,14 +73,14 @@ public:
 	
     bool empty() const volatile { return head == tail; }
     bool full() const volatile {
-	return ((tail+tinfo.get_size()) & mask) == head;
+	return ((tail+elm_size) & mask) == head;
     }
 	
     // peek first element
     char* front() const { return &buffer[head]; }
 
     bool is_produced( size_t pos ) const {
-	pos = (pos * tinfo.get_size()) & mask;
+	pos = (pos * elm_size) & mask;
 	if( head <= tail )
 	    return head <= pos && pos < tail;
 	else
@@ -92,21 +94,22 @@ public:
 	    // errs() << "Q " << this << " empty in pop\n";
 	    return false;
 	} else {
-	    char* value = &buffer[(pos*tinfo.get_size()) & mask];
+	    char* value = &buffer[(pos*elm_size) & mask];
 	    t = *reinterpret_cast<T *>( value );
-	    if( ((pos*tinfo.get_size()) & mask) == head ) // Queue behavior (no concurrent pops)
-		head = (head+tinfo.get_size()) & mask;
+	    if( ((pos*elm_size) & mask) == head ) // Queue behavior (no concurrent pops)
+		head = (head+elm_size) & mask;
 	    return true;
 	}
     }
 	
     // returns true on success false on failure
-    bool push( void * value ) {
+    template<typename T>
+    bool push( T * value ) {
 	if( full() ) {
 	    return false;
 	} else {
-	    tinfo.copy( &buffer[tail], value );
-	    tail = (tail+tinfo.get_size()) & mask;
+	    *reinterpret_cast<T *>( &buffer[tail] ) = *value;
+	    tail = (tail+elm_size) & mask;
 	    return true;
 	}
     }
