@@ -93,10 +93,6 @@ public:
 	logical = -1;
     }
 
-    void take( segmented_queue & from ) {
-	std::swap( *this, from );
-    }
-
     // Retain from.logical as we are keeping the from queue segment at the
     // same logical position!
     segmented_queue split() {
@@ -185,6 +181,15 @@ public:
 class segmented_queue_push : public segmented_queue {
 public: 
     segmented_queue_push() { }
+
+    void take( segmented_queue_push & from ) {
+	std::swap( *this, from );
+    }
+
+    // This works because we know that if head != 0, then also tail != 0.
+    long get_logical_tail() const {
+	return tail ? tail->get_logical_tail() : logical;
+    }
 
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, queue_index & idx ) {

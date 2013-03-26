@@ -12,7 +12,6 @@
 //   USER
 // + !!! check whether all queue segments are properly deleted.
 // + !!! implement pushpopdep
-// + !!! parameterize queue_t with fixed-size-queue length
 // + !!! microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
 // + !!! remove logical_head and tail from queue_version
@@ -84,7 +83,9 @@ private:
     // been allocated yet.
     // TODO: strive to remove these variables (they are copied in the 
     // segmented_queue's (queue and user).
-    long logical_head, logical_tail;
+    // It appears we need to keep logical_head in case we pass to a push,
+    // then we will loose the position of the pop (head).
+    long logical_head;
 
     // Index structure: where to find segments at certain logical offsets.
     // TODO: store this in queue_t and pass pointer to it in here, copy on
@@ -111,13 +112,13 @@ protected:
     queue_version( queue_index & qindex_, size_t max_size_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
-	  logical_head( 0 ), logical_tail( 0 ), qindex( qindex_ ),
+	  logical_head( 0 ), qindex( qindex_ ),
 	  max_size( max_size_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	user.set_logical( 0 );
-	queue.set_logical( 0 );
+	user.set_logical( 0 ); // logical tail
+	queue.set_logical( 0 ); // logical head
 
 	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
@@ -132,12 +133,11 @@ public:
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
 	  logical_head( qv->logical_head ),
-	  logical_tail( qv->logical_tail ), qindex( qv->qindex ),
-	  max_size( qv->max_size ) {
+	  qindex( qv->qindex ), max_size( qv->max_size ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	assert( flags_t(qmode & qv->flags) == flags_t(qmode & ~qf_fixed)
+	assert( flags_t(qmode & parent->flags) == flags_t(qmode & ~qf_fixed)
 		&& "increasing set of permissions on a spawn" );
 
 	// Link in frame with siblings and parent
@@ -145,26 +145,35 @@ public:
 
 	// Update parent flags and logical. Flags require lock due to
 	// non-atomic update.
-	if( flags & qf_pop ) {
-	    if( !(qmode & qf_fixed) )
-		qv->flags = flags_t( qv->flags & ~qf_knhead );
-	    if( qv->flags & qf_knhead )
-		qv->logical_head += fixed_length;
-	    else
-		qv->logical_head = -1;
-	}
+	long plogical_tail = parent->user.get_logical_tail();
 	if( flags & qf_push ) {
 	    if( !(qmode & qf_fixed) )
-		qv->flags = flags_t( qv->flags & ~qf_kntail );
-	    if( qv->flags & qf_kntail )
-		qv->logical_tail += fixed_length;
+		parent->flags = flags_t( parent->flags & ~qf_kntail );
+	    if( parent->flags & qf_kntail )
+		plogical_tail += fixed_length;
 	    else
-		qv->logical_tail = -1;
+		plogical_tail = -1;
 	}
 
-	// TODO: logical has to come in through the user hypermap
-	// the parent hypermap is either null (unknown) or has a logical as well
+	user.take( parent->user );
+	parent->user.set_logical( plogical_tail );
+	if( user.get_tail() )
+	    user.get_tail()->set_producing();
 
+	if( flags & qf_pop ) {
+	    if( !(qmode & qf_fixed) )
+		parent->flags = flags_t( parent->flags & ~qf_knhead );
+	    if( parent->flags & qf_knhead )
+		parent->logical_head += fixed_length;
+	    else
+		parent->logical_head = -1;
+
+	    // Only initialize queue if this is a pop, pushpop or prefix dep.
+	    queue.take( parent->queue );
+	    parent->queue.set_logical( parent->logical_head );
+	}
+
+	// Link in chain with siblings
 	lock();
 	if( parent->ctail ) {
 	    parent->ctail->lock();
@@ -177,19 +186,6 @@ public:
 	    parent->chead = parent->ctail = this;
 	}
 	unlock();
-
-	// Move over the parent's USER hypermap to the
-	// child's USER hypermap. The child's other hypermaps remain empty.
-	user.take( parent->user );
-	if( user.get_tail() )
-	    user.get_tail()->set_producing();
-	parent->user.set_logical( parent->logical_tail );
-
-	if( qmode & qf_pop ) {
-	    // queue.set_logical( logical_tail );
-	    queue.take( parent->queue );
-	    parent->queue.set_logical( parent->logical_head );
-	}
 
 	parent->unlock();
 
@@ -443,8 +439,7 @@ public:
     void pop( T & t ) {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	// errs() << "pop QV=" << this << " queue=" << queue
-	  //      << " logical_head=" << logical_head << "\n";
+	// errs() << "pop QV=" << this << " queue=" << queue << "\n";
 	ensure_queue_head();
 	queue.pop( t, qindex );
     }
@@ -454,8 +449,7 @@ public:
     void push( T t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    // errs() << "QV push ltail=" << logical_tail << "\n";
-	    user.push_segment<T>( logical_tail, max_size, qindex );
+	    user.push_segment<T>( user.get_logical(), max_size, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -479,9 +473,7 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " children=" << v.children
        << " user=" << v.user
        << " right=" << v.right
-       << " flags=" << v.flags
-       << " logical_head=" << v.logical_head
-       << " logical_tail=" << v.logical_tail;
+       << " flags=" << v.flags;
     return os;
 }
 
