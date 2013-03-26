@@ -84,18 +84,17 @@ class queue_segment
 		 + sizeof(volatile bool) > padding;
 
 private:
-    queue_segment( typeinfo tinfo, long logical_, char * buffer,
+    queue_segment( long logical_, char * buffer,
 		   size_t elm_size, size_t max_size )
-	: q( tinfo, buffer, elm_size, max_size ), next( 0 ), logical_pos( logical_ ),
+	: q( buffer, elm_size, max_size ), next( 0 ), logical_pos( logical_ ),
 	  volume_pop( 0 ), volume_push( 0 ),
 	  slot( -1 ), producing( true ) {
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
-	errs() << "queue_segment create " << *this << "\n";
+	// errs() << "queue_segment create " << *this << "\n";
     }
 public:
     ~queue_segment() {
-	errs() << "queue_segment destruct: " << *this << "\n";
-	errs() << "newline\n";
+	// errs() << "queue_segment destruct: " << *this << "\n";
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
     }
@@ -104,7 +103,6 @@ public:
     // Allocate control fields and data buffer in one go
     template<typename T>
     static queue_segment * create( long logical, size_t seg_size ) {
-	typeinfo tinfo = typeinfo::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space<T>( seg_size );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
 	char * buffer = &memory[sizeof(queue_segment)];
@@ -113,7 +111,7 @@ public:
 	    T * tp = reinterpret_cast<T *>( p );
 	    new (tp) T;
 	}
-	return new (memory) queue_segment( tinfo, logical, buffer,
+	return new (memory) queue_segment( logical, buffer,
 					   fixed_size_queue::get_element_size<T>(),
 					   seg_size );
     }

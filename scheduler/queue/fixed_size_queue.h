@@ -82,8 +82,7 @@ public:
 private:
     friend class queue_segment;
 
-    fixed_size_queue( typeinfo tinfo_, char * buffer_,
-		      size_t elm_size_, size_t max_size )
+    fixed_size_queue( char * buffer_, size_t elm_size_, size_t max_size )
 	: head( 0 ), tail( 0 ),
 	  elm_size( elm_size_ ),
 	  size( roundup_pow2( max_size * elm_size ) ),
