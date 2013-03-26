@@ -177,7 +177,6 @@ public:
     const queue_segment * get_tail() const { return tail; }
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
-    void set_tail( queue_segment * seg ) { tail = seg; }
 
     void reset() {
 	head = tail = 0;
@@ -276,7 +275,6 @@ public:
     const queue_segment * get_tail() const { return 0; }
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
-    // void set_tail( queue_segment * seg ) { assert( !tail ); }
 
     void reset() {
 	head = 0;
