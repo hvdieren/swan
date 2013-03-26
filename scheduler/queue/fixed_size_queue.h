@@ -24,11 +24,12 @@ class fixed_size_queue
     pad_multiple<CACHE_ALIGNMENT, sizeof(size_t)> pad1;
 
     // Cache block 2: unmodified during execution
+    const typeinfo_array tinfo;
     const size_t elm_size;
     const size_t size;
     const size_t mask;
     char * const buffer;
-    pad_multiple<CACHE_ALIGNMENT, 3*sizeof(size_t) + sizeof(char *)> pad2;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 3*sizeof(size_t) + sizeof(char *)> pad2;
 	
 private:
     static size_t log2_up( size_t uu ) {
@@ -82,8 +83,9 @@ public:
 private:
     friend class queue_segment;
 
-    fixed_size_queue( char * buffer_, size_t elm_size_, size_t max_size )
-	: head( 0 ), tail( 0 ),
+    fixed_size_queue( typeinfo_array tinfo_, char * buffer_,
+		      size_t elm_size_, size_t max_size )
+	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
 	  size( roundup_pow2( max_size * elm_size ) ),
 	  mask( size-1 ), buffer( buffer_ ) { 
@@ -93,7 +95,7 @@ private:
 
 public:
     ~fixed_size_queue() {
-// TODO: destruct
+	tinfo.destruct( buffer, &buffer[size], elm_size );
     }
 	
     bool empty() const volatile { return head == tail; }
@@ -115,16 +117,15 @@ public:
     // returns NULL if pop fails
     template<typename T>
     bool pop( T & t, size_t pos ) {
-	if( empty() ) {
-	    // errs() << "Q " << this << " empty in pop\n";
+	if( empty() )
 	    return false;
-	} else {
-	    char* value = &buffer[(pos*elm_size) & mask];
-	    t = *reinterpret_cast<T *>( value );
-	    if( ((pos*elm_size) & mask) == head ) // Queue behavior (no concurrent pops)
-		head = (head+elm_size) & mask;
-	    return true;
-	}
+
+	char* value = &buffer[(pos*elm_size) & mask];
+	t = *reinterpret_cast<T *>( value );
+	// Queue behavior (no concurrent pops)
+	if( ((pos*elm_size) & mask) == head )
+	    head = (head+elm_size) & mask;
+	return true;
     }
 	
     // returns true on success false on failure

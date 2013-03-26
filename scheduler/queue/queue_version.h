@@ -118,7 +118,7 @@ protected:
 	user.set_logical( 0 );
 	queue.set_logical( 0 );
 
-	errs() << "QV queue_t constructor for: " << this << "\n";
+	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
 	
     // Argument passing constructor, called from grab/dgrab interface.
@@ -192,9 +192,9 @@ public:
 
 	parent->unlock();
 
+/*
 	errs() << "QV nest constructor for: " << *this << "\n";
 	errs() << "                 parent: " << *parent << "\n";
-/*
 */
     }
 
@@ -412,12 +412,9 @@ public:
 private:
     void ensure_queue_head() {
 	if( !queue.get_head() ) {
-	    if( queue.get_logical() < 0 ) {
-		errs() << "ERROR: logical index of head queue segment "
-		    "is unknown. QV=" << this << "\n";
-		errs() << "\n";
-		abort();
-	    }
+	    assert( queue.get_logical() >= 0 && "logical index of head queue"
+		    " segment must be known" );
+
 	    // Find the head of the queue for concurrently popping results.
 	    // Simple case: there are no other popdep tasks on the same queue
 	    // executing, so the other running queue-dep tasks, if any, have
@@ -445,8 +442,8 @@ public:
     void pop( T & t ) {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	errs() << "pop QV=" << this << " queue=" << queue
-	       << " logical_head=" << logical_head << "\n";
+	// errs() << "pop QV=" << this << " queue=" << queue
+	  //      << " logical_head=" << logical_head << "\n";
 	ensure_queue_head();
 	queue.pop( t, qindex );
     }
@@ -456,7 +453,7 @@ public:
     void push( T t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    errs() << "QV push ltail=" << logical_tail << "\n";
+	    // errs() << "QV push ltail=" << logical_tail << "\n";
 	    user.push_segment<T>( logical_tail, max_size, qindex );
 
 	    segmented_queue q = user.split();

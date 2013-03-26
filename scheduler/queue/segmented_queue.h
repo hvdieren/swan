@@ -217,7 +217,7 @@ public:
 	// a new segment.
 	if( tail->is_full() )
 	    push_segment<T>( tail->get_logical_tail(), max_size, idx );
-	errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
+	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push( value );
 	volume_push++;
     }

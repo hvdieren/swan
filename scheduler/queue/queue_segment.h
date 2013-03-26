@@ -52,8 +52,8 @@ public:
     // Lock is required in case vector resizes.
     void erase( size_t slot ) {
 	lock();
-	errs() << "Index " << this << " erase " << idx[slot]
-	       << " slot " << slot << "\n";
+	// errs() << "Index " << this << " erase " << idx[slot]
+	// << " slot " << slot << "\n";
 	idx[slot] = 0;
 	unlock();
     }
@@ -84,9 +84,10 @@ class queue_segment
 		 + sizeof(volatile bool) > padding;
 
 private:
-    queue_segment( long logical_, char * buffer,
+    queue_segment( typeinfo_array tinfo, long logical_, char * buffer,
 		   size_t elm_size, size_t max_size )
-	: q( buffer, elm_size, max_size ), next( 0 ), logical_pos( logical_ ),
+	: q( tinfo, buffer, elm_size, max_size ), next( 0 ),
+	  logical_pos( logical_ ),
 	  volume_pop( 0 ), volume_push( 0 ),
 	  slot( -1 ), producing( true ) {
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
@@ -103,15 +104,13 @@ public:
     // Allocate control fields and data buffer in one go
     template<typename T>
     static queue_segment * create( long logical, size_t seg_size ) {
+	typeinfo_array tinfo = typeinfo_array::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space<T>( seg_size );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
 	char * buffer = &memory[sizeof(queue_segment)];
 	size_t step = fixed_size_queue::get_element_size<T>();
-	for( char * p=buffer; p < &memory[buffer_size]; p += step ) {
-	    T * tp = reinterpret_cast<T *>( p );
-	    new (tp) T;
-	}
-	return new (memory) queue_segment( logical, buffer,
+	tinfo.construct<T>( buffer, &memory[buffer_size], step );
+	return new (memory) queue_segment( tinfo, logical, buffer,
 					   fixed_size_queue::get_element_size<T>(),
 					   seg_size );
     }
@@ -171,7 +170,7 @@ public:
 	// Two behaviors of the fixed_size_queue:
 	// * As a real queue, round-robin when used by one popper
 	// * As an array, when concurrent pops occur
-	errs() << "queue_segment: pop @" << logical << " seg=" << *this << "\n";
+	// errs() << "queue_segment: pop @" << logical << " seg=" << *this << "\n";
 	q.pop( t, logical - logical_pos );
 	__sync_fetch_and_add( &volume_pop, 1 );
     }
@@ -199,22 +198,22 @@ size_t queue_index::insert( queue_segment * seg ) {
     assert( seg->get_logical_pos() >= 0 );
     size_t slot = get_free_position( seg );
     seg->set_slot( slot );
-    errs() << "Index " << this << " insert logical="
-	   << seg->get_logical_head() << '-'
-	   << seg->get_logical_tail()
-	   << " seg " << seg << " at slot " << slot
-	   << "\n";
+    // errs() << "Index " << this << " insert logical="
+	   // << seg->get_logical_head() << '-'
+	   // << seg->get_logical_tail()
+	   // << " seg " << seg << " at slot " << slot
+	   // << "\n";
     return slot;
 }
 
 queue_segment * queue_index::lookup( long logical ) const {
-    errs() << "Index " << this << " lookup logical="
-	   << logical << "\n";
+    // errs() << "Index " << this << " lookup logical="
+	   // << logical << "\n";
     for( size_t i=0; i < used; ++i ) {
 	if( queue_segment * seg = idx[i] ) {
-	    errs() << "Index entry " << *seg << " logical="
-		   << seg->get_logical_head() << '-'
-		   << seg->get_logical_tail() << "\n";
+	    // errs() << "Index entry " << *seg << " logical="
+		   // << seg->get_logical_head() << '-'
+		   // << seg->get_logical_tail() << "\n";
 	    if( seg && seg->get_logical_head() <= logical
 		&& seg->get_logical_tail() > logical )
 		return seg;
@@ -226,9 +225,9 @@ queue_segment * queue_index::lookup( long logical ) const {
 void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
     queue_segment * seg = idx[slot];
     assert( seg && "Segment not indexed" );
-    errs() << "Index replace " << seg << " @" << slot
-	   << " for new_seg=" << *new_seg
-	   << " at logical=" << logical << "\n";
+    // errs() << "Index replace " << seg << " @" << slot
+	   // << " for new_seg=" << *new_seg
+	   // << " at logical=" << logical << "\n";
 
 
     if( new_seg->get_slot() >= 0 ) {

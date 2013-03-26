@@ -354,21 +354,33 @@ struct is_queue_dep
 template<typename T, bool is_class=std::is_class<T>::value>
 struct destructor_get {
     typedef void (*destructor_fn_ty)( void * );
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
 
     static destructor_fn_ty get_destructor() {
 	return &call_destructor;
     }
+    static array_destructor_fn_ty get_array_destructor() {
+	return &call_array_destructor;
+    }
 private:
     static void call_destructor( void * ptr ) {
 	reinterpret_cast<T *>( ptr )->T::~T();
+    }
+    static void call_array_destructor( void * start, void * end, size_t step ) {
+	for( char * ptr=reinterpret_cast<char *>( start );
+	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
+	    reinterpret_cast<T *>( ptr )->T::~T();
+	}
     }
 };
 
 template<typename T>
 struct destructor_get<T, false> {
     typedef void (*destructor_fn_ty)( void * );
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
 
     static destructor_fn_ty get_destructor() { return 0; }
+    static array_destructor_fn_ty get_array_destructor() { return 0; }
 };
 
 class typeinfo {
@@ -389,9 +401,35 @@ public:
 	new (ptr) T();
     }
 
-    void destruct( void * ptr ) {
+    void destruct( void * ptr ) const {
 	if( dfn )
 	    (*dfn)( ptr );
+    }
+};
+
+class typeinfo_array {
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
+    array_destructor_fn_ty dfn;
+
+    typeinfo_array( array_destructor_fn_ty dfn_ ) : dfn( dfn_ ) { }
+
+public:
+    template<typename T>
+    static typeinfo_array create() {
+	return typeinfo_array( destructor_get<T>::get_array_destructor() );
+    }
+
+    template<typename T>
+    static void construct( void * start, void * end, size_t step ) {
+	for( char * ptr=reinterpret_cast<char *>( start );
+	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
+	    new (ptr) T();
+	}
+    }
+
+    void destruct( void * start, void * end, size_t step ) const {
+	if( dfn )
+	    (*dfn)( start, end, step );
     }
 };
 
