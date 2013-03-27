@@ -7,44 +7,112 @@
 
 namespace obj {
 
+// Base classes for dependency tags
+
+template<typename QMetaData>
+class queuedep_tags_base : public all_tags_base {
+    queue_version<QMetaData> queue;
+
+public:
+    queuedep_tags_base( queue_version<QMetaData> * parent,
+			typename queue_version<QMetaData>::qmode_t mode,
+			size_t fixed_length = 0 )
+	: queue( parent, mode, fixed_length ) { }
+
+    queue_version<QMetaData> * get_queue_version() { return &queue; }
+};
+
+
+template<typename QMetaData>
+class popdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    popdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_pop ) { }
+};
+
+template<typename QMetaData>
+class pushpopdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    pushpopdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_pushpop ) { }
+};
+
+template<typename QMetaData>
+class pushdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    pushdep_tags_base( queue_version<QMetaData> * parent )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_push ) { }
+};
+
+template<typename QMetaData>
+class prefixdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    prefixdep_tags_base( queue_version<QMetaData> * parent, size_t length )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_prefix, length ) { }
+};
+
+
+
+
+// For taskgraph specific scheme
+
+// TODO: generalize this.
 typedef tkt_metadata queue_metadata;
-// typedef ecgtg_metadata queue_metadata;
 
-struct popdep_tags_base : public all_tags_base { };
-struct pushdep_tags_base : public all_tags_base { };
-
-// Popdep (input) dependency tags - fully serialized with other popdeps
-class popdep_tags : public popdep_tags_base {
+// Popdep (input) dependency tags - fully serialized with other pop and pushpop
+class popdep_tags : public popdep_tags_base<queue_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    queue_version<queue_metadata> queue;
     tkt_metadata::tag_t rd_tag;
 
 public:
     popdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, false ) { }
+	: popdep_tags_base( parent ) { }
+};
 
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
+// Pushpopdep (input/output) dependency tags - fully serialized with other
+// pop and pushpop
+class pushpopdep_tags : public pushpopdep_tags_base<queue_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    pushpopdep_tags( queue_version<queue_metadata> * parent )
+	: pushpopdep_tags_base( parent ) { }
 };
 
 // Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
+class pushdep_tags : public pushdep_tags_base<queue_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    queue_version<queue_metadata> queue;
 
 public:
     pushdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, true ) { }
-
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
+	: pushdep_tags_base( parent ) { }
 };
 
-// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
+// Prefixdep (output) dependency tags
+class prefixdep_tags : public prefixdep_tags_base<queue_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    prefixdep_tags( queue_version<queue_metadata> * parent, size_t length )
+	: prefixdep_tags_base( parent, length ) { }
+};
+
+// queue_base: an instance of a queue, base class for hyperqueue, pushdep, popdep,
+// pushpopdep, prefixdep.
 // This class may not have non-trival constructors nor destructors in order to
 // reap the simplified x86-64 calling conventions for small structures (the
 // only case we support), in particular for passing pushdep and popdep
-// as direct arguments. We don't support this for queue_t.
+// as direct arguments. We don't support this for hyperqueue.
 template<typename MetaData>
 class queue_base
 {
@@ -52,11 +120,11 @@ public:
     typedef MetaData metadata_t;
 
     template<typename T>
-    friend class queue_t;
+    friend class hyperqueue;
 
 protected:
     queue_version<metadata_t> * queue_v;
-	
+
 public:
     const queue_version<metadata_t> * get_version() const { return queue_v; }
     queue_version<metadata_t> * get_version() { return queue_v; }
@@ -74,39 +142,55 @@ protected:
     }
 };
 
-// queue_t: programmer's instance of a queue
+// hyperqueue: programmer's instance of a queue
 
 template<typename T>
-class queue_t : protected queue_version<queue_metadata>
+class hyperqueue : protected queue_version<queue_metadata>
 {
+    // There is one index structure per hyperqueue
+    queue_index qindex;
+
 public:
-    queue_t() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
-    }
+    explicit hyperqueue( size_t size = 128 )
+	: queue_version<queue_metadata>( qindex, size ) { }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
-	
-    queue_segment* privatize_segment() {
-	return *(this->queue_v->privatize_segment());
+    operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
+    prefixdep<T> prefix( size_t n )  const {
+	return create_dep_ty< prefixdep<T> >( n );
     }
-
+	
+    // The hyperqueue works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
+
     T pop() {
 	T t;
 	queue_version<queue_metadata>::pop( t );
 	return t;
     }
+
+    void push( T & t ) {
+	queue_version<queue_metadata>::push( t );
+    }
 	
+private:
     template<typename DepTy>
-    DepTy create_dep_ty() const {
+    typename std::enable_if<!is_prefixdep<DepTy>::value, DepTy>::type
+    create_dep_ty() const {
 	DepTy od;
 	od.queue_v = get_nc_version();
 	return od;
     }
 
-    // segmented_queue *get_queue() {
-	// return get_queue();
-    // }
+    template<typename DepTy>
+    typename std::enable_if<is_prefixdep<DepTy>::value, DepTy>::type
+    create_dep_ty( size_t n ) const {
+	DepTy od;
+	od.queue_v = get_nc_version();
+	od.count = n;
+	return od;
+    }
 
 protected:
     queue_version<metadata_t> * get_nc_version() const {
@@ -169,6 +253,44 @@ public:
     void is_object_decl(void);
 };
 
+template<typename T>
+class pushpopdep;
+
+template<typename T>
+class prefixdep : public queue_base<queue_metadata> {
+public:
+    typedef queue_metadata metadata_t;
+    typedef prefixdep_tags dep_tags;
+    typedef prefixdep_type_tag _object_tag;
+    size_t count;
+	
+    static prefixdep<T> create( queue_version<metadata_t> * v, size_t n ) {
+	prefixdep<T> d;
+	d.queue_v = v;
+	d.count = n;
+	return d;
+    }
+	
+    T pop() {
+	T t;
+	assert( count > 0 && "No more remaing pops allowed" );
+	queue_v->pop( t );
+	count--;
+	return t;
+    }
+
+    size_t get_index() const { return queue_v->get_index(); }
+	
+    // We must consume the whole prefix
+    bool empty() const { return count == 0; }
+
+    size_t get_length() const { return count; }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
+};
+
 } //end namespace obj
 
 #ifdef __x86_64__
@@ -183,8 +305,8 @@ namespace platform_x86_64 {
 // a compile-time error will be triggered). This approach is a low-cost
 // way to by-pass the lack of data member introspection in C++.
 template<size_t ireg, size_t freg, size_t loff, typename T>
-struct arg_passing<ireg, freg, loff, obj::queue_t<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::queue_t<T>, obj::queue_version<typename obj::queue_t<T>::metadata_t> *> {
+struct arg_passing<ireg, freg, loff, obj::hyperqueue<T> >
+    : arg_passing_struct1<ireg, freg, loff, obj::hyperqueue<T>, obj::queue_version<typename obj::hyperqueue<T>::metadata_t> *> {
 };
 
 template<size_t ireg, size_t freg, size_t loff, typename T>
@@ -195,6 +317,11 @@ struct arg_passing<ireg, freg, loff, obj::popdep<T> >
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::pushdep<T> >
     : arg_passing_struct1<ireg, freg, loff, obj::pushdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *> {
+};
+
+template<size_t ireg, size_t freg, size_t loff, typename T>
+struct arg_passing<ireg, freg, loff, obj::prefixdep<T> >
+    : arg_passing_struct2<ireg, freg, loff, obj::prefixdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *, size_t> {
 };
 
 } // namespace platform_x86_64

@@ -31,6 +31,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <tuple>
+#include <iostream>
 
 #define __vasm__ __asm__ __volatile__
 
@@ -468,6 +469,16 @@ enum arg_pass_class {
     ap_mem
 };
 
+inline std::ostream & operator << ( std::ostream & os, arg_pass_class ap ) {
+    switch( ap ) {
+    case ap_none: return os << "arg_pass_class::none";
+    case ap_int: return os << "arg_pass_class::int";
+    case ap_sse: return os << "arg_pass_class::sse";
+    case ap_mem: return os << "arg_pass_class::mem";
+    }
+    return os;
+}
+
 struct ap_none_ty { };
 struct ap_int_ty { };
 struct ap_sse_ty { };
@@ -509,6 +520,7 @@ struct APS_classify {
     // static const arg_pass_class value = ap_none; // following ABI reference
     // This way aggregate fields force memory allocation
     static const arg_pass_class value = ap_mem;
+    typedef std::tuple<> mtypes;
 };
 
 template<typename T>
@@ -516,6 +528,7 @@ struct APS_classify<T,
 		    typename std::enable_if<is_integer_class<T>
 					    ::value>::type > {
     static const arg_pass_class value = ap_int;
+    typedef std::tuple<T> mtypes;
 };
 
 template<typename T>
@@ -523,6 +536,7 @@ struct APS_classify<T,
 		    typename std::enable_if<std::is_floating_point<T>
 					    ::value>::type > {
     static const arg_pass_class value = ap_sse;
+    typedef std::tuple<T> mtypes;
 };
 
 // Combine the classification of two fields of an aggregate.
@@ -602,12 +616,14 @@ template<size_t off, arg_pass_class ap, ap_accept aa>
 struct APS_split<off,ap,aa> {
     static const arg_pass_class value = ap;
     typedef std::tuple<typename ap_type_of<ap>::type> type;
+    typedef std::tuple<> mtypes;
 };
 
 template<size_t off, ap_accept aa>
 struct APS_split<off,ap_none,aa> {
     static const arg_pass_class value = ap_none;
     typedef std::tuple<> type;
+    typedef std::tuple<> mtypes;
 };
 
 // B. Specialization: aa = ap_reject -> pass in memory
@@ -615,6 +631,7 @@ template<size_t off, arg_pass_class ap, typename T0, typename... T>
 struct APS_split<off,ap,ap_reject,T0,T...> {
     static const arg_pass_class value = ap_mem;
     typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
+    typedef std::tuple<T0,T...> mtypes;
 };
 
 // C. Specialization: aa = ap_full -> combine 8byte and continue
@@ -626,6 +643,7 @@ struct APS_split<off,ap,ap_full,T0,T...> {
 	APS_combine<eightbyte::value,remainder::value>::value;
     typedef typename tuple_prefix<typename ap_type_of<value>::type,
 				  typename remainder::type>::type type;
+    typedef std::tuple<T0,T...> mtypes;
 };
 
 // D. Specialization: aa = ap_continue -> continue filling 8byte
@@ -635,13 +653,22 @@ struct APS_split<off,ap,ap_continue,T0> {
     static const arg_pass_class value =
 	APS_combine<ap,APS_classify<T0>::value>::value;
     typedef std::tuple<typename ap_type_of<value>::type> type;
+    typedef std::tuple<T0> mtypes;
 };
 
-// D.2. More fields of structure
+// D.2. More fields of structure. "Each field of an object is classified
+// recursively so that always two fields are considered." The previous
+// field's classification is summarized here in ap and we are in the case where
+// the current field should be merged with that eight-byte (ap_continue).
 template<size_t off, arg_pass_class ap, typename T0, typename T1, typename... T>
-struct APS_split<off,ap,ap_continue,T0,T1,T...> :
-	APS_split<off+sizeof(T0),APS_combine<ap,APS_classify<T0>::value>::value,
-		  APS_accept<off+sizeof(T0),T1>::value, T1, T...> {
+struct APS_split<off,ap,ap_continue,T0,T1,T...> {
+    typedef APS_combine<ap,APS_classify<T0>::value> eightbyte;
+    typedef APS_classify_struct_part<T1,T...> remainder;
+    static const arg_pass_class value = 
+	APS_combine<eightbyte::value,remainder::value>::value;
+    typedef typename tuple_prefix<typename ap_type_of<eightbyte::value>::type,
+				  typename remainder::type>::type type;
+    typedef std::tuple<T0,T1,T...> mtypes;
 };
 
 // E. Specialization: ap == ap_mem -> all in memory as soon as one eightbyte
@@ -650,6 +677,7 @@ template<size_t off, ap_accept aa, typename T0, typename... T>
 struct APS_split<off,ap_mem,aa,T0,T...> {
     static const arg_pass_class value = ap_mem;
     typedef std::tuple<typename ap_type_of<ap_mem>::type> type;
+    typedef std::tuple<T0,T...> mtypes;
 };
 
 // Internal interface.
@@ -657,6 +685,7 @@ template<>
 struct APS_classify_struct_part<> {
     static const arg_pass_class value = ap_none;
     typedef std::tuple<> type;
+    typedef std::tuple<> mtypes;
 };
 
 template<typename T0, typename... T>
@@ -703,7 +732,8 @@ template<size_t size, typename split>
 struct APS_classify_struct_select<size, split,
 				  typename std::enable_if<!two_eightbyte_rule<size,split>::value>::type> {
     static const arg_pass_class value = ap_mem;
-    typedef typename split::type type;
+    typedef ap_mem_ty type;
+    typedef typename split::mtypes mtypes;
 };
 
 template<size_t size, typename... T>
@@ -718,9 +748,11 @@ struct APS_classify_struct_size<size,T0,T...>
 				 APS_split<0,ap_none,APS_accept<0,T0>::value,T0,T...> > {
 };
 
+// Alternative strategy is to derive number of eightbytes from the length
+// of the tuple type in APS_split
 template<typename ST, typename... T>
 struct APS_classify_struct
-// : APS_classify_struct_size<abi_arg_size<ST>(), T...> {
+// : APS_classify_struct_size<abi_arg_size<ST>(), T...> { -- TODO
     : APS_classify_struct_size<sizeof(ST), T...> {
 };
 				 
@@ -731,15 +763,16 @@ template<size_t ireg, size_t freg, size_t loff, typename T,
 struct arg_passing_tuple : public arg_passing_by_mem<ireg,freg,loff> { };
 
 // Handle a single 8-byte
-template<size_t ireg, size_t freg, size_t loff, typename T = ap_mem_ty>
+template<size_t ireg, size_t freg, size_t loff, typename T,
+	 typename Enable = void>
 struct APT_8byte : public arg_passing_by_mem<ireg,freg,loff> { };
 
-template<size_t ireg, size_t freg, size_t loff>
-struct APT_8byte<ireg,freg,loff,ap_int_ty>
+template<size_t ireg, size_t freg, size_t loff, typename T>
+struct APT_8byte<ireg,freg,loff,T,typename std::enable_if<is_integer_class<T>::value>::type>
     : arg_passing<ireg,freg,loff,long> { };
 
-template<size_t ireg, size_t freg, size_t loff>
-struct APT_8byte<ireg,freg,loff,ap_sse_ty>
+template<size_t ireg, size_t freg, size_t loff, typename T>
+struct APT_8byte<ireg,freg,loff,T,typename std::enable_if<std::is_floating_point<T>::value>::type>
     : arg_passing<ireg,freg,loff,double> { };
 
 // Iterate over all 8-bytes
@@ -758,6 +791,8 @@ struct APT_iter<ireg,freg,loff> {
     static const size_t fnext = freg;
     static const size_t lnext = loff;
 
+    static const bool base_case = true;
+
     static inline void load() __attribute__((always_inline)) { }	
 };
 
@@ -775,19 +810,24 @@ struct APT_iter<ireg,freg,loff,T0,T...> {
     static const size_t fnext = pn::fnext;
     static const size_t lnext = pn::lnext;
 
+    static const bool base_case = false;
+
     static inline void load() __attribute__((always_inline)) {
+	// If not base case, then in_reg must be equal in all components
+	static_assert( pn::base_case || p0::in_reg == pn::in_reg,
+		       "Classification must have resolved to all in registers "
+		       "or all in memory" );
 	p0::load();
 	pn::load();
     }	
 };
 
-template<size_t ireg, size_t freg, size_t loff, typename Tuple>
+template<size_t ireg, size_t freg, size_t loff, typename MTypes>
 struct APT_tuple;
 
 template<size_t ireg, size_t freg, size_t loff, typename... T>
-struct APT_tuple<ireg,freg,loff,std::tuple<T...> >
-    : public APT_iter<ireg,freg,loff,T...> {
-};
+struct APT_tuple<ireg, freg, loff, std::tuple<T...> >
+    : APT_iter<ireg, freg, loff, T...> { };
 
 // Case of passing structure in registers. The classification must pass all
 // 8-bytes in registers and a sufficient number of registers must be available.
@@ -795,8 +835,8 @@ template<size_t ireg, size_t freg, size_t loff, typename T,
 	 typename ap_classify>
 struct arg_passing_tuple<ireg,freg,loff,T,ap_classify,
 			 typename std::enable_if<(ap_classify::value != ap_mem)
-						 && APT_tuple<ireg,freg,loff,typename ap_classify::type>::in_reg>
-			 ::type > : public APT_tuple<ireg,freg,loff,typename ap_classify::type> { };
+    && APT_tuple<ireg,freg,loff,typename ap_classify::mtypes>::in_reg>
+    ::type > : public APT_tuple<ireg,freg,loff,typename ap_classify::mtypes> { };
 
 // ----------------------------------------------------------------------
 // Some special cases of structs (incomplete - allows only few fields
@@ -853,7 +893,7 @@ struct arg_passing_struct2<
 			    && std::has_trivial_destructor<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
-			       APS_classify_struct<M1, M2> > {
+			       APS_classify_struct<T, M1, M2> > {
 };
 
 // Default case: struct with 3 members, passed by implicit reference.
@@ -880,7 +920,7 @@ struct arg_passing_struct3<
 			    && std::has_trivial_destructor<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
-			       APS_classify_struct<M1, M2, M3> > {
+			       APS_classify_struct<T, M1, M2, M3> > {
 };
 
 // Default case: struct with 4 members, passed by implicit reference.
@@ -907,7 +947,7 @@ struct arg_passing_struct4<
 			    && std::has_trivial_destructor<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
-			       APS_classify_struct<M1, M2, M3, M4> > {
+			       APS_classify_struct<T, M1, M2, M3, M4> > {
 };
 
 // Default case: struct with 5 members, passed by implicit reference.
@@ -934,7 +974,7 @@ struct arg_passing_struct5<
 			    && std::has_trivial_destructor<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
-			       APS_classify_struct<M1, M2, M3, M4, M5> > {
+			       APS_classify_struct<T, M1, M2, M3, M4, M5> > {
 };
 
 // Count how many 8-words of memory arguments there are

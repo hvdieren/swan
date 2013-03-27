@@ -137,7 +137,7 @@ void test5( int n ) {
 }
 #endif
 
-int main( int argc, char * argv[] ) {
+int my_main( int argc, char * argv[] ) {
     if( argc <= 2 ) {
 	std::cerr << "Usage: " << argv[0] << " <test> <n>\n";
 	return 1;
@@ -147,27 +147,27 @@ int main( int argc, char * argv[] ) {
     int n = atoi( argv[2] );
     switch( t ) {
     case 0:
-	run( test0, n );
+	call( test0, n );
 	break;
     case 1:
-	run( test1, n );
+	call( test1, n );
 	break;
     case 2:
-	run( test2, n );
+	call( test2, n );
 	break;
     case 3:
-	run( test3, n );
+	call( test3, n );
 	break;
     case 4:
 #if OBJECT_COMMUTATIVITY
-	run( test4, n );
+	call( test4, n );
 #else
 	std::cerr << argv[0] << ": commutativity not enabled\n";
 #endif
 	break;
     case 5:
 #if OBJECT_COMMUTATIVITY
-	run( test5, n );
+	call( test5, n );
 #else
 	std::cerr << argv[0] << ": commutativity not enabled\n";
 #endif

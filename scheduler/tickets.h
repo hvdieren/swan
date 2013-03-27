@@ -1018,10 +1018,12 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     static
     void arg_issue( task_metadata * fr, pushdep<T> & obj_int,
 		    typename pushdep<T>::dep_tags * tags ) {
+/*
 	pushdep<T> obj_ext
 	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
 	md->add_writer();
+*/
     }
     template<typename T>
     static
@@ -1038,13 +1040,47 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     static
     void arg_release( task_metadata * fr, pushdep<T> & obj_int,
 		      typename pushdep<T>::dep_tags & tags ) {
+/*
 	pushdep<T> obj_ext
 	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
 	tkt_metadata * md = obj_ext.get_version()->get_metadata();
 	md->del_writer();
+*/
     }
 };
 
+// prefixdep traits for queues
+template<>
+struct dep_traits<tkt_metadata, task_metadata, prefixdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, prefixdep<T> & obj_int,
+			   typename prefixdep<T>::dep_tags * tags ) {
+	prefixdep<T> obj_ext
+	    = prefixdep<T>::create( obj_int.get_version()->get_parent(),
+				    obj_int.get_length() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->rd_tag  = md->get_reader_tag();
+    }
+    template<typename T>
+    static
+    bool arg_ready( prefixdep<T> & obj_int, typename prefixdep<T>::dep_tags & tags ) {
+	prefixdep<T> obj_ext
+	    = prefixdep<T>::create( obj_int.get_version()->get_parent(),
+				    obj_int.get_length() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return md->chk_reader_tag( tags.rd_tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const prefixdep<T> & obj_ext ) {
+	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_readers();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, prefixdep<T> & obj_int,
+		      typename prefixdep<T>::dep_tags & tags ) { }
+};
 
 typedef tkt_metadata obj_metadata;
 

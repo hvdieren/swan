@@ -127,9 +127,9 @@ void wf_initialize() {
     tls_thread_logger = &thread_logger[0];
     threadid = 0;
 
+#if !defined(__APPLE__)
     // Get the initial thread affinity for the initial thread.
     // All threads will be scheduled to this set in round-robin fashion.
-#if !defined( __APPLE__ )
     cpu_set_t cpu_hint;
     unsigned cpu_current;
     unsigned cpu_max = sizeof(cpu_hint)*8;
@@ -193,7 +193,7 @@ void wf_initialize() {
 	ws[i].initialize( i, nthreads, topology, pu->logical_index,
 			  obj->logical_index, ws[0].get_future() );
 
-#if !defined( __APPLE__ )
+#if !defined(__APPLE__)
 	// Advance to next allowed (hinted) CPU
 	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
 	   if( CPU_ISSET( cpu_current, &cpu_hint ) )
@@ -205,7 +205,7 @@ void wf_initialize() {
 #else
     for( size_t i=0; i < nthreads; ++i ) {
 	ws[i].initialize( i, nthreads, cpu_current, 0, ws[0].get_future() );
-#if !defined( __APPLE__ )
+#if !defined(__APPLE__)
 	// Advance to next allowed (hinted) CPU
 	for( ++cpu_current; cpu_current < cpu_max; ++cpu_current ) 
 	   if( CPU_ISSET( cpu_current, &cpu_hint ) )

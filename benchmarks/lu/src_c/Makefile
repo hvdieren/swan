@@ -1,11 +1,9 @@
-PROG=rectmul
+PROG=lu
 
-include ../../Makefile.wf
+include ../../Makefile.c
 include ../../lib/Makefile.use_us
 
-$(PROG): LDLIBS+=$(HOME)/ray/lib/libgoto2_nehalem-r1.13_T1.a
-
-$(PROG): $(PROG).cc getoptions.o
+$(PROG): $(PROG).c getoptions.o
 
 CFLAGS += -I../common
 CXXFLAGS += -I../common

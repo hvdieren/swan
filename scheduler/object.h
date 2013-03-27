@@ -91,9 +91,10 @@ class obj_dep_traits;
 template<class MetaData> class queue_base;
 template<class T> class pushdep;
 template<class T> class popdep;
-template<class T> class queue_t;
+template<class T> class pushpopdep;
+template<class T> class prefixdep;
+template<class T> class hyperqueue;
 template<class MetaData> class queue_version;
-#include "queue/typeinfo.h"
 //-----------------------------------------------------------------------
 //------------------- DECLARATIONS FOR QUEUE_T - END --------------------
 //-----------------------------------------------------------------------
@@ -256,6 +257,8 @@ struct truedep_type_tag { };
 //QUEUE_T
 struct popdep_type_tag { };
 struct pushdep_type_tag { };
+struct pushpopdep_type_tag { };
+struct prefixdep_type_tag { };
 
 // Generic types to support concepts
 typedef char small_type;
@@ -333,11 +336,17 @@ struct is_pushdep : is_object_with_tag<T, pushdep_type_tag> { };
 template<typename T>
 struct is_popdep : is_object_with_tag<T, popdep_type_tag> { };
 template<typename T>
+struct is_pushpopdep : is_object_with_tag<T, pushpopdep_type_tag> { };
+template<typename T>
+struct is_prefixdep : is_object_with_tag<T, prefixdep_type_tag> { };
+template<typename T>
 struct is_queue_dep
     : std::integral_constant<bool,
-			     is_object_with_tag<T, pushdep_type_tag>::value
-			     || is_object_with_tag<T, popdep_type_tag>::value> {
-};
+			     is_object_with_tag<T, pushpopdep_type_tag>::value
+			     || is_object_with_tag<T, popdep_type_tag>::value
+			     || is_object_with_tag<T, pushdep_type_tag>::value
+			     || is_object_with_tag<T, prefixdep_type_tag>::value
+			     > { };
 
 // ------------------------------------------------------------------------
 // Classes to support versioning of objects
@@ -345,21 +354,33 @@ struct is_queue_dep
 template<typename T, bool is_class=std::is_class<T>::value>
 struct destructor_get {
     typedef void (*destructor_fn_ty)( void * );
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
 
     static destructor_fn_ty get_destructor() {
 	return &call_destructor;
     }
+    static array_destructor_fn_ty get_array_destructor() {
+	return &call_array_destructor;
+    }
 private:
     static void call_destructor( void * ptr ) {
 	reinterpret_cast<T *>( ptr )->T::~T();
+    }
+    static void call_array_destructor( void * start, void * end, size_t step ) {
+	for( char * ptr=reinterpret_cast<char *>( start );
+	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
+	    reinterpret_cast<T *>( ptr )->T::~T();
+	}
     }
 };
 
 template<typename T>
 struct destructor_get<T, false> {
     typedef void (*destructor_fn_ty)( void * );
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
 
     static destructor_fn_ty get_destructor() { return 0; }
+    static array_destructor_fn_ty get_array_destructor() { return 0; }
 };
 
 class typeinfo {
@@ -385,9 +406,40 @@ public:
     static typename std::enable_if<std::is_void<T>::value>::type
     construct( void * ptr ) { }
 
-    void destruct( void * ptr ) {
+    void destruct( void * ptr ) const {
 	if( dfn )
 	    (*dfn)( ptr );
+    }
+};
+
+class typeinfo_array {
+    typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
+    array_destructor_fn_ty dfn;
+
+    typeinfo_array( array_destructor_fn_ty dfn_ ) : dfn( dfn_ ) { }
+
+public:
+    template<typename T>
+    static typeinfo_array create() {
+	return typeinfo_array( destructor_get<T>::get_array_destructor() );
+    }
+
+    template<typename T>
+    static typename std::enable_if<!std::is_void<T>::value>::type
+    construct( void * start, void * end, size_t step ) {
+	for( char * ptr=reinterpret_cast<char *>( start );
+	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
+	    new (ptr) T();
+	}
+    }
+
+    template<typename T>
+    static typename std::enable_if<std::is_void<T>::value>::type
+    construct( void *, void *, size_t ) { }
+
+    void destruct( void * start, void * end, size_t step ) const {
+	if( dfn )
+	    (*dfn)( start, end, step );
     }
 };
 
@@ -1303,18 +1355,41 @@ struct initialize_tags_functor {
 	obj_int = DepTy<T>::create( tags.get_queue_version() );
 	return true;
     }
+
+    template<typename T>
+    bool operator() ( prefixdep<T> & obj_int,
+		      typename prefixdep<T>::dep_tags & tags ) {
+	typedef typename prefixdep<T>::dep_tags tags_t;
+	new (&tags) tags_t( obj_int.get_version(), obj_int.get_length() );
+	obj_int = prefixdep<T>::create( tags.get_queue_version(),
+					obj_int.get_length() );
+	return true;
+    }
 };
 
 // Tags cleanup functor
 struct cleanup_tags_functor {
     bool is_stack;
-    cleanup_tags_functor( bool is_stack_ ) : is_stack( is_stack_ ) { }
+    bool is_released;
+    cleanup_tags_functor( bool is_stack_, bool is_released_ ) 
+	: is_stack( is_stack_ ), is_released( is_released_ ) { }
 
     // For most tags types, this will basically be a no-op
     template<typename T, template<typename U> class DepTy>
-    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    typename std::enable_if<!is_cinoutdep<DepTy<T>>::value
+			&& !is_queue_dep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::dep_tags tags_t;
+	tags.~tags_t();
+	return true;
+    }
+
+    template<typename T>
+    bool operator() ( cinoutdep<T> obj_ext,
+		      typename cinoutdep<T>::dep_tags & tags ) {
+	if( !is_released )
+	    obj_ext.get_version()->get_metadata()->commutative_release();
+	typedef typename cinoutdep<T>::dep_tags tags_t;
 	tags.~tags_t();
 	return true;
     }
@@ -1405,7 +1480,8 @@ public:
 	: fr( fr_ ), odt( odt_ ) { }
     
     template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version() );
 	// Renaming is impossible here: we have already started to work
@@ -1422,24 +1498,17 @@ public:
 	return true;
     }
 
-    template<typename T>
-    bool operator () ( pushdep<T> & obj_int,
-		       typename pushdep<T>::dep_tags & tags ) {
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> & obj_int, 
+		       typename DepTy<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
 	// TODO: make sure this code gets called also on a stack frame,
 	// in case the parent frame gets stolen and this one is converted to full!
-	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
 	
-    template<typename T>
-    bool operator () ( popdep<T> & obj_int,
-		       typename popdep<T>::dep_tags & tags ) {
-	typedef typename popdep<T>::metadata_t MetaData;
-	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
-
-	return true;
-    }
 
 #if OBJECT_REDUCTION
     template<typename M>
@@ -1485,7 +1554,7 @@ static inline void arg_initialize_tags_fn( Task * fr ) {
 // A "cleanup tags function" to initialize tags.
 template<typename Task>
 static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, false );
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1501,7 +1570,7 @@ template<typename MetaData, typename Task>
 static inline void arg_release_fn( Task * fr, bool is_stack ) {
     release_functor<MetaData, Task> fn( fr, is_stack );
     arg_apply_stored_fn( fn, fr->get_task_data() );
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, true );
     arg_apply_stored_fn( fn, fr->get_task_data() );
 }
 
@@ -1526,7 +1595,7 @@ static inline void arg_initialize_tags_fn( Task * fr ) {
 // A "cleanup tags function" to initialize tags.
 template<typename Task, typename... Tn>
 static inline void arg_cleanup_tags_fn( Task * fr, bool is_stack ) {
-    cleanup_tags_functor fn( is_stack );
+    cleanup_tags_functor fn( is_stack, false );
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<cleanup_tags_functor,Tn...>( fn, args, tags );
@@ -1545,7 +1614,7 @@ static inline void arg_hypermap_reduce_fn( Task * fr ) {
 template<typename MetaData, typename Task, typename... Tn>
 static inline void arg_release_fn( Task * fr, bool is_stack ) {
     release_functor<MetaData, Task> fn( fr, is_stack );
-    cleanup_tags_functor cf( is_stack );
+    cleanup_tags_functor cf( is_stack, true );
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
     arg_apply_fn<release_functor<MetaData, Task>,Tn...>( fn, args, tags );
@@ -1576,12 +1645,14 @@ struct dgrab_functor {
     Task * fr;
     obj_dep_traits * odt;
     bool is_ready;
+    template<typename... Tn>
     dgrab_functor( Task * fr_, obj_dep_traits * odt_, bool is_ready_ )
 	: fr( fr_ ), odt( odt_ ), is_ready( is_ready_ ) { }
 
     template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> obj_ext, DepTy<T> & obj_int,
-		       typename DepTy<T>::dep_tags & tags ) {
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> obj_ext, DepTy<T> & obj_int,
+		  typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	// No renaming yet, unless we pass the same argument multiple times
 	// assert( obj_ext.get_version() == obj_int.get_version() );
@@ -1592,23 +1663,14 @@ struct dgrab_functor {
 	return true;
     }
 
-    template<typename T>
-    bool operator () ( pushdep<T> obj_ext, pushdep<T> & obj_int,
-		       typename pushdep<T>::dep_tags & tags ) {
-	typedef typename pushdep<T>::metadata_t MetaData;
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> obj_ext, DepTy<T> & obj_int,
+		  typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
-	dep_traits<MetaData, Task, pushdep>::template arg_issue( fr, obj_int, &tags );
-	return true;
-    }
-	
-	template<typename T>
-    bool operator () ( popdep<T> obj_ext, popdep<T> & obj_int,
-		       typename popdep<T>::dep_tags & tags ) {
-	typedef typename popdep<T>::metadata_t MetaData;
-	// Most of the work done at moment of initialization of tags, and
-	// creation of child queue_version.
-	dep_traits<MetaData, Task, popdep>::template arg_issue( fr, obj_int, &tags );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_int, &tags );
 	return true;
     }
 	
@@ -1743,7 +1805,8 @@ public:
 template<typename MetaData_, typename Task>
 struct dini_ready_functor {
     template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+    typename std::enable_if<!is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	if( dep_traits<MetaData, Task, DepTy>::arg_ini_ready( obj_ext ) ) {
 	    obj_ext.get_version()->finalize();
@@ -1780,20 +1843,14 @@ struct dini_ready_functor {
 #endif
 
     // Queues
-    template<typename T>
-    bool operator () ( obj::pushdep<T> & obj_ext,
-		       typename obj::pushdep<T>::dep_tags & sa ) {
-	typedef typename obj::pushdep<T>::metadata_t MetaData;
-	return dep_traits<MetaData, Task, pushdep>::arg_ini_ready( obj_ext );
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
+	return dep_traits<MetaData, Task, DepTy>::arg_ini_ready( obj_ext );
     }
 	
-    template<typename T>
-    bool operator () ( obj::popdep<T> & obj_ext,
-		       typename obj::popdep<T>::dep_tags & sa ) {
-	typedef typename obj::popdep<T>::metadata_t MetaData;
-	return dep_traits<MetaData, Task, popdep>::arg_ini_ready( obj_ext );
-    }
-
+    // Undo
     template<typename T, template<typename U> class DepTy>
     void undo( DepTy<T> & obj_ext, typename DepTy<T>::dep_tags & sa ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
@@ -1860,8 +1917,7 @@ template<typename MetaData, typename Task, typename... Tn>
 static inline void arg_dgrab_fn( Task * fr, obj_dep_traits * odt, bool wakeup, Tn & ... an ) {
 	
     dgrab_functor<MetaData, Task> gfn( fr, odt, !wakeup );
-    
-	fr->template start_registration<Tn...>();
+    fr->template start_registration<Tn...>();
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
 #if STORED_ANNOTATIONS

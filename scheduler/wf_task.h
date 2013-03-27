@@ -292,7 +292,8 @@ void create_copy_task( DstTy dst, SrcTy src );
 #include "debug.h"
 template<typename Monad, typename AccumTy, typename InTy>
 void reduce_pair_task( AccumTy accum, InTy in ) {
-    Monad::reduce( accum.get_ptr(), in.get_ptr() );
+    Monad::reduce( (typename AccumTy::elem_type*)accum,
+		   (typename InTy::elem_type*)in );
     // errs() << "reduce: accum=" << accum.get_version()
     // << " in=" << in.get_version() << "\n";
 }

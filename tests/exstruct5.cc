@@ -61,12 +61,12 @@ int my_main( int argc, char * argv[] ) {
 
     typedef platform_x86_64::arg_passing<0, 0, 0, s5> arg_pass;
     errs() << "in_reg? " << arg_pass::in_reg
-	   << " ibump? " << arg_pass::ibump
-	   << " fbump? " << arg_pass::fbump
-	   << " lbump? " << arg_pass::lbump
-	   << " inext? " << arg_pass::inext
-	   << " fnext? " << arg_pass::fnext
-	   << " lnext? " << arg_pass::lnext
+	   << " ibump=" << arg_pass::ibump
+	   << " fbump=" << arg_pass::fbump
+	   << " lbump=" << arg_pass::lbump
+	   << " inext=" << arg_pass::inext
+	   << " fnext=" << arg_pass::fnext
+	   << " lnext=" << arg_pass::lnext
 	   << "\n";
 
     errs() << "send: x=" << s.x << " y=" << s.y

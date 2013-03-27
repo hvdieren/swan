@@ -65,9 +65,11 @@ void producer_rec( int s, int n, int step, int delay, pushdep<int> q ) {
     ssync();
 }
 
-void consumer( int s, int n, int delay, popdep<int> q ) {
+void consumer( int s, int n, int delay, prefixdep<int> q ) {
+    errs() << "Consumer with n=" << n << " q.count=" << q.count << "\n";
     for( int i=0; i < n; ++i ) {
 	int j = q.pop();
+	int idx = q.get_index();
 	iolock();
 	errs() << "consume: " << j << '\n';
 	iounlock();
@@ -75,26 +77,14 @@ void consumer( int s, int n, int delay, popdep<int> q ) {
 	    errs() << "ERROR: expected " << s+i << " got " << j << "\n";
 	    abort();
 	}
-	usleep( delay );
-    }
-}
-
-void consumer2( int s, int n, int delay, popdep<int> q ) {
-    int i=0;
-    while( !q.empty() ) {
-	int j = q.pop();
-	iolock();
-	errs() << "consume: " << j << '\n';
-	iounlock();
-	if( s+i != j ) {
-	    errs() << "ERROR: expected " << s+i << " got " << j << "\n";
+	if( j+1 != idx ) {
+	    errs() << "ERROR: index " << idx << " (+1) got " << j << "\n";
 	    abort();
 	}
 	usleep( delay );
-	++i;
     }
-    if( i != n ) {
-	errs() << "ERROR: expected " << n << " values, got " << i << "\n";
+    if( !q.empty() ) {
+	errs() << "ERROR: expected empty queue!\n";
 	abort();
     }
 }
@@ -102,7 +92,7 @@ void consumer2( int s, int n, int delay, popdep<int> q ) {
 void zpipe( int dummy ) {
     hyperqueue<int> queue;
     // TODO: Add a check for emptiness in consumer!
-    spawn( consumer, 0, 0, 0, (popdep<int>)queue );
+    spawn( consumer, 0, 0, 0, queue.prefix( 0 ) );
     ssync();
 }
 
@@ -126,13 +116,10 @@ void apipe( int n, int producers_, int consumers_, int delay ) {
     }
 
     nc = (n + (consumers-1)) / consumers;
-    for( int i=0; i < consumers; ++i )
-	if( consume_open )
-	    spawn( consumer2, nc*i, std::min(n-i*nc, nc),
-		   delay, (popdep<int>)queue );
-	else
-	    spawn( consumer, nc*i, std::min(n-i*nc, nc),
-		   delay, (popdep<int>)queue );
+    for( int i=0; i < consumers; ++i ) {
+	spawn( consumer, nc*i, std::min(n-i*nc, nc),
+	       delay, queue.prefix( std::min(n-i*nc, nc) ) );
+    }
 
     ssync();
 }

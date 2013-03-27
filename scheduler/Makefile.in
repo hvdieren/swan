@@ -7,7 +7,7 @@ include Makefile.flags
 
 SRCS    = wf_spawn_deque.cc wf_stack_frame.cc wf_worker.cc wf_main.cc debug.cc wf_main_fn.cc wf_leaf_bp.cc object.cc wf_setup_stack.cc queue/queue.cc
 OBJS    = $(patsubst %.cc,%.o,$(SRCS))
-HDRS    = swan_config.h big_alloc.h wf_spawn_deque.h wf_stack_frame.h platform.h platform_x86_64.h platform_i386.h wf_worker.h wf_interface.h alc_objtraits.h alc_stdpol.h alc_allocator.h alc_mmappol.h alc_flpol.h alc_bflpol.h alc_proxy.h logger.h object.h lfllist.h lock.h debug.h wf_setup_stack.h wf_task.h tickets.h argwalk.h gtickets.h ecltaskgraph.h queue/fixed_size_queue.h queue/queue_segment.h queue/queue_t.h queue/queue_version.h queue/segmented_queue.h queue/typeinfo.h
+HDRS    = swan_config.h big_alloc.h wf_spawn_deque.h wf_stack_frame.h platform.h platform_x86_64.h platform_i386.h wf_worker.h wf_interface.h alc_objtraits.h alc_stdpol.h alc_allocator.h alc_mmappol.h alc_flpol.h alc_bflpol.h alc_proxy.h logger.h object.h lfllist.h lock.h debug.h wf_setup_stack.h wf_task.h tickets.h argwalk.h gtickets.h ecltaskgraph.h queue/fixed_size_queue.h queue/queue_segment.h queue/queue_t.h queue/queue_version.h queue/segmented_queue.h 
 
 .PHONY: all
 .SECONDARY: wf_stack_frame.s
