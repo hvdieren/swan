@@ -689,6 +689,51 @@ class reduction_tags : public reduction_tags_base<tkt_metadata> {
 };
 #endif
 
+// Popdep (input) dependency tags - fully serialized with other pop and pushpop
+class popdep_tags : public popdep_tags_base<tkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    popdep_tags( queue_version<tkt_metadata> * parent )
+	: popdep_tags_base( parent ) { }
+};
+
+// Pushpopdep (input/output) dependency tags - fully serialized with other
+// pop and pushpop
+class pushpopdep_tags : public pushpopdep_tags_base<tkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    pushpopdep_tags( queue_version<tkt_metadata> * parent )
+	: pushpopdep_tags_base( parent ) { }
+};
+
+// Pushdep (output) dependency tags
+class pushdep_tags : public pushdep_tags_base<tkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+
+public:
+    pushdep_tags( queue_version<tkt_metadata> * parent )
+	: pushdep_tags_base( parent ) { }
+};
+
+// Prefixdep (output) dependency tags
+class prefixdep_tags : public prefixdep_tags_base<tkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    tkt_metadata::tag_t rd_tag;
+
+public:
+    prefixdep_tags( queue_version<tkt_metadata> * parent, size_t length )
+	: prefixdep_tags_base( parent, length ) { }
+};
+
+
 //----------------------------------------------------------------------
 // Dependency handling traits to track task-object dependencies
 //----------------------------------------------------------------------
@@ -1083,6 +1128,7 @@ struct dep_traits<tkt_metadata, task_metadata, prefixdep> {
 };
 
 typedef tkt_metadata obj_metadata;
+typedef tkt_metadata queue_metadata;
 
 } // end of namespace obj
 

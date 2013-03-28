@@ -2143,9 +2143,11 @@ struct reduction_tags_base : public all_tags_base {
 // ------------------------------------------------------------------------
 }
 
+#include "queue/queue_tags.h"
+
+
 #if OBJECT_TASKGRAPH == 1
 #include "tickets.h"
-#include "queue/queue_t.h"
 #else
 #if OBJECT_TASKGRAPH == 2
 #include "taskgraph.h"
@@ -2176,6 +2178,8 @@ struct reduction_tags_base : public all_tags_base {
 #endif
 #endif
 #endif
+
+#include "queue/queue_t.h"
 
 namespace obj {
 #if OBJECT_TASKGRAPH == 3
@@ -2259,6 +2263,10 @@ public:
 	this->version->del_ref();
     }
 
+    // TODO: in each of these cases, first check whether there are any
+    // outstanding tasks on the object_t and if necessary rename.
+    // Restrict these operations further to scalars, or classes that
+    // have them defined (can we know?).
     const object_t<T, OMod> & operator = ( const T & t ) {
 	*OAT::get_ptr() = t; return *this;
     }

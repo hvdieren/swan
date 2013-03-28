@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /* ecgtaskgraph.h
  * This file implements an embedded generational task graph where edges
  * between tasks are explicitly maintained. They are not gathered
@@ -63,6 +63,9 @@ enum group_t {
 #if OBJECT_REDUCTION
     g_reduct,
 #endif
+    g_pop,
+    g_push,
+    g_prefix,
     g_NUM
 };
 
@@ -475,7 +478,9 @@ public:
     generation * get_generation() { return gen; }
 
     // Register users of this object.
-    bool new_group( group_t g ) const { return g == g_write || gen->group != g;}
+    bool new_group( group_t g ) const {
+	return g == g_write || g == g_pop || gen->group != g;
+    }
     void open_group( group_t g ) {
 	if( new_group( g ) && gen->has_tasks() ) {
 	    if( prev ) prev->del_ref();
@@ -887,6 +892,41 @@ class reduction_tags : public reduction_tags_base<ecgtg_metadata>,
 		       public gen_tags, public serial_dep_tags { };
 #endif
 
+// Popdep (input) dependency tags - fully serialized with other pop and pushpop
+class popdep_tags : public popdep_tags_base<ecgtg_metadata>,
+		    public serial_dep_tags {
+public:
+    popdep_tags( queue_version<ecgtg_metadata> * parent )
+	: popdep_tags_base( parent ) { }
+};
+
+// Pushpopdep (input/output) dependency tags - fully serialized with other
+// pop and pushpop
+class pushpopdep_tags : public pushpopdep_tags_base<ecgtg_metadata>,
+			public serial_dep_tags {
+public:
+    pushpopdep_tags( queue_version<ecgtg_metadata> * parent )
+	: pushpopdep_tags_base( parent ) { }
+};
+
+// Pushdep (output) dependency tags
+class pushdep_tags : public pushdep_tags_base<ecgtg_metadata>,
+		     public serial_dep_tags {
+public:
+    pushdep_tags( queue_version<ecgtg_metadata> * parent )
+	: pushdep_tags_base( parent ) { }
+};
+
+// Prefixdep (output) dependency tags
+class prefixdep_tags : public prefixdep_tags_base<ecgtg_metadata>,
+		       public serial_dep_tags {
+public:
+    prefixdep_tags( queue_version<ecgtg_metadata> * parent, size_t length )
+	: prefixdep_tags_base( parent, length ) { }
+};
+
+
+
 /* @note
  * Locking strategy when doing arg_issue:
  *    Set incoming +1 artificially early in arg_issue_fn or in constructor
@@ -1021,8 +1061,65 @@ struct dep_traits<ecgtg_metadata, task_metadata, reduction> {
 };
 #endif
 
+// queue pop dependency traits
+template<>
+struct dep_traits<ecgtg_metadata, task_metadata, popdep> {
+    template<typename T>
+    static void
+    arg_issue( task_metadata * fr, popdep<T> & obj,
+	       typename popdep<T>::dep_tags * sa ) {
+	serial_dep_traits::arg_issue( fr, obj, sa, g_pop );
+    }
+    template<typename T>
+    static bool
+    arg_ini_ready( const popdep<T> & obj ) {
+	return serial_dep_traits::arg_ini_ready( obj, g_pop );
+    }
+    template<typename T>
+    static void
+    arg_release( task_metadata * fr, popdep<T> & obj,
+		 typename popdep<T>::dep_tags & sa  ) {
+	serial_dep_traits::arg_release( fr, obj, &sa, g_pop );
+    }
+};
+
+// queue push dependency traits
+template<>
+struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, pushdep<T> & obj,
+			   typename pushdep<T>::dep_tags * sa ) {
+    }
+    template<typename T>
+    static bool arg_ini_ready( const pushdep<T> & obj ) {
+	return true;
+    }
+    template<typename T>
+    static void arg_release( task_metadata * fr, pushdep<T> & obj,
+			     typename pushdep<T>::dep_tags & sa  ) {
+    }
+};
+
+// queue prefix pop dependency traits
+template<>
+struct dep_traits<ecgtg_metadata, task_metadata, prefixdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, prefixdep<T> & obj,
+			   typename prefixdep<T>::dep_tags * sa ) {
+    }
+    template<typename T>
+    static bool arg_ini_ready( const prefixdep<T> & obj ) {
+	return true;
+    }
+    template<typename T>
+    static void arg_release( task_metadata * fr, prefixdep<T> & obj,
+			     typename prefixdep<T>::dep_tags & sa  ) {
+    }
+};
+
 typedef ecgtg_metadata obj_metadata;
 typedef ecgtg_metadata token_metadata;
+typedef ecgtg_metadata queue_metadata;
 
 
 } // end of namespace obj
