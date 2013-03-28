@@ -248,7 +248,9 @@ class gen_tags {
     generation * gen;
 
     friend class serial_dep_traits;
-    template<typename MetaData, typename Task, template<typename U> class DepTy>
+    friend class queue_dep_traits;
+    template<typename MetaData, typename Task,
+	     template<typename U> class DepTy>
     friend class dep_traits;
     friend class generation;
 #if EMBED_LISTS
@@ -868,6 +870,44 @@ struct serial_dep_traits {
     }
 };
 
+// We could simplify queue dependence traits to a linked list of popdeps.
+// Everything else could be sequential. We don't need to use the same
+// metadata, but can specialize it. We can do this even once in a way
+// that applies to all taskgraph schemes.
+struct queue_dep_traits {
+    static
+    void arg_issue( task_metadata * fr, ecgtg_metadata * md,
+		    gen_tags * sa, group_t g ) {
+	md->open_group( g );
+	generation * gen = md->get_generation();
+	if( generation * prv = md->get_prev_generation() ) {
+	    prv->lock(); // lock order: prev before gen
+	    gen->lock();
+	    prv->link_tasks( fr );
+	    gen->add_task( fr, sa, prv->has_tasks() );
+	    gen->unlock();
+	    prv->unlock();
+	} else {
+	    gen->lock();
+	    gen->add_task( fr, sa, false );
+	    gen->unlock();
+	}
+	sa->gen = gen;
+    }
+    static
+    bool arg_ini_ready( const ecgtg_metadata * md, group_t g ) {
+	return md->match_group( g );
+    }
+    static
+    void arg_release( task_metadata * fr, ecgtg_metadata * md,
+		      gen_tags * tags, group_t g ) {
+	tags->gen->lock();
+	tags->gen->del_task( fr, fr->get_graph(), tags );
+	if( !tags->gen->consider_delete() )
+	    tags->gen->unlock();
+    }
+};
+
 // Input dependency tags
 class indep_tags : public indep_tags_base, public gen_tags,
 		   public serial_dep_tags { };
@@ -894,6 +934,7 @@ class reduction_tags : public reduction_tags_base<ecgtg_metadata>,
 
 // Popdep (input) dependency tags - fully serialized with other pop and pushpop
 class popdep_tags : public popdep_tags_base<ecgtg_metadata>,
+		    public gen_tags,
 		    public serial_dep_tags {
 public:
     popdep_tags( queue_version<ecgtg_metadata> * parent )
@@ -1068,18 +1109,21 @@ struct dep_traits<ecgtg_metadata, task_metadata, popdep> {
     static void
     arg_issue( task_metadata * fr, popdep<T> & obj,
 	       typename popdep<T>::dep_tags * sa ) {
-	serial_dep_traits::arg_issue( fr, obj, sa, g_pop );
+	ecgtg_metadata * md = obj.get_version()->get_metadata();
+	queue_dep_traits::arg_issue( fr, md, sa, g_pop );
     }
     template<typename T>
     static bool
     arg_ini_ready( const popdep<T> & obj ) {
-	return serial_dep_traits::arg_ini_ready( obj, g_pop );
+	ecgtg_metadata * md = obj.get_version()->get_metadata();
+	return queue_dep_traits::arg_ini_ready( md, g_pop );
     }
     template<typename T>
     static void
     arg_release( task_metadata * fr, popdep<T> & obj,
 		 typename popdep<T>::dep_tags & sa  ) {
-	serial_dep_traits::arg_release( fr, obj, &sa, g_pop );
+	ecgtg_metadata * md = obj.get_version()->get_metadata();
+	queue_dep_traits::arg_release( fr, md, &sa, g_pop );
     }
 };
 
