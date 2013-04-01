@@ -1083,16 +1083,18 @@ void load_reg_args() {
 // %rdi points to buffer source
 // %rsi points to buffer target
 template<typename... Tn>
-void load_mem_args() {
-    void * src; // __asm__("%rdi");
-    void * dst; // __asm__("%rsi");
+void load_mem_args( void * src, void * dst ) {
+    // void * src __asm__("%rdi");
+    // void * dst __asm__("%rsi");
+/*
     __vasm__( "movq %%rdi, %0\n\t"
 	      "movq %%rsi, %1\n\t"
-	      : "=g"(dst), "=g"(src) : : );
+	      : "=g"(dst), "=g"(src) : : "%rdi", "%rsi" );
+*/
 
     // Indicate to compiler that memmove clobbers %rax
     size_t num_words = count_mem_words<Tn...>();
-    memcpy( src, dst, num_words );
+    memcpy( dst, src, num_words );
     /*
     while( num_words > 0 ) {
 	// With constexpr facilities, we should be able to use %c0(%%rdi)
@@ -1160,9 +1162,11 @@ void load_reg_args() {
     platform_x86_64::load_reg_args<Tn...>();
 }
 
+// Made arguments explicit on:
+// gcc (Ubuntu/Linaro 4.6.3-1ubuntu5) 4.6.3
 template<typename... Tn>
-void load_mem_args() {
-    platform_x86_64::load_mem_args<Tn...>();
+void load_mem_args( void * src, void * dst ) {
+    platform_x86_64::load_mem_args<Tn...>( src, dst );
 }
 
 template<typename... Tn>
