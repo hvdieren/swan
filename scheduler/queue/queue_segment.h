@@ -55,7 +55,10 @@ public:
 	unlock();
     }
 
-    void set_end( size_t ending ) { the_end = ending; }
+    void set_end( size_t ending ) {
+	if( the_end == size_t(~0) || the_end < ending )
+	    the_end = ending;
+    }
     void unset_end() { the_end = ~0; }
     size_t get_end() const { return the_end; }
 };
@@ -220,16 +223,16 @@ size_t queue_index::insert( queue_segment * seg ) {
 
 queue_segment * queue_index::lookup( long logical ) {
     lock();
-    errs() << "Index " << this << " lookup logical="
-	   << logical << " end=" << get_end() << "\n";
+    // errs() << "Index " << this << " lookup logical="
+	   // << logical << " end=" << get_end() << "\n";
 
     queue_segment * eq = 0;
     for( std::vector<queue_segment *>::const_iterator
 	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
 	if( queue_segment * seg = *I ) {
-	    errs() << "Index entry " << *seg << " logical="
-		<< seg->get_logical_head() << '-'
-		<< seg->get_logical_tail() << "\n";
+	    // errs() << "Index entry " << *seg << " logical="
+		// << seg->get_logical_head() << '-'
+		// << seg->get_logical_tail() << "\n";
 	    if( seg && seg->get_logical_head() <= logical ) {
 		if( seg->get_logical_tail() > logical ) {
 		    unlock();

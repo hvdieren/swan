@@ -55,6 +55,14 @@ public:
 	    parent, queue_version<QMetaData>::qm_prefix, length ) { }
 };
 
+template<typename QMetaData>
+class suffixdep_tags_base : public queuedep_tags_base<QMetaData> {
+public:
+    suffixdep_tags_base( queue_version<QMetaData> * parent, size_t length )
+	: queuedep_tags_base<QMetaData>(
+	    parent, queue_version<QMetaData>::qm_suffix, length ) { }
+};
+
 } //end namespace obj
 
 #endif // SWAN_QUEUE_QUEUE_DEP_H

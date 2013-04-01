@@ -93,6 +93,7 @@ template<class T> class pushdep;
 template<class T> class popdep;
 template<class T> class pushpopdep;
 template<class T> class prefixdep;
+template<class T> class suffixdep;
 template<class T> class hyperqueue;
 template<class MetaData> class queue_version;
 //-----------------------------------------------------------------------
@@ -259,6 +260,7 @@ struct popdep_type_tag { };
 struct pushdep_type_tag { };
 struct pushpopdep_type_tag { };
 struct prefixdep_type_tag { };
+struct suffixdep_type_tag { };
 
 // Generic types to support concepts
 typedef char small_type;
@@ -340,12 +342,15 @@ struct is_pushpopdep : is_object_with_tag<T, pushpopdep_type_tag> { };
 template<typename T>
 struct is_prefixdep : is_object_with_tag<T, prefixdep_type_tag> { };
 template<typename T>
+struct is_suffixdep : is_object_with_tag<T, suffixdep_type_tag> { };
+template<typename T>
 struct is_queue_dep
     : std::integral_constant<bool,
 			     is_object_with_tag<T, pushpopdep_type_tag>::value
 			     || is_object_with_tag<T, popdep_type_tag>::value
 			     || is_object_with_tag<T, pushdep_type_tag>::value
 			     || is_object_with_tag<T, prefixdep_type_tag>::value
+			     || is_object_with_tag<T, suffixdep_type_tag>::value
 			     > { };
 
 // ------------------------------------------------------------------------
@@ -1348,7 +1353,9 @@ struct initialize_tags_functor {
     // with the tags, and this queue_version is initialized now. The constructor
     // requires the parent queue_version as an argument.
     template<typename T, template<typename U> class DepTy>
-    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value
+	&& !is_prefixdep<DepTy<T>>::value
+	&& !is_suffixdep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::dep_tags tags_t;
 	new (&tags) tags_t( obj_int.get_version() );
@@ -1356,15 +1363,27 @@ struct initialize_tags_functor {
 	return true;
     }
 
-    template<typename T>
-    bool operator() ( prefixdep<T> & obj_int,
-		      typename prefixdep<T>::dep_tags & tags ) {
-	typedef typename prefixdep<T>::dep_tags tags_t;
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_prefixdep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::dep_tags tags_t;
 	new (&tags) tags_t( obj_int.get_version(),
 			    obj_int.get_length_setting() );
-	obj_int = prefixdep<T>::create( tags.get_queue_version(),
-					obj_int.get_length_setting(),
-					obj_int.get_default() );
+	obj_int = DepTy<T>::create( tags.get_queue_version(),
+				    obj_int.get_length_setting(),
+				    obj_int.get_default() );
+	return true;
+    }
+
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_suffixdep<DepTy<T>>::value, bool>::type
+    operator() ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::dep_tags tags_t;
+	new (&tags) tags_t( obj_int.get_version(),
+			    obj_int.get_length_setting() );
+	obj_int = DepTy<T>::create( tags.get_queue_version(),
+				    obj_int.get_length_setting(),
+				    obj_int.get_default() );
 	return true;
     }
 };

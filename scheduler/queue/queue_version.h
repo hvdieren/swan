@@ -300,10 +300,10 @@ public:
 
 	// prefixdep
 	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
-	    if( queue.get_head() ) {
-		errs() << "QV=" << *this << " head=" << *queue.get_head()
-		       << " advance by " << count << "\n";
-	    }
+	    // if( queue.get_head() ) {
+		// errs() << "QV=" << *this << " head=" << *queue.get_head()
+		       // << " advance by " << count << "\n";
+	    // }
 	    // queue.advance_to_end( count );
 	    // TODO: A high-overhead alternative. Probably we shouldn't
 	    // have to do this...
@@ -467,7 +467,7 @@ private:
 
 		// Special case. We need to re-check this here due to concurrency
 		// issues (the_end may be set between initial check and lookup).
-		if( queue.get_logical() > qindex.get_end() )
+		if( size_t(queue.get_logical()) > qindex.get_end() )
 		    return;
 
 		// Search the index
@@ -527,7 +527,7 @@ public:
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	ensure_queue_head();
-	if( queue.get_logical() > qindex.get_end() )
+	if( size_t(queue.get_logical()) > qindex.get_end() )
 	    return true;
 	return queue.empty( qindex );
     }
