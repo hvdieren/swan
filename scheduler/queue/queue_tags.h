@@ -16,7 +16,7 @@ class queuedep_tags_base : public all_tags_base {
 public:
     queuedep_tags_base( queue_version<QMetaData> * parent,
 			typename queue_version<QMetaData>::qmode_t mode,
-			size_t fixed_length = 0 )
+			long fixed_length = -1 )
 	: queue( parent, mode, fixed_length ) { }
 
     queue_version<QMetaData> * get_queue_version() { return &queue; }

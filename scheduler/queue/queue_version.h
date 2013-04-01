@@ -16,6 +16,7 @@
 // + !!! microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
 // + !!! remove logical_head from queue_version
+// + should we have an iterator interface rather than empty/pop?
 //
 // For prefix dependence types
 // + distinguish circular/non-circular usage of queue segment
@@ -87,6 +88,8 @@ private:
     // It appears we need to keep logical_head in case we pass to a push,
     // then we will loose the position of the pop (head).
     long logical_head;
+    // Remaining allowed number of pops or pushes for qf_fixed
+    long count;
 
     // Index structure: where to find segments at certain logical offsets.
     // TODO: store this in queue_t and pass pointer to it in here, copy on
@@ -110,10 +113,10 @@ public:
 
 protected:
     // Normal constructor, called from queue_t constructor
-    queue_version( queue_index & qindex_, size_t max_size_ )
+    queue_version( queue_index & qindex_, long max_size_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
-	  logical_head( 0 ), qindex( qindex_ ),
+	  logical_head( 0 ), count( -1 ), qindex( qindex_ ),
 	  max_size( max_size_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
@@ -130,10 +133,10 @@ public:
     // This code is written with pushdep in mind; may need to be specialized
     // to popdep
     queue_version( queue_version<metadata_t> * qv,
-		   qmode_t qmode, size_t fixed_length )
+		   qmode_t qmode, long fixed_length )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
-	  logical_head( qv->logical_head ),
+	  logical_head( qv->logical_head ), count( fixed_length ),
 	  qindex( qv->qindex ), max_size( qv->max_size ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
@@ -158,12 +161,22 @@ public:
 
 	user.take( parent->user );
 	parent->user.set_logical( plogical_tail );
-	if( user.get_tail() )
+	if( (flags & qf_push) && user.get_tail() ) {
+	    if( !user.get_tail()->is_producing() )
+		qindex.unset_end();
 	    user.get_tail()->set_producing();
+	}
 
 	if( flags & qf_pop ) {
 	    if( !(qmode & qf_fixed) )
 		parent->flags = flags_t( parent->flags & ~qf_knhead );
+	    else {
+		assert( count >= 0 );
+		if( parent->count > 0 ) {
+		    assert( parent->count >= count );
+		    parent->count -= count;
+		}
+	    }
 	    if( parent->flags & qf_knhead )
 		parent->logical_head += fixed_length;
 	    else
@@ -172,6 +185,9 @@ public:
 	    // Only initialize queue if this is a pop, pushpop or prefix dep.
 	    queue.take( parent->queue );
 	    parent->queue.set_logical( parent->logical_head );
+
+	    // errs() << "create pop QV=" << *this << "\n";
+	    // errs() << "parent pop QV=" << *parent << "\n";
 	}
 
 	// Link in chain with siblings
@@ -215,7 +231,9 @@ public:
     }
 
     // TODO: replace push argument by checking flags
-    void reduce_hypermaps( bool push, bool is_stack ) {
+    // Length only required for prefixdep and suffixdep.
+    template<typename T>
+    void reduce_hypermaps( bool is_stack, size_t length=0 ) {
 	// Do conversion of hypermaps when a child finishes:
 	//  * merge children - user - right
 	//  * check ownership and deallocate if owned and empty.
@@ -253,7 +271,7 @@ public:
 */
 
 	// Move up hierarchy
-	if( push ) {
+	if( flags & qf_push ) {
 	    if( fleft ) {
 		// fleft->lock();
 		fleft->right.reduce( children, qindex );
@@ -280,6 +298,23 @@ public:
 		parent->user.reduce( parent->children, qindex );
 	}
 
+	// prefixdep
+	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
+	    if( queue.get_head() ) {
+		errs() << "QV=" << *this << " head=" << *queue.get_head()
+		       << " advance by " << count << "\n";
+	    }
+	    // queue.advance_to_end( count );
+	    // TODO: A high-overhead alternative. Probably we shouldn't
+	    // have to do this...
+	    while( count > 0 && !empty() ) {
+		assert( queue.get_head() );
+		T t;
+		queue.pop( t, qindex );
+		count--;
+	    }
+	}
+
 /*
 	errs() << "Reducing hypermaps DONE on " << this
 	       << " user=" << user
@@ -291,15 +326,19 @@ public:
 	unlink();
 
 	// ???
-	if( push && (parent->flags & qf_pushpop) == qf_pushpop
+	if( (flags & qf_push) && (parent->flags & qf_pushpop) == qf_pushpop
 	    && ( !parent->chead
 		 || (unsigned(parent->chead->flags) & unsigned(qf_pop) ) ) ) {
 	    if( is_stack ) {
-		if( parent->user.get_tail() )
+		if( parent->user.get_tail() ) {
+		    qindex.set_end( parent->user.get_tail()->get_logical_tail() );
 		    parent->user.get_tail()->clr_producing();
+		}
 	    } else {
-		if( parent->children.get_tail() )
+		if( parent->children.get_tail() ) {
+		    qindex.set_end( parent->children.get_tail()->get_logical_tail() );
 		    parent->children.get_tail()->clr_producing();
+		}
 	    }
 	}
 
@@ -425,6 +464,12 @@ private:
 	    // out what queue segment starts at the required logical position.
 	    while( !queue.get_head() ) {
 		sched_yield();
+
+		// Special case. We need to re-check this here due to concurrency
+		// issues (the_end may be set between initial check and lookup).
+		if( queue.get_logical() > qindex.get_end() )
+		    return;
+
 		// Search the index
 		queue.set_head( qindex.lookup( queue.get_logical() ) );
 	    }
@@ -446,6 +491,24 @@ public:
 	queue.pop( t, qindex );
     }
 
+    long get_count() const { return count; }
+
+    template<typename T>
+    void pop_fixed( T & t, const T & dflt ) {
+	// errs() << "pop QV=" << this << " queue=" << queue << "\n";
+	assert( count != 0 && "No more remaing pops allowed" );
+
+	// Make sure we have a local, usable queue. Busy-wait if necessary
+	// until we have made contact with the task that pushes.
+	ensure_queue_head();
+	if( queue.empty( qindex ) )
+	    t = dflt;
+	else
+	    queue.pop( t, qindex );
+	count--;
+	// errs() << "prefix pop " << this << " count=" << count << "\n";
+    }
+
     // Potentially differentiate const T & t versus T && t
     template<typename T>
     void push( T t ) {
@@ -464,6 +527,8 @@ public:
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	ensure_queue_head();
+	if( queue.get_logical() > qindex.get_end() )
+	    return true;
 	return queue.empty( qindex );
     }
 };
@@ -475,6 +540,8 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " children=" << v.children
        << " user=" << v.user
        << " right=" << v.right
+       << " logical_head=" << v.logical_head
+       << " count=" << v.count
        << " flags=" << v.flags;
     return os;
 }

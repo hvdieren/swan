@@ -193,9 +193,8 @@ public:
 
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, queue_index & idx ) {
-	logical = logical_pos; // tail ? tail->get_logical_tail() : -1;
+	logical = logical_pos;
 	queue_segment * seg = queue_segment::template create<T>( logical, max_size );
-	// seg->set_producing();
 	if( tail ) {
 	    tail->set_next( seg );
 	    tail->clr_producing();
@@ -300,6 +299,11 @@ private:
     }
 
 public:
+    void advance_to_end( size_t length ) {
+	if( head )
+	    head->advance_to_end( length );
+    }
+
     bool empty( queue_index & idx ) {
 	assert( head );
 
@@ -326,14 +330,15 @@ public:
 
 	// We must be able to pop now.
 	size_t pos = get_index();
+
+	// errs() << "pop from queue " << head << ": value="
+	       // << std::dec << t << ' ' << *head
+	       // << " SQ=" << *this
+	       // << " position=" << pos << "\n";
+
 	if( !head->is_empty( pos ) ) {
 	    head->pop( t, pos );
 	    volume_pop++;
-	    // errs() << "pop from queue " << head << ": value="
-		   // << std::dec << t << ' ' << *head
-		   // << " SQ=" << *this
-		   // << " position=" << pos
-		   // << "\n";
 	    return;
 	}
 

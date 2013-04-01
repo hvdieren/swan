@@ -13,8 +13,7 @@ class queue_segment;
 
 class queue_index {
     std::vector<queue_segment *> idx;
-    size_t used;
-    size_t size;
+    size_t the_end;
     cas_mutex mutex;
 
 private:
@@ -22,42 +21,43 @@ private:
     void unlock() { mutex.unlock(); }
 
 public:
-    queue_index() : used( 0 ), size( 0 ) { }
+    queue_index() : the_end( ~0 ) { }
 
 private:
     size_t get_free_position( queue_segment * seg ) {
 	lock();
-	for( size_t i=0; i < used; ++i ) {
-	    if( idx[i] == 0 ) {
-		idx[i] = seg;
+	size_t i = 0;
+	for( std::vector<queue_segment *>::iterator
+		 I=idx.begin(), E=idx.end(); I != E; ++I, ++i ) {
+	    if( !*I ) {
+		*I = seg;
 		unlock();
 		return i;
 	    }
 	}
-	if( used >= size ) {
-	    size += 16;
-	    idx.reserve( size );
-	}
-	size_t slot = used++;
-	idx[slot] = seg;
+	size_t slot = i;
+	idx.push_back( seg );
 	unlock();
 	return slot;
     }
 
 public:
     inline size_t insert( queue_segment * seg );
-    inline queue_segment * lookup( long logical ) const;
-    inline void replace( int slot, long logical, queue_segment * new_seg );
+    inline queue_segment * lookup( long logical );
+    // inline void replace( int slot, long logical, queue_segment * new_seg );
 
     // Lock is required in case vector resizes.
     void erase( size_t slot ) {
 	lock();
 	// errs() << "Index " << this << " erase " << idx[slot]
-	// << " slot " << slot << "\n";
+	       // << " slot " << slot << "\n";
 	idx[slot] = 0;
 	unlock();
     }
 
+    void set_end( size_t ending ) { the_end = ending; }
+    void unset_end() { the_end = ~0; }
+    size_t get_end() const { return the_end; }
 };
 
 // NOTE:
@@ -156,7 +156,19 @@ public:
     // Linking segments in a list
     queue_segment * get_next() const { return next; }
     void set_next( queue_segment * next_ ) { next = next_; }
-	
+
+    void advance_to_end( size_t length ) { 
+	// Some pops did not get done. Tamper with the counters such
+	// that it appears as if we did...
+	if( length > 0 ) {
+	    volume_pop += length+1;
+	    if( volume_push < volume_pop ) {
+		assert( !is_producing() );
+		volume_push = volume_pop;
+	    }
+	}
+    }
+
     bool is_empty( size_t logical ) const {
 	return !q.is_produced( logical - logical_pos );
     }
@@ -199,35 +211,47 @@ size_t queue_index::insert( queue_segment * seg ) {
     size_t slot = get_free_position( seg );
     seg->set_slot( slot );
     // errs() << "Index " << this << " insert logical="
-	   // << seg->get_logical_head() << '-'
-	   // << seg->get_logical_tail()
-	   // << " seg " << seg << " at slot " << slot
-	   // << "\n";
+	// << seg->get_logical_head() << '-'
+	// << seg->get_logical_tail()
+	// << " seg " << seg << " at slot " << slot
+	// << "\n";
     return slot;
 }
 
-queue_segment * queue_index::lookup( long logical ) const {
-    // errs() << "Index " << this << " lookup logical="
-	   // << logical << "\n";
-    for( size_t i=0; i < used; ++i ) {
-	if( queue_segment * seg = idx[i] ) {
-	    // errs() << "Index entry " << *seg << " logical="
-		   // << seg->get_logical_head() << '-'
-		   // << seg->get_logical_tail() << "\n";
-	    if( seg && seg->get_logical_head() <= logical
-		&& seg->get_logical_tail() > logical )
-		return seg;
+queue_segment * queue_index::lookup( long logical ) {
+    lock();
+    errs() << "Index " << this << " lookup logical="
+	   << logical << " end=" << get_end() << "\n";
+
+    queue_segment * eq = 0;
+    for( std::vector<queue_segment *>::const_iterator
+	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
+	if( queue_segment * seg = *I ) {
+	    errs() << "Index entry " << *seg << " logical="
+		<< seg->get_logical_head() << '-'
+		<< seg->get_logical_tail() << "\n";
+	    if( seg && seg->get_logical_head() <= logical ) {
+		if( seg->get_logical_tail() > logical ) {
+		    unlock();
+		    return seg;
+		} else if( seg->get_logical_tail() == logical
+			   && seg->get_logical_head() == logical )
+		    eq = seg;
+	    }
 	}
     }
-    return 0;
+    unlock();
+    return eq;
 }
 
+/*
 void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
+    lock();
     queue_segment * seg = idx[slot];
     assert( seg && "Segment not indexed" );
-    // errs() << "Index replace " << seg << " @" << slot
-	   // << " for new_seg=" << *new_seg
-	   // << " at logical=" << logical << "\n";
+    errs() << "Index replace " << seg << " @" << slot
+	   << " for new_seg=" << *new_seg
+	   << " at logical=" << logical << "\n";
 
 
     if( new_seg->get_slot() >= 0 ) {
@@ -238,7 +262,9 @@ void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
     }
     // Premature: must check that first half of segment is left unconsumed
     seg->set_slot( -1 );
+    unlock();
 }
+*/
 
 }//namespace obj
 

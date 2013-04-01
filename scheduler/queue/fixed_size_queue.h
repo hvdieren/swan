@@ -117,8 +117,8 @@ public:
     // returns NULL if pop fails
     template<typename T>
     bool pop( T & t, size_t pos ) {
-	if( empty() )
-	    return false;
+	// if( empty() )
+	    // return false;
 
 	char* value = &buffer[(pos*elm_size) & mask];
 	t = *reinterpret_cast<T *>( value );

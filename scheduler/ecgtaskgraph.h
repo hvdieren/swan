@@ -376,7 +376,7 @@ public:
 #if EMBED_LISTS
 	if( insert ) {
 	    tags->st_task = t;
-	    tasks.push( tags );
+	    tasks.push_back( tags );
 	}
 #else // !EMBED_LISTS
 	if( insert )
@@ -1115,7 +1115,7 @@ struct dep_traits<ecgtg_metadata, task_metadata, popdep> {
     template<typename T>
     static bool
     arg_ini_ready( const popdep<T> & obj ) {
-	ecgtg_metadata * md = obj.get_version()->get_metadata();
+	const ecgtg_metadata * md = obj.get_version()->get_metadata();
 	return queue_dep_traits::arg_ini_ready( md, g_pop );
     }
     template<typename T>

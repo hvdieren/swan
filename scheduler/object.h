@@ -1360,9 +1360,11 @@ struct initialize_tags_functor {
     bool operator() ( prefixdep<T> & obj_int,
 		      typename prefixdep<T>::dep_tags & tags ) {
 	typedef typename prefixdep<T>::dep_tags tags_t;
-	new (&tags) tags_t( obj_int.get_version(), obj_int.get_length() );
+	new (&tags) tags_t( obj_int.get_version(),
+			    obj_int.get_length_setting() );
 	obj_int = prefixdep<T>::create( tags.get_queue_version(),
-					obj_int.get_length() );
+					obj_int.get_length_setting(),
+					obj_int.get_default() );
 	return true;
     }
 };
@@ -1398,7 +1400,7 @@ struct cleanup_tags_functor {
     template<typename T, template<typename U> class DepTy>
     typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
-	tags.get_queue_version()->reduce_hypermaps( is_pushdep<DepTy<T>>::value, is_stack );
+	tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
 
 	typedef typename DepTy<T>::dep_tags tags_t;
 	tags.~tags_t();

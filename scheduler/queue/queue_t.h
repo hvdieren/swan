@@ -22,6 +22,9 @@ public:
     template<typename T>
     friend class hyperqueue;
 
+    template<typename T>
+    friend class popdep;
+
 protected:
     queue_version<metadata_t> * queue_v;
 
@@ -38,6 +41,16 @@ protected:
     DepTy create_dep_ty() const {
 	DepTy od;
 	od.queue_v = this->get_nc_version();
+	return od;
+    }
+
+    template<typename T>
+    prefixdep<T>
+    create_dep_ty( size_t n, const T & dflt ) const {
+	prefixdep<T> od;
+	od.queue_v = get_nc_version();
+	od.count = n;
+	od.dflt = dflt;
 	return od;
     }
 };
@@ -57,8 +70,12 @@ public:
     operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
     operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
-    prefixdep<T> prefix( size_t n )  const {
-	return create_dep_ty< prefixdep<T> >( n );
+
+    prefixdep<T> prefix( size_t n ) const {
+	return create_dep_ty< prefixdep<T> >( n, 0 );
+    }
+    prefixdep<T> prefix( size_t n, const T & dflt ) const {
+	return create_dep_ty< prefixdep<T> >( n, dflt );
     }
 	
     // The hyperqueue works in push/pop mode and so supports empty, pop and push.
@@ -80,15 +97,6 @@ private:
     create_dep_ty() const {
 	DepTy od;
 	od.queue_v = get_nc_version();
-	return od;
-    }
-
-    template<typename DepTy>
-    typename std::enable_if<is_prefixdep<DepTy>::value, DepTy>::type
-    create_dep_ty( size_t n ) const {
-	DepTy od;
-	od.queue_v = get_nc_version();
-	od.count = n;
 	return od;
     }
 
@@ -139,6 +147,13 @@ public:
 	newpop.queue_v = v;
 	return newpop;
     }
+
+    prefixdep<T> prefix( size_t n ) const {
+	return create_dep_ty< prefixdep<T> >( n, 0 );
+    }
+    prefixdep<T> prefix( size_t n, const T & dflt ) const {
+	return create_dep_ty< prefixdep<T> >( n, dflt );
+    }
 	
     T pop() {
 	T t;
@@ -147,6 +162,19 @@ public:
     }
 	
     bool empty() { return queue_v->empty(); }
+
+protected:
+
+    template<typename DepTy>
+    typename std::enable_if<is_prefixdep<DepTy>::value, DepTy>::type
+    create_dep_ty( size_t n, const T & dflt ) const {
+	DepTy od;
+	od.queue_v = get_nc_version();
+	od.count = n;
+	od.dflt = dflt;
+	return od;
+    }
+
 
 public:
     // For concepts: need not be implemented, must be non-static and public
@@ -163,28 +191,31 @@ public:
     typedef prefixdep_tags dep_tags;
     typedef prefixdep_type_tag _object_tag;
     size_t count;
+    T dflt;
 	
-    static prefixdep<T> create( queue_version<metadata_t> * v, size_t n ) {
+    static prefixdep<T> create( queue_version<metadata_t> * v, size_t n,
+				const T & dflt ) {
 	prefixdep<T> d;
 	d.queue_v = v;
 	d.count = n;
+	d.dflt = dflt;
 	return d;
     }
 	
     T pop() {
 	T t;
-	assert( count > 0 && "No more remaing pops allowed" );
-	queue_v->pop( t );
-	count--;
+	queue_v->pop_fixed( t, dflt );
 	return t;
     }
 
     size_t get_index() const { return queue_v->get_index(); }
 	
     // We must consume the whole prefix
-    bool empty() const { return count == 0; }
+    bool empty() const { return queue_v->get_count() == 0; }
 
-    size_t get_length() const { return count; }
+    size_t get_length() const { return queue_v->get_count(); }
+    size_t get_length_setting() const { return count; }
+    const T & get_default() const { return dflt; }
 
 public:
     // For concepts: need not be implemented, must be non-static and public
@@ -221,7 +252,7 @@ struct arg_passing<ireg, freg, loff, obj::pushdep<T> >
 
 template<size_t ireg, size_t freg, size_t loff, typename T>
 struct arg_passing<ireg, freg, loff, obj::prefixdep<T> >
-    : arg_passing_struct2<ireg, freg, loff, obj::prefixdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *, size_t> {
+    : arg_passing_struct3<ireg, freg, loff, obj::prefixdep<T>, obj::queue_version<typename obj::pushdep<T>::metadata_t> *, size_t, T> {
 };
 
 } // namespace platform_x86_64
