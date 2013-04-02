@@ -23,6 +23,8 @@
 /* Must be at least NUM_TAPS+1: */
 #define IN_BUFFER_LEN 10000
 
+#define CHUNK 16
+
 void begin(void);
 
 /* Reading data: */
@@ -40,6 +42,7 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
 float run_lpf(float *in, LPFData *data);
 
 float run_demod(float lpf0, float lfp1);
+void run_demod_chunk(float * in, float * out);
 
 #define EQUALIZER_BANDS 10
 float eq_cutoffs[EQUALIZER_BANDS + 1] =
@@ -52,8 +55,10 @@ typedef struct EqualizerData
 } EqualizerData;
 void init_equalizer(EqualizerData *data);
 float run_equalizer(float *in, EqualizerData *data);
+void run_equalizer_chunk(float *in, float *out, EqualizerData *data);
 
 void write_floats( float v );
+void write_floats_chunk( float * v );
 
 /* Globals: */
 static int numiters = -1;
@@ -85,9 +90,12 @@ void begin(void)
     float in[NUM_TAPS];
     LPFData lpf_data;
     EqualizerData eq_data;
-    float sum, lpf0, lpf1;
-    float dm[64], dms;
+    float sum;
+    float lpf[2];
+    float dm[64+CHUNK], dms;
     int dmi;
+
+    float csum[CHUNK];
 
     init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
     init_equalizer(&eq_data);
@@ -97,7 +105,7 @@ void begin(void)
 	in[i] = get_float();
 
     /* LPF needs at least NUM_TAPS+1 inputs; get_floats is fine. */
-    lpf1 = run_lpf(in, &lpf_data);
+    lpf[1] = run_lpf(in, &lpf_data);
     /* run_demod needs 1 input, OK here. */
     /* run_equalizer needs 51 inputs (same reason as for LPF).  This means
      * running the pipeline up to demod 50 times in advance: */
@@ -108,17 +116,15 @@ void begin(void)
 	for( ; dmi < NUM_TAPS; ++dmi )
 	    in[dmi] = get_float();
 	
-	lpf0 = run_lpf(in, &lpf_data);
-	dms = run_demod(lpf0, lpf1);
+	lpf[0] = run_lpf(in, &lpf_data);
+	dms = run_demod(lpf[0], lpf[1]);
 	for( dmi=0; dmi<63; ++dmi )
 	    dm[dmi] = dm[dmi+1];
 	dm[63] = dms;
-	lpf1 = lpf0;
+	lpf[1] = lpf[0];
     }
 
-    /* Main loop: */
-    while (numiters == -1 || numiters-- > 0)
-    {
+    for( i=0; i < CHUNK-1; ++i ) {
 	/* The low-pass filter will need NUM_TAPS+1 items; read them if we
 	 * need to. */
 	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
@@ -130,14 +136,14 @@ void begin(void)
 	// in: read: NUM_TAPS=64
 	// out: 1
 	// lpf_data: in
-	lpf0 = run_lpf(in, &lpf_data);
+	lpf[0] = run_lpf(in, &lpf_data);
 	// in: consume 1, read 2
 	// out: produce 1
-	dms = run_demod(lpf0, lpf1);
+	dms = run_demod(lpf[0], lpf[1]);
 	for( dmi=0; dmi<63; ++dmi )
 	    dm[dmi] = dm[dmi+1];
 	dm[63] = dms;
-	lpf1 = lpf0;
+	lpf[1] = lpf[0];
 	// run_equalize:
 	// in: consume/move: data->decimation+1 = 0+1 = 1
 	// in: read: NUM_TAPS=64
@@ -145,6 +151,39 @@ void begin(void)
 	// eq_data is in
 	sum = run_equalizer(dm, &eq_data);
 	write_floats(sum);
+    }
+
+    /* Main loop: */
+    while (numiters == -1 || numiters > 0)
+    {
+	for( int j=0; j < CHUNK && numiters-- > 0; ++j, numiters-- ) {
+	    /* The low-pass filter will need NUM_TAPS+1 items; read them if we
+	     * need to. */
+	    for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+		in[dmi] = in[dmi+DECIMATION+1];
+	    for( ; dmi < NUM_TAPS; ++dmi )
+		in[dmi] = get_float();
+	    // run_lpf:
+	    // in: consume/move: data->decimation+1 = DECIMATION+1 = 5
+	    // in: read: NUM_TAPS=64
+	    // out: 1
+	    // lpf_data: in
+	    lpf[0] = run_lpf(in, &lpf_data);
+	    // in: consume 1, read 2
+	    // out: produce 1
+	    dms = run_demod(lpf[0], lpf[1]);
+	    lpf[1] = lpf[0];
+	    dm[64+j] = dms;
+	    // run_equalize:
+	    // in: consume/move: data->decimation+1 = 0+1 = 1
+	    // in: read: NUM_TAPS=64
+	    // out: 1
+	    // eq_data is in
+	}
+	for( dmi=0; dmi<64+CHUNK-1; ++dmi )
+	    dm[dmi] = dm[dmi+1];
+	run_equalizer_chunk(dm, csum, &eq_data);
+	write_floats_chunk(csum);
     }
 }
 
@@ -196,6 +235,13 @@ float run_lpf(float *in, LPFData *data)
 
 // in: consume 1, read 2
 // out: produce 1
+void run_demod_chunk(float *in, float *out)
+{
+    for( int i=0; i < CHUNK; ++i ) {
+	out[i] = run_demod( in[i], in[i-1] );
+    }
+}
+
 float run_demod(float lpf0, float lpf1)
 {
   float temp, gain;
@@ -215,10 +261,6 @@ void init_equalizer(EqualizerData *data)
   for (i = 0; i < EQUALIZER_BANDS + 1; i++)
     init_lpf_data(&data->lpf[i], eq_cutoffs[i], 64, 0);
 
-  /* Also initialize member buffers. */
-  // for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-    // data->fb[i].rpos = data->fb[i].rlen = 0;
-
   for (i = 0; i < EQUALIZER_BANDS; i++) {
     // the gain amplifies the middle bands the most
     float val = (((float)i)-(((float)(EQUALIZER_BANDS-1))/2.0f)) / 5.0f;
@@ -234,6 +276,12 @@ void init_equalizer(EqualizerData *data)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
+void run_equalizer_chunk(float *in, float * out, EqualizerData *data)
+{
+    for( int i=0; i < CHUNK; ++i )
+	out[i] = run_equalizer( &in[i], data );
+}
+
 float run_equalizer(float *in, EqualizerData *data)
 {
     int i;
@@ -242,10 +290,7 @@ float run_equalizer(float *in, EqualizerData *data)
 
   /* Run the child filters. */
   for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-      // lpf_out[i] = run_lpf(&fbin->buff[fbin->rpos], &data->lpf[i]);
       lpf_out[i] = run_lpf(in, &data->lpf[i]);
-
-  // fbin->rpos++;
 
   /* Now process the results of the filters.  Remember that each band is
    * output(hi)-output(lo). */
@@ -261,4 +306,10 @@ void write_floats( float v )
 {
     /* Better to resort to some kind of checksum for checking correctness... */
     printf( "%f\n", v );
+}
+
+void write_floats_chunk( float * v )
+{
+    for( int i=0; i < CHUNK; ++i )
+	write_floats( v[i] );
 }
