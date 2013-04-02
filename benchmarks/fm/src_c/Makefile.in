@@ -1,0 +1,20 @@
+srcdir=@srcdir@
+VPATH=$(srcdir)
+top_builddir=@top_builddir@
+top_srcdir=@top_srcdir@
+
+PROG=fm
+
+include $(top_srcdir)/benchmarks/Makefile.c
+include $(top_builddir)/util/Makefile.use_us
+
+$(PROG): $(PROG).c 
+$(PROG): $(SCHEDULER_GOALS)
+
+LDLIBS += -lm
+
+CFLAGS += $(MYFLAGS)
+CXXFLAGS += $(MYFLAGS)
+
+clean:
+	rm -f $(PROG)
