@@ -25,15 +25,6 @@
 
 void begin(void);
 
-typedef struct FloatBuffer
-{
-  float buff[IN_BUFFER_LEN];
-  int rpos, rlen;
-} FloatBuffer;
-
-void fb_compact(FloatBuffer *fb);
-int fb_ensure_writable(FloatBuffer *fb, int amount);
-
 /* Reading data: */
 float get_float();
 
@@ -46,8 +37,6 @@ typedef struct LPFData
 } LPFData;
 float lpf_coeff[NUM_TAPS];
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
-void run_lpf_fb(FloatBuffer *fbin, FloatBuffer *fbout, LPFData *data);
-float run_lpf_fb1(FloatBuffer *fbin, LPFData *data);
 float run_lpf(float *in, LPFData *data);
 
 float run_demod(float lpf0, float lfp1);
@@ -59,7 +48,6 @@ float eq_cutoffs[EQUALIZER_BANDS + 1] =
 typedef struct EqualizerData
 {
   LPFData lpf[EQUALIZER_BANDS + 1];
-    // FloatBuffer fb[EQUALIZER_BANDS + 1];
   float gain[EQUALIZER_BANDS];
 } EqualizerData;
 void init_equalizer(EqualizerData *data);
@@ -160,33 +148,6 @@ void begin(void)
     }
 }
 
-void fb_compact(FloatBuffer *fb)
-{
-  memmove(fb->buff, fb->buff+fb->rpos, fb->rlen - fb->rpos);
-  fb->rlen -= fb->rpos;
-  fb->rpos = 0;
-}
-
-int fb_ensure_writable(FloatBuffer *fb, int amount)
-{
-  int available = IN_BUFFER_LEN - fb->rlen;
-  if (available >= amount)
-    return 1;
-  
-  /* Nope, not enough room, move current contents back to the beginning. */
-  fb_compact(fb);
-  
-  available = IN_BUFFER_LEN - fb->rlen;
-  if (available >= amount)
-    return 1;
-
-  /* Hmm.  We're probably hosed in this case. */
-#ifndef raw
-  printf("fb_ensure_writable(%p): couldn't ensure %d bytes (only %d available)\n", fb, amount, available);
-#endif
-  return 0;
-}
-
 // out: up to IN_BUFFER_LEN (fill as much as possible)
 float get_float()
 {
@@ -222,22 +183,6 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
-void run_lpf_fb(FloatBuffer *fbin, FloatBuffer *fbout, LPFData *data)
-{
-  float sum = run_lpf_fb1( fbin, data );
-
-  /* Check that there's room in the output buffer; move data if necessary. */
-  fb_ensure_writable(fbout, 1);
-  fbout->buff[fbout->rlen++] = sum;
-}
-
-float run_lpf_fb1(FloatBuffer *fbin, LPFData *data)
-{
-    float sum = run_lpf(&fbin->buff[fbin->rpos], data);
-    fbin->rpos += data->decimation + 1;
-    return sum;
-}
-
 float run_lpf(float *in, LPFData *data)
 {
   float sum = 0.0;
