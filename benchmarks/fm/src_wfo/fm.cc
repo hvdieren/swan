@@ -35,7 +35,7 @@ void fb_compact(FloatBuffer *fb);
 int fb_ensure_writable(FloatBuffer *fb, int amount);
 
 /* Reading data: */
-void get_floats(FloatBuffer *fb);
+float get_float();
 
 /* Low pass filter: */
 typedef struct LPFData
@@ -50,7 +50,7 @@ void run_lpf_fb(FloatBuffer *fbin, FloatBuffer *fbout, LPFData *data);
 float run_lpf_fb1(FloatBuffer *fbin, LPFData *data);
 float run_lpf(float *in, LPFData *data);
 
-void run_demod(FloatBuffer *fbin, FloatBuffer *fbout);
+float run_demod(float lpf0, float lfp1);
 
 #define EQUALIZER_BANDS 10
 float eq_cutoffs[EQUALIZER_BANDS + 1] =
@@ -63,9 +63,9 @@ typedef struct EqualizerData
   float gain[EQUALIZER_BANDS];
 } EqualizerData;
 void init_equalizer(EqualizerData *data);
-void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data);
+float run_equalizer(float *in, EqualizerData *data);
 
-void write_floats(FloatBuffer *fb);
+void write_floats( float v );
 
 /* Globals: */
 static int numiters = -1;
@@ -93,61 +93,71 @@ int main(int argc, char **argv)
 
 void begin(void)
 {
-  int i;
-  FloatBuffer fb1, fb2, fb3, fb4;
-  LPFData lpf_data;
-  EqualizerData eq_data;
+    int i;
+    float in[NUM_TAPS];
+    LPFData lpf_data;
+    EqualizerData eq_data;
+    float sum, lpf0, lpf1;
+    float dm[64], dms;
+    int dmi;
 
-  fb1.rpos = fb1.rlen = 0;
-  fb2.rpos = fb2.rlen = 0;
-  fb3.rpos = fb3.rlen = 0;
-  fb4.rpos = fb4.rlen = 0;
+    init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
+    init_equalizer(&eq_data);
 
-  init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
-  init_equalizer(&eq_data);
+    /* Startup: */
+    for( i=0; i < NUM_TAPS; ++i )
+	in[i] = get_float();
 
-  /* Startup: */
-  get_floats(&fb1);
-  /* LPF needs at least NUM_TAPS+1 inputs; get_floats is fine. */
-  run_lpf_fb(&fb1, &fb2, &lpf_data);
-  /* run_demod needs 1 input, OK here. */
-  /* run_equalizer needs 51 inputs (same reason as for LPF).  This means
-   * running the pipeline up to demod 50 times in advance: */
-  for (i = 0; i < 64; i++)
-  {
-    if (fb1.rlen - fb1.rpos < NUM_TAPS + 1)
-      get_floats(&fb1);    
-    run_lpf_fb(&fb1, &fb2, &lpf_data);
-    run_demod(&fb2, &fb3);
-  }
+    /* LPF needs at least NUM_TAPS+1 inputs; get_floats is fine. */
+    lpf1 = run_lpf(in, &lpf_data);
+    /* run_demod needs 1 input, OK here. */
+    /* run_equalizer needs 51 inputs (same reason as for LPF).  This means
+     * running the pipeline up to demod 50 times in advance: */
+    for (i = 0; i < 63; i++)
+    {
+	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+	    in[dmi] = in[dmi+DECIMATION+1];
+	for( ; dmi < NUM_TAPS; ++dmi )
+	    in[dmi] = get_float();
+	
+	lpf0 = run_lpf(in, &lpf_data);
+	dms = run_demod(lpf0, lpf1);
+	for( dmi=0; dmi<63; ++dmi )
+	    dm[dmi] = dm[dmi+1];
+	dm[63] = dms;
+	lpf1 = lpf0;
+    }
 
-  /* Main loop: */
-  while (numiters == -1 || numiters-- > 0)
-  {
-    /* The low-pass filter will need NUM_TAPS+1 items; read them if we
-     * need to. */
-    if (fb1.rlen - fb1.rpos < NUM_TAPS + 1)
-      get_floats(&fb1);    
-    // run_lpf:
-    // in: consume/move: data->decimation+1 = DECIMATION+1 = 5
-    // in: read: NUM_TAPS=64
-    // out: 1
-    // lpf_data: in
-    run_lpf_fb(&fb1, &fb2, &lpf_data);
-    // in: consume 1, read 2
-    // out: produce 1
-    // run_demod( fb2h, fb2p, fb3t );
-    // where fb2p is fb2h output now.
-    // where fb3t is a series of the previous 63 taps and the new tap
-    run_demod(&fb2, &fb3);
-    // run_equalize:
-    // in: consume/move: data->decimation+1 = 0+1 = 1
-    // in: read: NUM_TAPS=64
-    // out: 1
-    // eq_data is in
-    run_equalizer(&fb3, &fb4, &eq_data);
-    write_floats(&fb4);
-  }
+    /* Main loop: */
+    while (numiters == -1 || numiters-- > 0)
+    {
+	/* The low-pass filter will need NUM_TAPS+1 items; read them if we
+	 * need to. */
+	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+	    in[dmi] = in[dmi+DECIMATION+1];
+	for( ; dmi < NUM_TAPS; ++dmi )
+	    in[dmi] = get_float();
+	// run_lpf:
+	// in: consume/move: data->decimation+1 = DECIMATION+1 = 5
+	// in: read: NUM_TAPS=64
+	// out: 1
+	// lpf_data: in
+	lpf0 = run_lpf(in, &lpf_data);
+	// in: consume 1, read 2
+	// out: produce 1
+	dms = run_demod(lpf0, lpf1);
+	for( dmi=0; dmi<63; ++dmi )
+	    dm[dmi] = dm[dmi+1];
+	dm[63] = dms;
+	lpf1 = lpf0;
+	// run_equalize:
+	// in: consume/move: data->decimation+1 = 0+1 = 1
+	// in: read: NUM_TAPS=64
+	// out: 1
+	// eq_data is in
+	sum = run_equalizer(dm, &eq_data);
+	write_floats(sum);
+    }
 }
 
 void fb_compact(FloatBuffer *fb)
@@ -178,17 +188,12 @@ int fb_ensure_writable(FloatBuffer *fb, int amount)
 }
 
 // out: up to IN_BUFFER_LEN (fill as much as possible)
-void get_floats(FloatBuffer *fb)
+float get_float()
 {
   static int x = 0;
-  fb_compact(fb);
-  
-  /* Fill the remaining space in fb with 1.0. */
-  while (fb->rlen < IN_BUFFER_LEN) {
-    fb->buff[fb->rlen++] = (float)x;
-    //fb->buff[fb->rlen++] = 1.0f;
-    x++;
-  }
+  float v = (float)x;
+  x++;
+  return v;
 }
 
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
@@ -246,15 +251,13 @@ float run_lpf(float *in, LPFData *data)
 
 // in: consume 1, read 2
 // out: produce 1
-void run_demod(FloatBuffer *fbin, FloatBuffer *fbout)
+float run_demod(float lpf0, float lpf1)
 {
   float temp, gain;
   gain = MAX_AMPLITUDE * SAMPLING_RATE / (BANDWIDTH * M_PI);
-  temp = fbin->buff[fbin->rpos] * fbin->buff[fbin->rpos + 1];
+  temp = lpf0 * lpf1;
   temp = gain * atan(temp);
-  fbin->rpos++;
-  fb_ensure_writable(fbout, 1);
-  fbout->buff[fbout->rlen++] = temp;
+  return temp;
 }
 
 void init_equalizer(EqualizerData *data)
@@ -286,7 +289,7 @@ void init_equalizer(EqualizerData *data)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
-void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data)
+float run_equalizer(float *in, EqualizerData *data)
 {
     int i;
   float lpf_out[EQUALIZER_BANDS + 1];
@@ -294,9 +297,10 @@ void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data)
 
   /* Run the child filters. */
   for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-    lpf_out[i] = run_lpf(&fbin->buff[fbin->rpos], &data->lpf[i]);
+      // lpf_out[i] = run_lpf(&fbin->buff[fbin->rpos], &data->lpf[i]);
+      lpf_out[i] = run_lpf(in, &data->lpf[i]);
 
-  fbin->rpos++;
+  // fbin->rpos++;
 
   /* Now process the results of the filters.  Remember that each band is
    * output(hi)-output(lo). */
@@ -304,23 +308,12 @@ void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data)
   for (i = 0; i < EQUALIZER_BANDS; i++)
     sum += (lpf_out[i+1] - lpf_out[i]) * data->gain[i];
 
-  /* Write that result.  */
-  fb_ensure_writable(fbout, 1);
-  fbout->buff[fbout->rlen++] = sum;
+  return sum;
 }
 
 // in: all, usually just 1 present
-void write_floats(FloatBuffer *fb)
+void write_floats( float v )
 {
-  /* printf() any data that's available: */
-#ifdef raw
-  while (fb->rpos < fb->rlen)
-    print_float(fb->buff[fb->rpos++]);
-#else
-/* Better to resort to some kind of checksum for checking correctness...
-*/
-  while (fb->rpos < fb->rlen)
-    printf("%f\n", fb->buff[fb->rpos++]);
-  // fb->rpos = fb->rlen;
-#endif
+    /* Better to resort to some kind of checksum for checking correctness... */
+    printf( "%f\n", v );
 }
