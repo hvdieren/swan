@@ -47,7 +47,8 @@ typedef struct LPFData
 float lpf_coeff[NUM_TAPS];
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
 void run_lpf_fb(FloatBuffer *fbin, FloatBuffer *fbout, LPFData *data);
-float run_lpf(FloatBuffer *fbin, LPFData *data);
+float run_lpf_fb1(FloatBuffer *fbin, LPFData *data);
+float run_lpf(float *in, LPFData *data);
 
 void run_demod(FloatBuffer *fbin, FloatBuffer *fbout);
 
@@ -135,6 +136,9 @@ void begin(void)
     run_lpf_fb(&fb1, &fb2, &lpf_data);
     // in: consume 1, read 2
     // out: produce 1
+    // run_demod( fb2h, fb2p, fb3t );
+    // where fb2p is fb2h output now.
+    // where fb3t is a series of the previous 63 taps and the new tap
     run_demod(&fb2, &fb3);
     // run_equalize:
     // in: consume/move: data->decimation+1 = 0+1 = 1
@@ -215,28 +219,28 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
 // data: in
 void run_lpf_fb(FloatBuffer *fbin, FloatBuffer *fbout, LPFData *data)
 {
-  float sum = run_lpf( fbin, data );
+  float sum = run_lpf_fb1( fbin, data );
 
   /* Check that there's room in the output buffer; move data if necessary. */
   fb_ensure_writable(fbout, 1);
   fbout->buff[fbout->rlen++] = sum;
 }
 
-float run_lpf(FloatBuffer *fbin, LPFData *data)
+float run_lpf_fb1(FloatBuffer *fbin, LPFData *data)
+{
+    float sum = run_lpf(&fbin->buff[fbin->rpos], data);
+    fbin->rpos += data->decimation + 1;
+    return sum;
+}
+
+float run_lpf(float *in, LPFData *data)
 {
   float sum = 0.0;
   int i = 0;
 
-#ifndef raw
-  if (fbin->rpos + data->taps - 1 >= fbin->rlen)
-    printf("WARNING: upcoming underflow in run_lpf()\n");
-#endif
-
   for (i = 0; i < data->taps; i++)
-    sum += fbin->buff[fbin->rpos + i] * data->coeff[i];
+    sum += in[i] * data->coeff[i];
 
-  fbin->rpos += data->decimation + 1;
-  
   return sum;
 }
 
@@ -284,20 +288,15 @@ void init_equalizer(EqualizerData *data)
 // data: in
 void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data)
 {
-  int i, rpos;
+    int i;
   float lpf_out[EQUALIZER_BANDS + 1];
   float sum = 0.0;
 
-  /* Save the input read location; we can reuse the same input data on all
-   * of the LPFs. */
-  rpos = fbin->rpos;
-  
   /* Run the child filters. */
   for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-  {
-    fbin->rpos = rpos;
-    lpf_out[i] = run_lpf(fbin, &data->lpf[i]);
-  }
+    lpf_out[i] = run_lpf(&fbin->buff[fbin->rpos], &data->lpf[i]);
+
+  fbin->rpos++;
 
   /* Now process the results of the filters.  Remember that each band is
    * output(hi)-output(lo). */
