@@ -29,6 +29,7 @@ void begin(void);
 
 /* Reading data: */
 float get_float();
+void get_float_chunk(float * out);
 
 /* Low pass filter: */
 typedef struct LPFData
@@ -39,9 +40,10 @@ typedef struct LPFData
 } LPFData;
 float lpf_coeff[NUM_TAPS];
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
+void run_lpf_chunk(float *in, float * out, LPFData *data);
 float run_lpf(float *in, LPFData *data);
 
-float run_demod(float lpf0, float lfp1);
+float run_demod(float *lpf);
 void run_demod_chunk(float * in, float * out);
 
 #define EQUALIZER_BANDS 10
@@ -87,11 +89,11 @@ int main(int argc, char **argv)
 void begin(void)
 {
     int i;
-    float in[NUM_TAPS];
+    float in[NUM_TAPS+CHUNK*(DECIMATION+1)];
     LPFData lpf_data;
     EqualizerData eq_data;
     float sum;
-    float lpf[2];
+    float lpf[2+CHUNK-1];
     float dm[64+CHUNK], dms;
     int dmi;
 
@@ -105,7 +107,7 @@ void begin(void)
 	in[i] = get_float();
 
     /* LPF needs at least NUM_TAPS+1 inputs; get_floats is fine. */
-    lpf[1] = run_lpf(in, &lpf_data);
+    lpf[0] = run_lpf(in, &lpf_data);
     /* run_demod needs 1 input, OK here. */
     /* run_equalizer needs 51 inputs (same reason as for LPF).  This means
      * running the pipeline up to demod 50 times in advance: */
@@ -116,15 +118,15 @@ void begin(void)
 	for( ; dmi < NUM_TAPS; ++dmi )
 	    in[dmi] = get_float();
 	
-	lpf[0] = run_lpf(in, &lpf_data);
-	dms = run_demod(lpf[0], lpf[1]);
+	lpf[1] = run_lpf(in, &lpf_data);
+	dms = run_demod(lpf);
 	for( dmi=0; dmi<63; ++dmi )
 	    dm[dmi] = dm[dmi+1];
 	dm[63] = dms;
-	lpf[1] = lpf[0];
+	lpf[0] = lpf[1];
     }
 
-    for( i=0; i < CHUNK-1; ++i ) {
+    for( i=0; i < CHUNK-1; ++i, numiters-- ) {
 	/* The low-pass filter will need NUM_TAPS+1 items; read them if we
 	 * need to. */
 	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
@@ -136,14 +138,14 @@ void begin(void)
 	// in: read: NUM_TAPS=64
 	// out: 1
 	// lpf_data: in
-	lpf[0] = run_lpf(in, &lpf_data);
+	lpf[1] = run_lpf(in, &lpf_data);
 	// in: consume 1, read 2
 	// out: produce 1
-	dms = run_demod(lpf[0], lpf[1]);
+	dms = run_demod(lpf);
 	for( dmi=0; dmi<63; ++dmi )
 	    dm[dmi] = dm[dmi+1];
 	dm[63] = dms;
-	lpf[1] = lpf[0];
+	lpf[0] = lpf[1];
 	// run_equalize:
 	// in: consume/move: data->decimation+1 = 0+1 = 1
 	// in: read: NUM_TAPS=64
@@ -153,41 +155,47 @@ void begin(void)
 	write_floats(sum);
     }
 
+    for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+	in[dmi] = in[dmi+DECIMATION+1];
+    for( dmi=0; dmi<63; ++dmi )
+	dm[dmi] = dm[dmi+1];
+
     /* Main loop: */
     while (numiters == -1 || numiters > 0)
     {
-	for( int j=0; j < CHUNK && numiters-- > 0; ++j, numiters-- ) {
-	    /* The low-pass filter will need NUM_TAPS+1 items; read them if we
-	     * need to. */
-	    for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
-		in[dmi] = in[dmi+DECIMATION+1];
-	    for( ; dmi < NUM_TAPS; ++dmi )
-		in[dmi] = get_float();
-	    // run_lpf:
-	    // in: consume/move: data->decimation+1 = DECIMATION+1 = 5
-	    // in: read: NUM_TAPS=64
-	    // out: 1
-	    // lpf_data: in
-	    lpf[0] = run_lpf(in, &lpf_data);
-	    // in: consume 1, read 2
-	    // out: produce 1
-	    dms = run_demod(lpf[0], lpf[1]);
-	    lpf[1] = lpf[0];
-	    dm[64+j] = dms;
-	    // run_equalize:
-	    // in: consume/move: data->decimation+1 = 0+1 = 1
-	    // in: read: NUM_TAPS=64
-	    // out: 1
-	    // eq_data is in
-	}
-	for( dmi=0; dmi<64+CHUNK-1; ++dmi )
-	    dm[dmi] = dm[dmi+1];
+	if( numiters > 0 )
+	    numiters -= CHUNK;
+
+	/* The low-pass filter will need NUM_TAPS+1 items */
+	get_float_chunk( &in[NUM_TAPS-(DECIMATION+1)] );
+
+	// in: consume/move: data->decimation+1 = DECIMATION+1 = 5
+	// in: read: NUM_TAPS=64
+	// out: 1
+	// lpf_data: in
+	run_lpf_chunk(in, &lpf[1], &lpf_data);
+
+	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+	    in[dmi] = in[dmi+CHUNK*(DECIMATION+1)];
+
+	// in: consume 1, read 2
+	// out: produce 1
+	run_demod_chunk( lpf, &dm[63] );
+	lpf[0] = lpf[CHUNK];
+
+	// eq_data is in
 	run_equalizer_chunk(dm, csum, &eq_data);
+	for( dmi=0; dmi<63; ++dmi )
+	    dm[dmi] = dm[dmi+CHUNK];
 	write_floats_chunk(csum);
     }
 }
 
 // out: up to IN_BUFFER_LEN (fill as much as possible)
+void get_float_chunk(float * out) {
+    for( int i=0; i < CHUNK * (DECIMATION+1); ++i )
+	out[i] = get_float();
+}
 float get_float()
 {
   static int x = 0;
@@ -222,6 +230,12 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
+void run_lpf_chunk(float *in, float * out, LPFData *data)
+{
+    for( int i=0, s=0; i < CHUNK; ++i, s+=DECIMATION+1 )
+	out[i] = run_lpf( &in[s], data );
+}
+
 float run_lpf(float *in, LPFData *data)
 {
   float sum = 0.0;
@@ -238,15 +252,15 @@ float run_lpf(float *in, LPFData *data)
 void run_demod_chunk(float *in, float *out)
 {
     for( int i=0; i < CHUNK; ++i ) {
-	out[i] = run_demod( in[i], in[i-1] );
+	out[i] = run_demod( &in[i] );
     }
 }
 
-float run_demod(float lpf0, float lpf1)
+float run_demod(float * lpf)
 {
   float temp, gain;
   gain = MAX_AMPLITUDE * SAMPLING_RATE / (BANDWIDTH * M_PI);
-  temp = lpf0 * lpf1;
+  temp = lpf[0] * lpf[1];
   temp = gain * atan(temp);
   return temp;
 }
