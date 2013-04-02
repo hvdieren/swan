@@ -14,6 +14,8 @@
 #endif
 #include <math.h>
 
+#include "wf_interface.h"
+
 #define SAMPLING_RATE 250000000
 #define CUTOFF_FREQUENCY 108000000
 #define NUM_TAPS 64
@@ -23,13 +25,15 @@
 /* Must be at least NUM_TAPS+1: */
 #define IN_BUFFER_LEN 10000
 
-#define CHUNK 16
+#define CHUNK 256
 
 void begin(void);
 
 /* Reading data: */
 float get_float();
-void get_float_chunk(float * out);
+void get_float_chunk(float * out, float * out_prev);
+#define OBJ_IN_SIZE (NUM_TAPS+CHUNK*(DECIMATION+1))
+void get_float_df(obj::outdep<float[OBJ_IN_SIZE]>, obj::indep<float[OBJ_IN_SIZE]>);
 
 /* Low pass filter: */
 typedef struct LPFData
@@ -40,11 +44,21 @@ typedef struct LPFData
 } LPFData;
 float lpf_coeff[NUM_TAPS];
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
-void run_lpf_chunk(float *in, float * out, LPFData *data);
+
+#define OBJ_LPF_SIZE (2+CHUNK-1)
+void run_lpf_df(obj::indep<float[OBJ_IN_SIZE]> in,
+		obj::outdep<float[OBJ_LPF_SIZE]> out,
+		obj::indep<float[OBJ_LPF_SIZE]> out_prev,
+		LPFData *data);
+void run_lpf_chunk(float *in, float * out, float * out_prev, LPFData *data);
 float run_lpf(float *in, LPFData *data);
 
 float run_demod(float *lpf);
-void run_demod_chunk(float * in, float * out);
+#define OBJ_DM_SIZE (64+CHUNK-1)
+void run_demod_df(obj::indep<float[OBJ_LPF_SIZE]> in,
+		  obj::outdep<float[OBJ_DM_SIZE]> out,
+		  obj::indep<float[OBJ_DM_SIZE]> out_prev);
+void run_demod_chunk(float * in, float * out, float *out_prev);
 
 #define EQUALIZER_BANDS 10
 float eq_cutoffs[EQUALIZER_BANDS + 1] =
@@ -57,9 +71,14 @@ typedef struct EqualizerData
 } EqualizerData;
 void init_equalizer(EqualizerData *data);
 float run_equalizer(float *in, EqualizerData *data);
+#define OBJ_CSUM_SIZE CHUNK
+void run_equalizer_df(obj::indep<float[OBJ_DM_SIZE]>,
+		      obj::outdep<float[OBJ_CSUM_SIZE]>,
+		      EqualizerData *data);
 void run_equalizer_chunk(float *in, float *out, EqualizerData *data);
 
 void write_floats( float v );
+void write_floats_df( obj::indep<float[OBJ_CSUM_SIZE]> v);
 void write_floats_chunk( float * v );
 
 /* Globals: */
@@ -79,7 +98,7 @@ int main(int argc, char **argv)
     }
   }
 
-  begin();
+  run(begin);
   return 0;
 }
 #endif
@@ -96,8 +115,6 @@ void begin(void)
     float lpf[2+CHUNK-1];
     float dm[64+CHUNK], dms;
     int dmi;
-
-    float csum[CHUNK];
 
     init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
     init_equalizer(&eq_data);
@@ -152,13 +169,22 @@ void begin(void)
 	// out: 1
 	// eq_data is in
 	sum = run_equalizer(dm, &eq_data);
-	write_floats(sum);
+	leaf_call(write_floats,sum);
     }
 
-    for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
-	in[dmi] = in[dmi+DECIMATION+1];
+    obj::object_t<float[2+CHUNK-1]> lpf_obj[2];
+    obj::object_t<float[64+CHUNK-1]> dm_obj[2];
+    obj::object_t<float[NUM_TAPS+CHUNK*(DECIMATION+1)]> in_obj[2];
+    obj::object_t<float[CHUNK]> csum_obj;
+    int cur = 0;
+
+    (*lpf_obj[1-cur])[CHUNK] = lpf[0];
+
     for( dmi=0; dmi<63; ++dmi )
-	dm[dmi] = dm[dmi+1];
+	(*dm_obj[1-cur])[dmi+CHUNK] = dm[dmi+1];
+
+    for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
+	(*in_obj[1-cur])[dmi+CHUNK*(DECIMATION+1)] = in[dmi+DECIMATION+1];
 
     /* Main loop: */
     while (numiters == -1 || numiters > 0)
@@ -167,34 +193,48 @@ void begin(void)
 	    numiters -= CHUNK;
 
 	/* The low-pass filter will need NUM_TAPS+1 items */
-	get_float_chunk( &in[NUM_TAPS-(DECIMATION+1)] );
+	spawn(get_float_df, (obj::outdep<float[OBJ_IN_SIZE]>)in_obj[cur],
+	      (obj::indep<float[OBJ_IN_SIZE]>)in_obj[1-cur] );
 
 	// in: consume/move: data->decimation+1 = DECIMATION+1 = 5
 	// in: read: NUM_TAPS=64
 	// out: 1
 	// lpf_data: in
-	run_lpf_chunk(in, &lpf[1], &lpf_data);
-
-	for( dmi=0; dmi<NUM_TAPS-(DECIMATION+1); ++dmi )
-	    in[dmi] = in[dmi+CHUNK*(DECIMATION+1)];
+	spawn(run_lpf_df,
+	      (obj::indep<float[OBJ_IN_SIZE]>)in_obj[cur],
+	      (obj::outdep<float[OBJ_LPF_SIZE]>)lpf_obj[cur],
+	      (obj::indep<float[OBJ_LPF_SIZE]>)lpf_obj[1-cur],
+	      &lpf_data);
 
 	// in: consume 1, read 2
 	// out: produce 1
-	run_demod_chunk( lpf, &dm[63] );
-	lpf[0] = lpf[CHUNK];
+	spawn( run_demod_df, (obj::indep<float[OBJ_LPF_SIZE]>)lpf_obj[cur],
+	       (obj::outdep<float[OBJ_DM_SIZE]>)dm_obj[cur],
+	       (obj::indep<float[OBJ_DM_SIZE]>)dm_obj[1-cur] );
 
 	// eq_data is in
-	run_equalizer_chunk(dm, csum, &eq_data);
-	for( dmi=0; dmi<63; ++dmi )
-	    dm[dmi] = dm[dmi+CHUNK];
-	write_floats_chunk(csum);
+	spawn(run_equalizer_df, (obj::indep<float[OBJ_DM_SIZE]>)dm_obj[cur],
+	      (obj::outdep<float[OBJ_CSUM_SIZE]>)csum_obj, &eq_data);
+
+	spawn(write_floats_df, (obj::indep<float[OBJ_CSUM_SIZE]>)csum_obj);
+
+	cur = 1 - cur;
     }
+
+    ssync();
 }
 
 // out: up to IN_BUFFER_LEN (fill as much as possible)
-void get_float_chunk(float * out) {
+void get_float_df(obj::outdep<float[NUM_TAPS+CHUNK*(DECIMATION+1)]> c,
+		  obj::indep<float[NUM_TAPS+CHUNK*(DECIMATION+1)]> p) {
+    get_float_chunk( *c, *p );
+}
+
+void get_float_chunk(float * out, float * out_prev) {
+    for( int i=0; i < NUM_TAPS - (DECIMATION+1); ++i )
+	out[i] = out_prev[CHUNK*(DECIMATION+1)+i];
     for( int i=0; i < CHUNK * (DECIMATION+1); ++i )
-	out[i] = get_float();
+	out[NUM_TAPS-(DECIMATION+1)+i] = get_float();
 }
 float get_float()
 {
@@ -230,10 +270,17 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
-void run_lpf_chunk(float *in, float * out, LPFData *data)
+void run_lpf_df(obj::indep<float[OBJ_IN_SIZE]> in,
+		obj::outdep<float[OBJ_LPF_SIZE]> out,
+		obj::indep<float[OBJ_LPF_SIZE]> out_prev,
+		LPFData *data) {
+    run_lpf_chunk( *in, *out, *out_prev, data );
+}
+void run_lpf_chunk(float *in, float * out, float * out_prev, LPFData *data)
 {
     for( int i=0, s=0; i < CHUNK; ++i, s+=DECIMATION+1 )
-	out[i] = run_lpf( &in[s], data );
+	out[i+1] = run_lpf( &in[s], data );
+    out[0] = out_prev[CHUNK];
 }
 
 float run_lpf(float *in, LPFData *data)
@@ -249,11 +296,19 @@ float run_lpf(float *in, LPFData *data)
 
 // in: consume 1, read 2
 // out: produce 1
-void run_demod_chunk(float *in, float *out)
+void run_demod_df(obj::indep<float[OBJ_LPF_SIZE]> in,
+		  obj::outdep<float[OBJ_DM_SIZE]> out,
+		  obj::indep<float[OBJ_DM_SIZE]> out_prev)
 {
-    for( int i=0; i < CHUNK; ++i ) {
-	out[i] = run_demod( &in[i] );
-    }
+    run_demod_chunk( *in, *out, *out_prev );
+}
+
+void run_demod_chunk(float *in, float *out, float *out_prev)
+{
+    for( int i=0; i < 63; ++i )
+	out[i] = out_prev[i+CHUNK];
+    for( int i=0; i < CHUNK; ++i )
+	out[i+63] = run_demod( &in[i] );
 }
 
 float run_demod(float * lpf)
@@ -290,6 +345,13 @@ void init_equalizer(EqualizerData *data)
 // in: read: NUM_TAPS=64
 // out: 1
 // data: in
+void run_equalizer_df(obj::indep<float[OBJ_DM_SIZE]> in,
+		      obj::outdep<float[OBJ_CSUM_SIZE]> out,
+		      EqualizerData *data)
+{
+    run_equalizer_chunk(*in, *out, data);
+}
+
 void run_equalizer_chunk(float *in, float * out, EqualizerData *data)
 {
     for( int i=0; i < CHUNK; ++i )
@@ -322,8 +384,15 @@ void write_floats( float v )
     printf( "%f\n", v );
 }
 
+void write_floats_df( obj::indep<float[OBJ_CSUM_SIZE]> v )
+{
+    write_floats_chunk( *v );
+}
+
 void write_floats_chunk( float * v )
 {
+    static float running = 0;
     for( int i=0; i < CHUNK; ++i )
-	write_floats( v[i] );
+	// leaf_call(write_floats, v[i] );
+	running += v[i];
 }
