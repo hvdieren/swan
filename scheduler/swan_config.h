@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /*
  * Header file to summarize all compile-time configuration switches.
  */
@@ -71,7 +71,7 @@
 #define PREFERRED_MUTEX cas_mutex
 #define FF_MCS_MUTEX 1
 #define TRACING 0
-#define DEBUG_CERR 0
+#define DEBUG_CERR 1
 #define IMPROVED_STUBS 1
 #endif
 

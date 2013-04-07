@@ -59,7 +59,6 @@ protected:
 };
 
 // hyperqueue: programmer's instance of a queue
-
 template<typename T>
 class hyperqueue : protected queue_version<queue_metadata>
 {
@@ -67,51 +66,60 @@ class hyperqueue : protected queue_version<queue_metadata>
     queue_index qindex;
 
 public:
-    explicit hyperqueue( size_t size = 128 )
-	: queue_version<queue_metadata>( qindex, size ) { }
+    explicit hyperqueue( size_t size = 128, size_t peekoff = 0 )
+	: queue_version<queue_metadata>( qindex, size, peekoff ) { }
 	
-    operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
-    operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
-    operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep<T> >(); }
+    operator pushdep<T>() const { return create_dep_ty< pushdep >(); }
+    operator popdep<T>()  const { return create_dep_ty< popdep >(); }
+    operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep >(); }
 
     prefixdep<T> prefix( size_t n ) const {
-	return create_dep_ty< prefixdep<T> >( n, 0 );
+	return create_dep_ty< prefixdep >( n, 0 );
     }
     prefixdep<T> prefix( size_t n, const T & dflt ) const {
-	return create_dep_ty< prefixdep<T> >( n, dflt );
+	return create_dep_ty< prefixdep >( n, dflt );
     }
     suffixdep<T> suffix( size_t n ) const {
-	return create_dep_ty< suffixdep<T> >( n, 0 );
+	return create_dep_ty< suffixdep >( n, 0 );
     }
     suffixdep<T> suffix( size_t n, const T & dflt ) const {
-	return create_dep_ty< suffixdep<T> >( n, dflt );
+	return create_dep_ty< suffixdep >( n, dflt );
     }
 	
     // The hyperqueue works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
 
-    T pop() {
-	T t;
-	queue_version<queue_metadata>::pop( t );
-	return t;
+    const T & pop() {
+	return queue_version<queue_metadata>::pop<T>();
     }
 
     void push( const T & t ) {
-	queue_version<queue_metadata>::push( t );
+	queue_version<queue_metadata>::push<T>( t );
     }
 	
 private:
-    template<typename DepTy>
-    typename std::enable_if<!is_prefixdep<DepTy>::value
-	&& !is_suffixdep<DepTy>::value, DepTy>::type
+    template<template<typename U> class DepTy>
+    typename std::enable_if<!is_prefixdep<DepTy<T>>::value && !is_suffixdep<DepTy<T>>::value,
+			    DepTy<T>>::type
     create_dep_ty() const {
-	DepTy od;
+	DepTy<T> od;
+	od.queue_v = this->get_nc_version();
+	return od;
+    }
+
+    template<template<typename U> class DepTy>
+    typename std::enable_if<is_prefixdep<DepTy<T>>::value || is_suffixdep<DepTy<T>>::value,
+			    DepTy<T>>::type
+    create_dep_ty( size_t n, const T & dflt ) const {
+	DepTy<T> od;
 	od.queue_v = get_nc_version();
+	od.count = n;
+	od.dflt = dflt;
 	return od;
     }
 
 protected:
-    queue_version<metadata_t> * get_nc_version() const {
+    queue_version<queue_metadata> * get_nc_version() const {
 	return const_cast<queue_version<queue_metadata>*>(
 	    static_cast<const queue_version<queue_metadata>*>( this ) );
     }
@@ -138,8 +146,17 @@ public:
 	dep.queue_v = v;
 	return dep;
     }
+
+    suffixdep<T> suffix( size_t n ) const {
+	return suffixdep<T>::create( get_nc_version(), n, 0 );
+    }
+    suffixdep<T> suffix( size_t n, const T & dflt ) const {
+	return suffixdep<T>::create( get_nc_version(), n, dflt );
+    }
     
-    void push( const T & value ) { queue_v->push( value ); }
+    void push( const T & value ) { queue_v->push<T>( value ); }
+
+private:
 };
 
 template<typename T>
@@ -149,7 +166,6 @@ public:
     typedef queue_metadata metadata_t;
     typedef popdep_tags dep_tags;
     typedef popdep_type_tag _object_tag;
-	
 	
     static popdep<T> create( queue_version<metadata_t> * v ) {
 	popdep<T> newpop;
@@ -170,13 +186,15 @@ public:
 	return create_dep_ty< suffixdep >( n, dflt );
     }
 	
-    T pop() {
-	T t;
-	queue_v->pop( t );
-	return t;
+    const T & pop() {
+	return queue_v->pop<T>();
     }
 	
-    bool empty() { return queue_v->empty(); }
+    const T & peek( size_t off ) {
+	return queue_v->peek<T>( off );
+    }
+	
+    bool empty() { return queue_base<queue_metadata>::queue_v->empty(); }
 
 protected:
 
@@ -185,7 +203,7 @@ protected:
 	|| is_suffixdep<DepTy<T>>::value, DepTy<T>>::type
     create_dep_ty( size_t n, const T & dflt ) const {
 	DepTy<T> od;
-	od.queue_v = get_nc_version();
+	od.queue_v = queue_base<queue_metadata>::get_nc_version();
 	od.count = n;
 	od.dflt = dflt;
 	return od;
@@ -218,12 +236,19 @@ public:
 	return d;
     }
 	
-    T pop() {
-	T t;
-	queue_v->pop_fixed( t, dflt );
-	return t;
+    prefixdep<T> prefix( size_t n ) const {
+	return prefixdep<T>::create( get_nc_version(), n, dflt );
+    }
+    prefixdep<T> prefix( size_t n, const T & dflt_ ) const {
+       return prefixdep<T>::create( get_nc_version(), n, dflt_ );
     }
 
+    const T & pop() { return queue_v->pop_fixed( dflt ); }
+
+    const T & peek( size_t off ) {
+	return queue_v->peek<T>( off );
+    }
+	
     size_t get_index() const { return queue_v->get_index(); }
 	
     // We must consume the whole prefix
@@ -256,7 +281,14 @@ public:
 	return d;
     }
 
-    void push( const T & value ) { queue_v->push( value ); }
+    suffixdep<T> suffix( size_t n ) const {
+	return suffixdep<T>::create( get_nc_version(), n, 0 );
+    }
+    suffixdep<T> suffix( size_t n, const T & dflt ) const {
+	return suffixdep<T>::create( get_nc_version(), n, dflt );
+    }
+    
+    void push( const T & value ) { queue_v->push<T>( value ); }
 	
     size_t get_length() const { return queue_v->get_count(); }
     size_t get_length_setting() const { return count; }

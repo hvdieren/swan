@@ -29,7 +29,8 @@ class fixed_size_queue
     const size_t size;
     const size_t mask;
     char * const buffer;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 3*sizeof(size_t) + sizeof(char *)> pad2;
+    bool peeked;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 3*sizeof(size_t) + sizeof(char *) + sizeof(bool)> pad2;
 	
 private:
     static size_t log2_up( size_t uu ) {
@@ -84,11 +85,11 @@ private:
     friend class queue_segment;
 
     fixed_size_queue( typeinfo_array tinfo_, char * buffer_,
-		      size_t elm_size_, size_t max_size )
+		      size_t elm_size_, size_t max_size, bool peeked_ )
 	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
 	  size( roundup_pow2( max_size * elm_size ) ),
-	  mask( size-1 ), buffer( buffer_ ) { 
+	  mask( size-1 ), buffer( buffer_ ), peeked( peeked_ ) { 
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
     }
@@ -98,6 +99,9 @@ public:
 	tinfo.destruct( buffer, &buffer[size], elm_size );
     }
 	
+    bool is_peeked() const { return peeked; }
+    void done_peeking() { peeked = true; }
+
     bool empty() const volatile { return head == tail; }
     bool full() const volatile {
 	return ((tail+elm_size) & mask) == head;
@@ -114,37 +118,42 @@ public:
 	    return head <= pos || pos < tail;
     }
 
+    template<typename T>
+    T & peek( size_t pos ) {
+	char* value = &buffer[(pos*elm_size) & mask];
+	return *reinterpret_cast<T *>( value );
+    }
+
     // returns NULL if pop fails
     template<typename T>
-    bool pop( T & t, size_t pos ) {
-	// if( empty() )
-	    // return false;
-
+    T & pop( size_t pos ) {
 	char* value = &buffer[(pos*elm_size) & mask];
-	t = *reinterpret_cast<T *>( value );
+	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
-	if( ((pos*elm_size) & mask) == head )
+	if( peeked && ((pos*elm_size) & mask) == head )
 	    head = (head+elm_size) & mask;
-	return true;
+	return r;
     }
 	
     // returns true on success false on failure
     template<typename T>
-    bool push( T * value ) {
+    bool push( const T * value ) {
 	if( full() ) {
 	    return false;
 	} else {
-	    *reinterpret_cast<T *>( &buffer[tail] ) = *value;
+	    // std::copy<T>( *reinterpret_cast<T *>( &buffer[tail] ), *value );
+	    memcpy( reinterpret_cast<T *>( &buffer[tail] ), value, sizeof(T) );
 	    tail = (tail+elm_size) & mask;
 	    return true;
 	}
     }
-    friend std::ostream & operator << ( std::ostream & os, fixed_size_queue & q );
+    friend std::ostream & operator << ( std::ostream & os, const fixed_size_queue & q );
 };
 
-inline std::ostream & operator << ( std::ostream & os, fixed_size_queue & q ) {
+inline std::ostream & operator << ( std::ostream & os, const fixed_size_queue & q ) {
     return os << " QUEUE: head=" << q.head << " tail=" << q.tail
 	      << " size=" << q.size << " mask=" << std::hex << q.mask
+	      << " peeked=" << q.peeked
 	      << std::dec;
 }
 

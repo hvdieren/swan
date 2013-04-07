@@ -192,9 +192,10 @@ public:
     }
 
     template<typename T>
-    void push_segment( long logical_pos, size_t max_size, queue_index & idx ) {
+    void push_segment( long logical_pos, size_t max_size, bool peeked,
+		       queue_index & idx ) {
 	logical = logical_pos;
-	queue_segment * seg = queue_segment::template create<T>( logical, max_size );
+	queue_segment * seg = queue_segment::template create<T>( logical, max_size, peeked );
 	if( tail ) {
 	    tail->set_next( seg );
 	    tail->clr_producing();
@@ -209,15 +210,15 @@ public:
     }
 
     template<typename T>
-    void push( T * value, size_t max_size, queue_index & idx ) {
+    void push( const T * value, size_t max_size, bool peeked, queue_index & idx ) {
 	assert( tail );
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
 	if( tail->is_full() )
-	    push_segment<T>( tail->get_logical_tail(), max_size, idx );
+	    push_segment<T>( tail->get_logical_tail(), max_size, peeked, idx );
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
-	tail->push( value );
+	tail->push<T>( value );
     }
 };
 
@@ -233,11 +234,18 @@ private:
     void await( queue_index & idx ) {
 	assert( head );
 
+	// Position where we want to read.
+	size_t pos = get_index();
+
+	if( likely( !head->is_empty( pos ) ) )
+	    return;
+
 	// As long as nothing has appeared in the queue and the producing
 	// flag is on, we don't really know if the queue is empty or not.
 	// Spin until something appears at the next index we will read.
-	size_t pos = get_index();
 	do {
+	    errs() << "await " << *this << std::endl;
+
 	    while( head->is_empty( pos ) && head->is_producing() ) {
 		// busy wait
 		sched_yield();
@@ -249,13 +257,17 @@ private:
 		    // Note: this case is executed only once per segment,
 		    // namely for the task that pops the tail of this segment.
 
-		    // errs() << "head " << head << " runs out, pop segment (empty)\n";
+		    errs() << "head " << head << " runs out, pop segment (empty)\n";
 		    // Are we totally done with this segment?
 		    // TODO: this may introduce a data race and not deallocate
 		    // some segments as a result. Or even dealloc more than
 		    // once...
+		    // TODO: situation got worse with peeking
+		    // IDEA: incorporate peeked condition as add one to
+		    // push and pop volume rather than separate boolen condition
 		    bool erase
-			= head->get_volume_pop() == head->get_volume_push();
+			= head->get_volume_pop() == head->get_volume_push()
+			&& head->is_peeked();
 
 		    // Every segment linked from a known position (we can
 		    // only pop from a known position) should also be known.
@@ -269,6 +281,10 @@ private:
 		    // segments in the index during some time.
 		    if( seg->get_logical_pos() < 0 )
 			seg->propagate_logical_pos( head->get_logical_tail(), idx );
+
+		    // Once head is done, we know peeking is done on seg because
+		    // we require peeking crosses at most one segment boundary.
+		    seg->done_peeking();
 
 		    // Compute our new position based on logical_pos, which is
 		    // constant (as opposed to head and tail which differ by
@@ -324,26 +340,49 @@ public:
     }
 
     template<typename T>
-    void pop( T & t, queue_index & idx ) {
+    T & pop( queue_index & idx ) {
 	// Spin until the desired information appears in the queue.
 	await( idx );
 
 	// We must be able to pop now.
 	size_t pos = get_index();
 
-	// errs() << "pop from queue " << head << ": value="
-	       // << std::dec << t << ' ' << *head
+	// errs() << "pop from queue " << head << ": " << *head
 	       // << " SQ=" << *this
 	       // << " position=" << pos << "\n";
 
-	if( !head->is_empty( pos ) ) {
-	    head->pop( t, pos );
-	    volume_pop++;
-	    return;
+	assert( !head->is_empty( pos ) );
+
+	T & r = head->pop<T>( pos );
+	volume_pop++;
+	return r;
+    }
+
+    template<typename T>
+    T & peek( size_t off, queue_index & idx ) {
+	// Spin until the desired information appears in the queue.
+	await( idx );
+
+	// We must be able to pop now.
+	size_t pos = get_index() + off;
+
+	// errs() << "peek from queue " << head << ": value="
+	       // << std::dec << t << ' ' << *head
+	       // << " SQ=" << *this
+	       // << " offset=" << off
+	       // << " position=" << pos << "\n";
+
+	queue_segment * seg = head;
+	while( unlikely( seg->is_empty( pos ) ) ) {
+	    if( !seg->is_producing() )
+		seg = head->get_next();
+	    if( !seg->is_empty( pos ) )
+		break;
+	    sched_yield();
 	}
 
-	assert( !head->is_producing() );
-	abort();
+	assert( !seg->is_empty( pos ) );
+	return seg->peek<T>( pos );
     }
 };
 

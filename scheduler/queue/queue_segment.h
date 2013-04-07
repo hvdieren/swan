@@ -86,19 +86,22 @@ class queue_segment
 		 + sizeof(int)
 		 + sizeof(volatile bool) > padding;
 
+    friend std::ostream & operator << ( std::ostream & os, const queue_segment & seg );
+
 private:
     queue_segment( typeinfo_array tinfo, long logical_, char * buffer,
-		   size_t elm_size, size_t max_size )
-	: q( tinfo, buffer, elm_size, max_size ), next( 0 ),
+		   size_t elm_size, size_t max_size, bool peeked )
+	: q( tinfo, buffer, elm_size, max_size, peeked ), next( 0 ),
 	  logical_pos( logical_ ),
 	  volume_pop( 0 ), volume_push( 0 ),
 	  slot( -1 ), producing( true ) {
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
-	// errs() << "queue_segment create " << *this << "\n";
+	errs() << "queue_segment create " << *this << std::endl;
     }
 public:
     ~queue_segment() {
-	// errs() << "queue_segment destruct: " << *this << "\n";
+	errs() << "queue_segment destruct: " << *this << std::endl;
+	assert( q.is_peeked() || logical_pos == 0 );
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
     }
@@ -106,7 +109,7 @@ public:
 public:
     // Allocate control fields and data buffer in one go
     template<typename T>
-    static queue_segment * create( long logical, size_t seg_size ) {
+    static queue_segment * create( long logical, size_t seg_size, bool peeked ) {
 	typeinfo_array tinfo = typeinfo_array::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space<T>( seg_size );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
@@ -115,7 +118,7 @@ public:
 	tinfo.construct<T>( buffer, &memory[buffer_size], step );
 	return new (memory) queue_segment( tinfo, logical, buffer,
 					   fixed_size_queue::get_element_size<T>(),
-					   seg_size );
+					   seg_size, peeked );
     }
 
     // Accessor functions for control (not exposed to user API)
@@ -145,8 +148,13 @@ public:
     // versus pushing new segment and updating logical position.
     // Should be ok if link before update position.
     void propagate_logical_pos( long logical, queue_index & idx ) {
-	assert( logical_pos < 0
-		&& "logical position must be unknown when updating" );
+	// Done if known.
+	if( logical_pos >= 0 ) {
+	    assert( logical_pos == logical );
+	    return;
+	}
+	// assert( logical_pos < 0
+		// && "logical position must be unknown when updating" );
 	logical_pos = logical;
 	idx.insert( this );
 	if( next )
@@ -158,7 +166,13 @@ public:
 
     // Linking segments in a list
     queue_segment * get_next() const { return next; }
-    void set_next( queue_segment * next_ ) { next = next_; }
+    void set_next( queue_segment * next_ ) {
+	next = next_;
+	// errs() << "Link " << this << " ltail=" << get_logical_tail()
+	       // << " to " << next << " pos=" << next->logical_pos << std::endl;
+	assert( next->logical_pos == get_logical_tail() );
+	assert( !next->is_peeked() );
+    }
 
     void advance_to_end( size_t length ) { 
 	// Some pops did not get done. Tamper with the counters such
@@ -176,9 +190,14 @@ public:
 	return !q.is_produced( logical - logical_pos );
     }
 
+    bool is_peeked() const { return q.is_peeked(); }
+    void done_peeking() {
+	errs() << "done peeking: " << *this << std::endl;
+	q.done_peeking(); }
+
     // Queue pop and push methods
     template<typename T>
-    void pop( T & t, long logical ) {
+    T & pop( long logical ) {
 	while( q.empty() )
 	    sched_yield();
 	// Translate global position we're popping from to local queue position
@@ -186,21 +205,29 @@ public:
 	// * As a real queue, round-robin when used by one popper
 	// * As an array, when concurrent pops occur
 	// errs() << "queue_segment: pop @" << logical << " seg=" << *this << "\n";
-	q.pop( t, logical - logical_pos );
+	T & r = q.pop<T>( logical - logical_pos );
 	__sync_fetch_and_add( &volume_pop, 1 );
+	return r;
+    }
+
+    template<typename T>
+    T & peek( long logical ) {
+	while( q.empty() )
+	    sched_yield();
+
+	return q.peek<T>( logical - logical_pos );
     }
 	
     template<typename T>
-    void push( T * value ) {
+    void push( const T * value ) {
 	while( !q.push( value ) )
 	    sched_yield();
 	volume_push++;
     }
-
-    friend std::ostream & operator << ( std::ostream & os, queue_segment & seg );
 };
 
-inline std::ostream & operator << ( std::ostream & os, queue_segment & seg ) {
+inline std::ostream &
+operator << ( std::ostream & os, const queue_segment & seg ) {
     return os << "Segment: @" << &seg << " producing=" << seg.producing
 	      << " slot=" << seg.slot
 	      << " @" << seg.logical_pos
@@ -223,16 +250,16 @@ size_t queue_index::insert( queue_segment * seg ) {
 
 queue_segment * queue_index::lookup( long logical ) {
     lock();
-    // errs() << "Index " << this << " lookup logical="
-	   // << logical << " end=" << get_end() << "\n";
+    errs() << "Index " << this << " lookup logical="
+	   << logical << " end=" << get_end() << "\n";
 
     queue_segment * eq = 0;
     for( std::vector<queue_segment *>::const_iterator
 	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
 	if( queue_segment * seg = *I ) {
-	    // errs() << "Index entry " << *seg << " logical="
-		// << seg->get_logical_head() << '-'
-		// << seg->get_logical_tail() << "\n";
+	    errs() << "Index entry " << *seg << " logical="
+		<< seg->get_logical_head() << '-'
+		<< seg->get_logical_tail() << "\n";
 	    if( seg && seg->get_logical_head() <= logical ) {
 		if( seg->get_logical_tail() > logical ) {
 		    unlock();
