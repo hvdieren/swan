@@ -191,6 +191,7 @@ void run_lpf_fb_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, LPF
 {
     errs() << "run_lpf_fb_sub start " << s << " N=" << N << std::endl;
     if( N < 8192 ) {
+	errs() << "run_lpf_fb_sub really " << s << " " << (s+N) << std::endl;
 	for( int i=0; i < N; ++i ) {
 	    assert( fbin.get_index() == 5*(s+i) );
 	    float sum = run_lpf_fb1( fbin, data );

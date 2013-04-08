@@ -77,7 +77,8 @@ public:
 		    // errs() << "ERROR: cannot free local segment if slotted\n";
 		    // abort();
 		}
-		delete q;
+		// delete q;
+		q->as_if_delete();
 	    }
 	}
     }
@@ -237,6 +238,8 @@ private:
 	// Position where we want to read.
 	size_t pos = get_index();
 
+	head->check_hash();
+
 	if( likely( !head->is_empty( pos ) ) )
 	    return;
 
@@ -245,6 +248,7 @@ private:
 	// Spin until something appears at the next index we will read.
 	do {
 	    errs() << "await " << *this << std::endl;
+	    head->check_hash();
 
 	    while( head->is_empty( pos ) && head->is_producing() ) {
 		// busy wait
@@ -284,7 +288,9 @@ private:
 
 		    // Once head is done, we know peeking is done on seg because
 		    // we require peeking crosses at most one segment boundary.
-		    seg->done_peeking();
+		    // TODO: This will err on the side of not erasing...
+		    if( head->is_peeked() )
+			seg->done_peeking();
 
 		    // Compute our new position based on logical_pos, which is
 		    // constant (as opposed to head and tail which differ by
@@ -299,7 +305,8 @@ private:
 			    idx.erase( head->get_slot() );
 			    head->set_slot( -1 );
 			}
-			delete head;
+			// delete head;
+			head->as_if_delete();
 		    }
 
 		    head = seg;
@@ -373,7 +380,9 @@ public:
 	       // << " position=" << pos << "\n";
 
 	queue_segment * seg = head;
+	head->check_hash();
 	while( unlikely( seg->is_empty( pos ) ) ) {
+	    seg->check_hash();
 	    if( !seg->is_producing() )
 		seg = head->get_next();
 	    if( !seg->is_empty( pos ) )

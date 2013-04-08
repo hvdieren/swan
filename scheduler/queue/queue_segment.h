@@ -71,6 +71,7 @@ class queue_segment
     fixed_size_queue q;
     queue_segment * next;
     long logical_pos; // -1 is unknown
+long hash;
     size_t volume_pop, volume_push;
     int slot;
     volatile bool producing;
@@ -80,6 +81,7 @@ class queue_segment
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
 		 + sizeof(queue_segment *)
+		 + sizeof(long)
 		 + sizeof(long)
 		 + sizeof(size_t)
 		 + sizeof(size_t)
@@ -95,6 +97,7 @@ private:
 	  logical_pos( logical_ ),
 	  volume_pop( 0 ), volume_push( 0 ),
 	  slot( -1 ), producing( true ) {
+	hash = 0xbebebebe;
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
 	errs() << "queue_segment create " << *this << std::endl;
     }
@@ -104,6 +107,17 @@ public:
 	assert( q.is_peeked() || logical_pos == 0 );
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
+    }
+    void check_hash() const {
+	assert( hash == 0xbebebebe );
+    }
+    void as_if_delete() {
+	errs() << "queue_segment as-if-destruct: " << *this << std::endl;
+	assert( q.is_peeked() || logical_pos == 0 );
+	assert( slot < 0 && "queue_segment slotted when destructed" );
+	assert( logical_pos >= 0 && "logical position unknown when destructed" );
+	assert( hash == 0xbebebebe );
+	hash = 0xdeadbeef;
     }
 	
 public:
