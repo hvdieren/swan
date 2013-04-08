@@ -191,33 +191,41 @@ public:
     long get_logical_tail() const {
 	return tail ? tail->get_logical_tail() : logical;
     }
+    long get_logical_tail_wpeek() const {
+	return tail ? tail->get_logical_tail_wpeek() : logical;
+    }
 
     template<typename T>
-    void push_segment( long logical_pos, size_t max_size, bool peeked,
+    void push_segment( long logical_pos, size_t max_size, size_t peekoff,
 		       queue_index & idx ) {
-	logical = logical_pos;
-	queue_segment * seg = queue_segment::template create<T>( logical, max_size, peeked );
+	errs() << "push_segment request at " << logical_pos << "\n";
+	queue_segment * seg
+	    = queue_segment::template create<T>( logical_pos, max_size, peekoff );
+	logical = seg->get_logical_head();
+
 	if( tail ) {
 	    tail->set_next( seg );
 	    tail->clr_producing();
 	} else {
 	    assert( !head && "if tail == 0, then also head == 0" );
+	    if( logical == 0 )
+		seg->rewind();
 	    head = seg;
 	}
 	tail = seg;
 
-	if( logical >= 0 )
+	if( logical_pos >= 0 )
 	    idx.insert( tail );
     }
 
     template<typename T>
-    void push( const T * value, size_t max_size, bool peeked, queue_index & idx ) {
+    void push( const T * value, size_t max_size, size_t peekoff, queue_index & idx ) {
 	assert( tail );
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
 	if( tail->is_full() )
-	    push_segment<T>( tail->get_logical_tail(), max_size, peeked, idx );
+	    push_segment<T>( tail->get_logical_tail(), max_size, peekoff, idx );
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push<T>( value );
     }
@@ -297,6 +305,7 @@ private:
 		    // the number of pushes and pops performed).
 		    logical = seg->get_logical_pos();
 		    volume_pop = pos - logical;
+		    assert( (long)pos >= logical );
 
 		    // TODO: when to delete a segment in case of multiple
 		    // consumers?
@@ -322,10 +331,12 @@ private:
     }
 
 public:
+/*
     void advance_to_end( size_t length ) {
 	if( head )
 	    head->advance_to_end( length );
     }
+*/
 
     bool empty( queue_index & idx ) {
 	assert( head );
@@ -365,6 +376,10 @@ public:
 	return r;
     }
 
+    void pop_bookkeeping( size_t npop ) {
+	volume_pop += npop;
+    }
+
     template<typename T>
     T & peek( size_t off, queue_index & idx ) {
 	// Spin until the desired information appears in the queue.
@@ -392,6 +407,28 @@ public:
 
 	assert( !seg->is_empty( pos ) );
 	return seg->peek<T>( pos );
+    }
+
+    // Get access to a part of the buffer that allow to peek npeek elements
+    // and pop npop, where it is assumed that npeek >= npop, i.e., the peeked
+    // elements include the popped ones.
+    template<typename MetaData, typename T>
+    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek, queue_index & idx ) {
+	assert( npeek >= npop );
+	// If we know that npeek <= peekoff, then we should be fine with npop > 1
+	// except when the pops span segments, i.e., all npeek values in current
+	// segment except that 2nd popped value is here only for peek reasons
+	// and should be popped from the next segment.
+	assert( npop == 1 );
+
+	// Spin until the desired information appears in the queue.
+	await( idx );
+
+	// The last index we want to pop
+	size_t pos = get_index() + npop - 1;
+	assert( !head->is_empty( pos ) && "read range crosses queue segments" );
+
+	return head->get_slice<MetaData,T>( get_index() );
     }
 };
 

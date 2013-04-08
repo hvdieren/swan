@@ -151,13 +151,15 @@ public:
 		&& "increasing set of permissions on a spawn" );
 	assert( ( !(parent->flags & qf_fixed) || (parent->flags & qf_fixed) )
 		&& "if parent fixed-length, then child must be too" );
+	assert( ( !(flags & qf_fixed) || size_t(fixed_length) > qv->peekoff )
+		&& "fixed-length segment must exceed peek length" );
 
 	// Link in frame with siblings and parent
 	parent->lock();
 
 	// Update parent flags and logical. Flags require lock due to
 	// non-atomic update.
-	long plogical_tail = parent->user.get_logical_tail();
+	long plogical_tail = parent->user.get_logical_tail_wpeek();
 	if( flags & qf_push ) {
 	    if( !(qmode & qf_fixed) )
 		parent->flags = flags_t( parent->flags & ~qf_kntail );
@@ -357,12 +359,12 @@ public:
 		 || (unsigned(parent->chead->flags) & unsigned(qf_pop) ) ) ) {
 	    if( is_stack ) {
 		if( parent->user.get_tail() ) {
-		    qindex.set_end( parent->user.get_tail()->get_logical_tail() );
+		    qindex.set_end( parent->user.get_tail()->get_logical_tail_wpeek() );
 		    parent->user.get_tail()->clr_producing();
 		}
 	    } else {
 		if( parent->children.get_tail() ) {
-		    qindex.set_end( parent->children.get_tail()->get_logical_tail() );
+		    qindex.set_end( parent->children.get_tail()->get_logical_tail_wpeek() );
 		    parent->children.get_tail()->clr_producing();
 		}
 	    }
@@ -514,6 +516,10 @@ public:
 	return queue.get_index();
     }
 
+    void pop_bookkeeping( size_t npop ) {
+	queue.pop_bookkeeping( npop );
+    }
+
     template<typename T>
     T & pop() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
@@ -530,6 +536,16 @@ public:
 	assert( off <= peekoff && "Peek outside requested range" );
 	ensure_queue_head();
 	return queue.peek<T>( off, qindex );
+    }
+
+    template<typename T>
+    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
+	assert( npeek-npop+1 <= peekoff && "Peek outside requested range" );
+	ensure_queue_head();
+	read_slice<MetaData,T> slice
+	    = queue.get_slice<MetaData,T>( npop, npeek, qindex );
+	slice.set_version( this );
+	return slice;
     }
 
     long get_count() const { return count; }
@@ -555,15 +571,17 @@ public:
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>( user.get_logical(), max_size,
-				  peekoff == 0, qindex );
+	    errs() << "push segment at " << user.get_logical() << std::endl;
+	    user.push_segment<T>(
+		user.get_logical() > 0 ? user.get_logical() - peekoff
+		: user.get_logical(), max_size, peekoff, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	// errs() << "push QV=" << this << " user="
 	       // << user << " value=" << t << "\n";
-	user.push<T>( &t, max_size, peekoff == 0, qindex );
+	user.push<T>( &t, max_size, peekoff, qindex );
     }
 
     // Only for pop!

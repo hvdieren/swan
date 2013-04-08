@@ -13,6 +13,31 @@
 
 namespace obj {
 
+template<typename MetaData, typename T>
+class read_slice {
+    const char * buffer;
+    size_t elm_size;
+    queue_version<MetaData> * version;
+
+public:
+    read_slice( const char * buffer_, size_t elm_size_ )
+	: buffer( buffer_ ), elm_size( elm_size_ ), version( 0 ) { }
+    void set_version( queue_version<MetaData> * version_ ) {
+	version = version_;
+    }
+
+    T & pop() {
+	version->pop_bookkeeping( 1 );
+	const char * e = buffer;
+	buffer += elm_size;
+	return *reinterpret_cast<T *>( e );
+    }
+
+    const T & peek( size_t off ) {
+	return *reinterpret_cast<const T *>( &buffer[off * elm_size] );
+    }
+};
+
 class fixed_size_queue
 {
     // Cache block 0: owned by producer
@@ -29,8 +54,9 @@ class fixed_size_queue
     const size_t size;
     const size_t mask;
     char * const buffer;
+    size_t peekoff;
     bool peeked;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 3*sizeof(size_t) + sizeof(char *) + sizeof(bool)> pad2;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 4*sizeof(size_t) + sizeof(char *) + sizeof(bool)> pad2;
 	
 private:
     static size_t log2_up( size_t uu ) {
@@ -85,11 +111,12 @@ private:
     friend class queue_segment;
 
     fixed_size_queue( typeinfo_array tinfo_, char * buffer_,
-		      size_t elm_size_, size_t max_size, bool peeked_ )
-	: head( 0 ), tail( 0 ), tinfo( tinfo_ ),
+		      size_t elm_size_, size_t max_size, size_t peekoff_ )
+	: head( 0 ), tail( peekoff_*elm_size_ ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
 	  size( roundup_pow2( max_size * elm_size ) ),
-	  mask( size-1 ), buffer( buffer_ ), peeked( peeked_ ) { 
+	  mask( size-1 ), buffer( buffer_ ), peekoff( peekoff_ ),
+	  peeked( peekoff == 0 ) { 
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
     }
@@ -98,13 +125,18 @@ public:
     ~fixed_size_queue() {
 	tinfo.destruct( buffer, &buffer[size], elm_size );
     }
+
+    size_t get_peek_dist() const { return peekoff; }
+    void rewind() { tail = 0; } // very first segment has no copied-in peek area
 	
     bool is_peeked() const { return peeked; }
     void done_peeking() { peeked = true; }
 
     bool empty() const volatile { return head == tail; }
     bool full() const volatile {
-	return ((tail+elm_size) & mask) == head;
+	// Freeze tail at end of buffer to avoid wrap-around in case of peeking
+	size_t full_marker = peekoff > 0 ? 0 : head;
+	return ((tail+elm_size) & mask) == full_marker;
     }
 	
     // peek first element
@@ -147,6 +179,21 @@ public:
 	    return true;
 	}
     }
+
+    template<typename MetaData, typename T>
+    read_slice<MetaData,T> get_slice( size_t pos ) {
+	return read_slice<MetaData,T>( &buffer[pos * elm_size], elm_size );
+    }
+
+    void copy_peeked( const char * buff ) {
+	if( peekoff > 0 )
+	    memcpy( &buffer[head], buff, peekoff * elm_size );
+    }
+
+    const char * get_peek_suffix() const {
+	return &buffer[tail - elm_size * peekoff];
+    }
+
     friend std::ostream & operator << ( std::ostream & os, const fixed_size_queue & q );
 };
 

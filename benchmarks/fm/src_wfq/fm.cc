@@ -47,7 +47,7 @@ float lpf_coeff[NUM_TAPS];
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation);
 void run_lpf_fb(obj::popdep<float> fbin, obj::pushdep<float>fbout, LPFData *data, int n);
 float run_lpf_fb1(obj::prefixdep<float> fbin, LPFData *data);
-float run_lpf(float *in, LPFData *data);
+float run_lpf(const float *in, LPFData *data);
 
 void run_demod(obj::popdep<float> fbin, obj::pushdep<float> fbout, int N);
 
@@ -225,16 +225,20 @@ float run_lpf_fb1(obj::prefixdep<float> fbin, LPFData *data)
 {
     // float sum = run_lpf(&fbin->buff[fbin->rpos], data);
     // fbin->rpos += data->decimation + 1;
+    obj::read_slice<obj::queue_metadata, float> slice
+	= fbin.get_slice( 1, NUM_TAPS );
     float in[NUM_TAPS];
     for( int i=0; i < NUM_TAPS; ++i )
-	in[i] = fbin.peek(i);
-    float sum = run_lpf(in, data);
+	in[i] = slice.peek(i);
+	// in[i] = fbin.peek(i);
+    // float sum = run_lpf( &slice.peek(0), data); -- NO: ELM_SIZE!!!
+    float sum = run_lpf( in, data);
     for( int i=0; i < data->decimation+1; ++i )
 	fbin.pop();
     return sum;
 }
 
-float run_lpf(float *in, LPFData *data)
+float run_lpf(const float *in, LPFData *data)
 {
   float sum = 0.0;
   int i = 0;

@@ -7,6 +7,9 @@
 
 namespace obj {
 
+template<typename MetaData, typename T>
+class read_slice;
+
 // queue_base: an instance of a queue, base class for hyperqueue, pushdep, popdep,
 // pushpopdep, prefixdep, suffixdep.
 // This class may not have non-trival constructors nor destructors in order to
@@ -247,6 +250,10 @@ public:
 
     const T & peek( size_t off ) {
 	return queue_v->peek<T>( off );
+    }
+
+    read_slice<queue_metadata, T> get_slice( size_t npop, size_t npeek ) {
+	return queue_v->get_slice<T>( npop, npeek );
     }
 	
     size_t get_index() const { return queue_v->get_index(); }
