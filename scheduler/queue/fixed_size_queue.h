@@ -55,8 +55,7 @@ class fixed_size_queue
     const size_t mask;
     char * const buffer;
     size_t peekoff;
-    bool peeked;
-    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 4*sizeof(size_t) + sizeof(char *) + sizeof(bool)> pad2;
+    pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 4*sizeof(size_t) + sizeof(char *)> pad2;
 	
 private:
     static size_t log2_up( size_t uu ) {
@@ -115,8 +114,7 @@ private:
 	: head( 0 ), tail( peekoff_*elm_size_ ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
 	  size( roundup_pow2( max_size * elm_size ) ),
-	  mask( size-1 ), buffer( buffer_ ), peekoff( peekoff_ ),
-	  peeked( peekoff == 0 ) { 
+	  mask( size-1 ), buffer( buffer_ ), peekoff( peekoff_ ) {
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
     }
@@ -129,9 +127,6 @@ public:
     size_t get_peek_dist() const { return peekoff; }
     void rewind() { tail = 0; } // very first segment has no copied-in peek area
 	
-    bool is_peeked() const { return peeked; }
-    void done_peeking() { peeked = true; }
-
     bool empty() const volatile { return head == tail; }
     bool full() const volatile {
 	// Freeze tail at end of buffer to avoid wrap-around in case of peeking
@@ -162,7 +157,7 @@ public:
 	char* value = &buffer[(pos*elm_size) & mask];
 	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
-	if( peeked && ((pos*elm_size) & mask) == head )
+	if( ((pos*elm_size) & mask) == head )
 	    head = (head+elm_size) & mask;
 	return r;
     }
@@ -200,7 +195,6 @@ public:
 inline std::ostream & operator << ( std::ostream & os, const fixed_size_queue & q ) {
     return os << " QUEUE: head=" << q.head << " tail=" << q.tail
 	      << " size=" << q.size << " mask=" << std::hex << q.mask
-	      << " peeked=" << q.peeked
 	      << std::dec;
 }
 

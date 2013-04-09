@@ -107,7 +107,6 @@ private:
 public:
     ~queue_segment() {
 	errs() << "queue_segment destruct: " << *this << std::endl;
-	assert( q.is_peeked() || logical_pos == 0 );
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
     }
@@ -116,7 +115,6 @@ public:
     }
     void as_if_delete() {
 	errs() << "queue_segment as-if-destruct: " << *this << std::endl;
-	assert( q.is_peeked() || logical_pos == 0 );
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
 	assert( hash == 0xbebebebe );
@@ -145,6 +143,8 @@ public:
     bool is_producing()  const volatile { return !copied_peek || ( producing && !next ); } // !!!
     void set_producing( bool p = true ) volatile { producing = p; }
     void clr_producing() volatile { producing = false; }
+
+    size_t get_peek_dist() const { return q.get_peek_dist(); }
 
     int  get_slot() const { return slot; }
     void set_slot( int slot_ ) { slot = slot_; }
@@ -187,8 +187,11 @@ public:
 	    next->propagate_logical_pos( get_logical_tail(), idx );
     }
 
-    size_t get_volume_pop() const { return volume_pop; }
-    size_t get_volume_push() const { return volume_push; }
+    // size_t get_volume_pop() const { return volume_pop; }
+    // size_t get_volume_push() const { return volume_push; }
+    bool all_done() const {
+	return copied_peek && volume_pop + q.get_peek_dist() == volume_push;
+    }
 
     // Linking segments in a list
     queue_segment * get_next() const { return next; }
@@ -197,12 +200,14 @@ public:
 	// We have assured that we will not wrap-around when peekoff != 0
 	next_->q.copy_peeked( q.get_peek_suffix() );
 	next_->copied_peek = true;
+	// TODO: How to avoid memory de-allocation here?
+
+	assert( next_->volume_pop + ( next_->copied_peek ? next_->q.get_peek_dist() : 0 ) <= next_->volume_push );
 
 	next = next_;
 	// errs() << "Link " << this << " ltail=" << get_logical_tail()
 	       // << " to " << next << " pos=" << next->logical_pos << std::endl;
 	assert( next->logical_pos == get_logical_tail() );
-	assert( !next->is_peeked() );
     }
 
 /* UNUSED
@@ -220,17 +225,13 @@ public:
 */
 
     bool is_empty( size_t logical ) const {
-	return ( logical - logical_pos < q.get_peek_dist() )
-	    ? !copied_peek
-	    : !q.is_produced( logical - logical_pos );
+	return ( ( logical - logical_pos < q.get_peek_dist() )
+		 ? !copied_peek 
+		 : logical > get_logical_tail() )
+	    || !q.is_produced( logical - logical_pos );
     }
 
     void rewind() { q.rewind(); volume_push = 0; } // very first segment has no copied-in peek area
-
-    bool is_peeked() const { return q.is_peeked(); }
-    void done_peeking() {
-	errs() << "done peeking: " << *this << std::endl;
-	q.done_peeking(); }
 
     // Queue pop and push methods
     void pop_bookkeeping( size_t npop ) {
@@ -239,7 +240,7 @@ public:
 	
     template<typename T>
     T & pop( long logical ) {
-	while( q.empty() )
+	while( q.empty() || ( logical - logical_pos < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
 	// Translate global position we're popping from to local queue position
 	// Two behaviors of the fixed_size_queue:
@@ -253,7 +254,7 @@ public:
 
     template<typename T>
     T & peek( long logical ) {
-	while( q.empty() )
+	while( q.empty() || ( logical - logical_pos < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
 
 	return q.peek<T>( logical - logical_pos );
@@ -308,13 +309,21 @@ queue_segment * queue_index::lookup( long logical ) {
 	    errs() << "Index entry " << *seg << " logical="
 		<< seg->get_logical_head() << '-'
 		<< seg->get_logical_tail() << "\n";
-	    if( seg && seg->get_logical_head() <= logical ) {
-		if( seg->get_logical_tail() > logical ) {
+	    if( seg ) {
+		if( seg->get_logical_head() <= logical ) {
+		    if( seg->get_logical_tail() > logical ) {
+			unlock();
+			return seg;
+		    } else if( seg->get_logical_tail() == logical
+			       && seg->get_logical_head() == logical )
+			eq = seg;
+		} else if( seg->get_peek_dist() > 0
+			   && seg->get_logical_pos() <= logical
+			   && seg->get_logical_tail() > logical ) {
+		    // This represents a different access modality
 		    unlock();
 		    return seg;
-		} else if( seg->get_logical_tail() == logical
-			   && seg->get_logical_head() == logical )
-		    eq = seg;
+		}
 	    }
 	}
     }

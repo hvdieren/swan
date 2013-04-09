@@ -198,7 +198,6 @@ public:
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, size_t peekoff,
 		       queue_index & idx ) {
-	errs() << "push_segment request at " << logical_pos << "\n";
 	queue_segment * seg
 	    = queue_segment::template create<T>( logical_pos, max_size, peekoff );
 	logical = seg->get_logical_head();
@@ -255,7 +254,7 @@ private:
 	// flag is on, we don't really know if the queue is empty or not.
 	// Spin until something appears at the next index we will read.
 	do {
-	    errs() << "await " << *this << std::endl;
+	    // errs() << "await " << *this << std::endl;
 	    head->check_hash();
 
 	    while( head->is_empty( pos ) && head->is_producing() ) {
@@ -269,7 +268,7 @@ private:
 		    // Note: this case is executed only once per segment,
 		    // namely for the task that pops the tail of this segment.
 
-		    errs() << "head " << head << " runs out, pop segment (empty)\n";
+		    // errs() << "head " << head << " runs out, pop segment (empty)\n";
 		    // Are we totally done with this segment?
 		    // TODO: this may introduce a data race and not deallocate
 		    // some segments as a result. Or even dealloc more than
@@ -277,9 +276,7 @@ private:
 		    // TODO: situation got worse with peeking
 		    // IDEA: incorporate peeked condition as add one to
 		    // push and pop volume rather than separate boolen condition
-		    bool erase
-			= head->get_volume_pop() == head->get_volume_push()
-			&& head->is_peeked();
+		    bool erase = head->all_done();
 
 		    // Every segment linked from a known position (we can
 		    // only pop from a known position) should also be known.
@@ -293,12 +290,6 @@ private:
 		    // segments in the index during some time.
 		    if( seg->get_logical_pos() < 0 )
 			seg->propagate_logical_pos( head->get_logical_tail(), idx );
-
-		    // Once head is done, we know peeking is done on seg because
-		    // we require peeking crosses at most one segment boundary.
-		    // TODO: This will err on the side of not erasing...
-		    if( head->is_peeked() )
-			seg->done_peeking();
 
 		    // Compute our new position based on logical_pos, which is
 		    // constant (as opposed to head and tail which differ by

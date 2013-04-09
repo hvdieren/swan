@@ -128,7 +128,7 @@ protected:
 	user.set_logical( 0 ); // logical tail
 	queue.set_logical( 0 ); // logical head
 
-	errs() << "QV queue_t constructor for: " << this << "\n";
+	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
 	
     // Argument passing constructor, called from grab/dgrab interface.
@@ -229,10 +229,10 @@ public:
 
 	parent->unlock();
 
+/*
 	errs() << "QV nest constructor for: " << *this << "\n";
 	errs() << "                 parent: " << *parent << "\n";
 	errs() << "\n";
-/*
 */
     }
 
@@ -272,10 +272,10 @@ public:
 	if( fright )
 	    fright->lock();
 
+/*
 	errs() << "Reducing hypermaps on " << *this
 	       << " parent=" << *parent
 	       << std::endl;
-/*
  */
 
 	// Reducing everything into a single queue
@@ -571,7 +571,6 @@ public:
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    errs() << "push segment at " << user.get_logical() << std::endl;
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
 		: user.get_logical(), max_size, peekoff, qindex );
