@@ -252,6 +252,9 @@ public:
 	return queue_v->peek<T>( off );
     }
 
+    read_slice<queue_metadata, T> get_slice_upto( size_t npop_max, size_t npeek ) {
+	return queue_v->get_slice_upto<T>( npop_max, npeek );
+    }
     read_slice<queue_metadata, T> get_slice( size_t npop, size_t npeek ) {
 	return queue_v->get_slice<T>( npop, npeek );
     }

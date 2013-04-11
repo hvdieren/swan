@@ -71,7 +71,7 @@
 #define PREFERRED_MUTEX cas_mutex
 #define FF_MCS_MUTEX 1
 #define TRACING 0
-#define DEBUG_CERR 1
+#define DEBUG_CERR 0
 #define IMPROVED_STUBS 1
 #endif
 

@@ -151,8 +151,6 @@ public:
 		&& "increasing set of permissions on a spawn" );
 	assert( ( !(parent->flags & qf_fixed) || (parent->flags & qf_fixed) )
 		&& "if parent fixed-length, then child must be too" );
-	assert( ( !(flags & qf_fixed) || size_t(fixed_length) > qv->peekoff )
-		&& "fixed-length segment must exceed peek length" );
 
 	// Link in frame with siblings and parent
 	parent->lock();
@@ -517,7 +515,8 @@ public:
     }
 
     void pop_bookkeeping( size_t npop ) {
-	queue.pop_bookkeeping( npop );
+	queue.pop_bookkeeping( npop, qindex );
+	count -= npop;
     }
 
     template<typename T>
@@ -538,6 +537,15 @@ public:
 	return queue.peek<T>( off, qindex );
     }
 
+    template<typename T>
+    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
+	assert( npeek <= peekoff && "Peek outside requested range" );
+	ensure_queue_head();
+	read_slice<MetaData,T> slice
+	    = queue.get_slice_upto<MetaData,T>( npop_max, npeek, qindex );
+	slice.set_version( this );
+	return slice;
+    }
     template<typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
 	assert( npeek-npop+1 <= peekoff && "Peek outside requested range" );

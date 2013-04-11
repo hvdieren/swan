@@ -102,11 +102,11 @@ private:
 	  slot( -1 ), producing( true ), copied_peek( logical_pos == 0 ) {
 	hash = 0xbebebebe;
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
-	errs() << "queue_segment create " << *this << std::endl;
+	// errs() << "queue_segment create " << *this << std::endl;
     }
 public:
     ~queue_segment() {
-	errs() << "queue_segment destruct: " << *this << std::endl;
+	// errs() << "queue_segment destruct: " << *this << std::endl;
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
     }
@@ -114,7 +114,7 @@ public:
 	assert( hash == 0xbebebebe );
     }
     void as_if_delete() {
-	errs() << "queue_segment as-if-destruct: " << *this << std::endl;
+	// errs() << "queue_segment as-if-destruct: " << *this << std::endl;
 	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
 	assert( hash == 0xbebebebe );
@@ -227,7 +227,14 @@ public:
     bool is_empty( size_t logical ) const {
 	return ( ( logical - logical_pos < q.get_peek_dist() )
 		 ? !copied_peek 
-		 : logical > get_logical_tail() )
+		 : (long)logical >= get_logical_tail() )
+	    || !q.is_produced( logical - logical_pos );
+    }
+
+    bool is_empty_wpeek( size_t logical ) const {
+	return ( ( logical - logical_pos < q.get_peek_dist() )
+		 ? !copied_peek 
+		 : (long)logical >= get_logical_tail_wpeek() )
 	    || !q.is_produced( logical - logical_pos );
     }
 
@@ -239,8 +246,8 @@ public:
     }
 	
     template<typename T>
-    T & pop( long logical ) {
-	while( q.empty() || ( logical - logical_pos < q.get_peek_dist() && !copied_peek ) )
+    T & pop( size_t logical ) {
+	while( q.empty() || ( logical - size_t(logical_pos) < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
 	// Translate global position we're popping from to local queue position
 	// Two behaviors of the fixed_size_queue:
@@ -253,8 +260,8 @@ public:
     }
 
     template<typename T>
-    T & peek( long logical ) {
-	while( q.empty() || ( logical - logical_pos < q.get_peek_dist() && !copied_peek ) )
+    T & peek( size_t logical ) {
+	while( q.empty() || ( logical - size_t(logical_pos) < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
 
 	return q.peek<T>( logical - logical_pos );
@@ -268,8 +275,8 @@ public:
     }
 
     template<typename MetaData,typename T>
-    read_slice<MetaData,T> get_slice( size_t logical ) {
-	return q.get_slice<MetaData,T>( logical - logical_pos );
+    read_slice<MetaData,T> get_slice( size_t logical, size_t npop ) {
+	return q.get_slice<MetaData,T>( logical - logical_pos, npop );
     }
 
 private:
@@ -289,26 +296,26 @@ size_t queue_index::insert( queue_segment * seg ) {
     assert( seg->get_logical_pos() >= 0 );
     size_t slot = get_free_position( seg );
     seg->set_slot( slot );
-    errs() << "Index " << this << " insert logical="
-	<< seg->get_logical_head() << '-'
-	<< seg->get_logical_tail()
-	<< " seg " << *seg << " at slot " << slot
-	<< "\n";
+    // errs() << "Index " << this << " insert logical="
+	// << seg->get_logical_head() << '-'
+	// << seg->get_logical_tail()
+	// << " seg " << *seg << " at slot " << slot
+	// << "\n";
     return slot;
 }
 
 queue_segment * queue_index::lookup( long logical ) {
     lock();
-    errs() << "Index " << this << " lookup logical="
-	   << logical << " end=" << get_end() << "\n";
+    // errs() << "Index " << this << " lookup logical="
+	   // << logical << " end=" << get_end() << "\n";
 
     queue_segment * eq = 0;
     for( std::vector<queue_segment *>::const_iterator
 	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
 	if( queue_segment * seg = *I ) {
-	    errs() << "Index entry " << *seg << " logical="
-		<< seg->get_logical_head() << '-'
-		<< seg->get_logical_tail() << "\n";
+	    // errs() << "Index entry " << *seg << " logical="
+		// << seg->get_logical_head() << '-'
+		// << seg->get_logical_tail() << "\n";
 	    if( seg ) {
 		if( seg->get_logical_head() <= logical ) {
 		    if( seg->get_logical_tail() > logical ) {

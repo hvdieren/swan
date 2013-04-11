@@ -77,8 +77,8 @@ public:
 		    // errs() << "ERROR: cannot free local segment if slotted\n";
 		    // abort();
 		}
-		// delete q;
-		q->as_if_delete();
+		delete q;
+		// q->as_if_delete();
 	    }
 	}
     }
@@ -305,8 +305,8 @@ private:
 			    idx.erase( head->get_slot() );
 			    head->set_slot( -1 );
 			}
-			// delete head;
-			head->as_if_delete();
+			delete head;
+			// head->as_if_delete();
 		    }
 
 		    head = seg;
@@ -367,8 +367,28 @@ public:
 	return r;
     }
 
-    void pop_bookkeeping( size_t npop ) {
-	volume_pop += npop;
+    void pop_bookkeeping( size_t npop, queue_index & idx ) {
+	size_t pos = get_index() + npop - 1;
+	size_t t = head->get_logical_tail();
+	if( t > (long)pos ) {
+	    volume_pop += npop;
+	    head->pop_bookkeeping( npop );
+	} else {
+	    size_t n = t - get_index();
+	    assert( n < npop );
+	    volume_pop += n;
+	    head->pop_bookkeeping( n );
+	    await( idx );
+	    if( npop > n )
+		pop_bookkeeping( npop - n, idx );
+	}
+/*
+	while( npop-- > 0 )  {
+	    volume_pop++;
+	    head->pop_bookkeeping( 1 );
+	    await( idx );
+	}
+*/
     }
 
     template<typename T>
@@ -387,16 +407,16 @@ public:
 
 	queue_segment * seg = head;
 	head->check_hash();
-	while( unlikely( seg->is_empty( pos ) ) ) {
+	while( unlikely( seg->is_empty_wpeek( pos ) ) ) {
 	    seg->check_hash();
 	    if( !seg->is_producing() )
 		seg = head->get_next();
-	    if( !seg->is_empty( pos ) )
+	    if( !seg->is_empty_wpeek( pos ) )
 		break;
 	    sched_yield();
 	}
 
-	assert( !seg->is_empty( pos ) );
+	assert( !seg->is_empty_wpeek( pos ) );
 	return seg->peek<T>( pos );
     }
 
@@ -404,22 +424,52 @@ public:
     // and pop npop, where it is assumed that npeek >= npop, i.e., the peeked
     // elements include the popped ones.
     template<typename MetaData, typename T>
+    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek, queue_index & idx ) {
+	long npop;
+	await( idx );
+	do { 
+	    long available = head->get_logical_tail() - get_index();
+	    npop = std::min( (long)npop_max, available );
+	    if( npop > 0 )
+		break;
+	    await( idx );
+	} while( true );
+
+	size_t pos = get_index() + npeek - 1;
+	assert( !head->is_empty_wpeek( pos )
+		&& "read range crosses queue segments" );
+
+	return head->get_slice<MetaData,T>( get_index(), npop );
+    }
+
+    template<typename MetaData, typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek, queue_index & idx ) {
 	assert( npeek >= npop );
 	// If we know that npeek <= peekoff, then we should be fine with npop > 1
 	// except when the pops span segments, i.e., all npeek values in current
 	// segment except that 2nd popped value is here only for peek reasons
 	// and should be popped from the next segment.
-	assert( npop == 1 );
+	// assert( npop == 1 );
 
 	// Spin until the desired information appears in the queue.
 	await( idx );
 
-	// The last index we want to pop
-	size_t pos = get_index() + npop - 1;
-	assert( !head->is_empty( pos ) && "read range crosses queue segments" );
+	// The last index we want to peek
+	size_t pos = get_index() + npeek - 1;
+	
+	// Make sure we have all elements available
+/*
+	while( head->is_empty_wpeek( pos ) && npop > 0 ) {
+	    pos--;
+	    npop--;
+	}
 
-	return head->get_slice<MetaData,T>( get_index() );
+	assert( npop > 0 && "Not able to pop anything" );
+*/
+	assert( !head->is_empty_wpeek( pos )
+		&& "read range crosses queue segments" );
+
+	return head->get_slice<MetaData,T>( get_index(), npop );
     }
 };
 

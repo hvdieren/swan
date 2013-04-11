@@ -16,25 +16,30 @@ namespace obj {
 template<typename MetaData, typename T>
 class read_slice {
     const char * buffer;
-    size_t elm_size;
+    size_t npop;
     queue_version<MetaData> * version;
 
 public:
-    read_slice( const char * buffer_, size_t elm_size_ )
-	: buffer( buffer_ ), elm_size( elm_size_ ), version( 0 ) { }
+    read_slice( const char * buffer_, size_t npop_ )
+	: buffer( buffer_ ), npop( npop_ ), version( 0 ) { }
     void set_version( queue_version<MetaData> * version_ ) {
 	version = version_;
     }
 
-    T & pop() {
-	version->pop_bookkeeping( 1 );
+    size_t get_npops() const { return npop; }
+
+    void commit() {
+	version->pop_bookkeeping( npop );
+    }
+
+    const T & pop() {
 	const char * e = buffer;
-	buffer += elm_size;
-	return *reinterpret_cast<T *>( e );
+	buffer += sizeof(T);
+	return *reinterpret_cast<const T *>( e );
     }
 
     const T & peek( size_t off ) {
-	return *reinterpret_cast<const T *>( &buffer[off * elm_size] );
+	return *reinterpret_cast<const T *>( &buffer[off * sizeof(T)] );
     }
 };
 
@@ -93,7 +98,8 @@ private:
     // Compute buffer size: max_size elements of size rounded up to 8 bytes
     template<typename T>
     static size_t get_element_size() {
-	return roundup_pow2(((sizeof(T)+7)&~(size_t)7));
+	// return roundup_pow2(((sizeof(T)+7)&~(size_t)7));
+	return sizeof(T);
     }
 
 public:
@@ -154,6 +160,7 @@ public:
     // returns NULL if pop fails
     template<typename T>
     T & pop( size_t pos ) {
+	assert( elm_size == sizeof(T) );
 	char* value = &buffer[(pos*elm_size) & mask];
 	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
@@ -165,6 +172,7 @@ public:
     // returns true on success false on failure
     template<typename T>
     bool push( const T * value ) {
+	assert( elm_size == sizeof(T) );
 	if( full() ) {
 	    return false;
 	} else {
@@ -176,8 +184,8 @@ public:
     }
 
     template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice( size_t pos ) {
-	return read_slice<MetaData,T>( &buffer[pos * elm_size], elm_size );
+    read_slice<MetaData,T> get_slice( size_t pos, size_t npop ) {
+	return read_slice<MetaData,T>( &buffer[pos * sizeof(T)], npop );
     }
 
     void copy_peeked( const char * buff ) {
