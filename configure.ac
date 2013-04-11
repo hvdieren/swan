@@ -101,6 +101,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/fm/src_wfoq/Makefile
 		 benchmarks/streamit_fft/src_c/Makefile
 		 benchmarks/streamit_fft/src_wfq/Makefile
+		 benchmarks/lattice/src_wfq/Makefile
                  scripts/create.sh
                  util/Makefile
                  util/Makefile.use_us
