@@ -381,18 +381,18 @@ float run_equalizer(float *in, EqualizerData *data)
 void write_floats( float v )
 {
     /* Better to resort to some kind of checksum for checking correctness... */
-    printf( "%f\n", v );
+    static float running = 0;
+    running += v;
+    // printf( "%f\n", v );
 }
 
 void write_floats_df( obj::indep<float[OBJ_CSUM_SIZE]> v )
 {
-    write_floats_chunk( *v );
+    leaf_call( write_floats_chunk, *v );
 }
 
 void write_floats_chunk( float * v )
 {
-    static float running = 0;
     for( int i=0; i < CHUNK; ++i )
-	// leaf_call(write_floats, v[i] );
-	running += v[i];
+	write_floats( v[i] );
 }
