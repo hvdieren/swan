@@ -159,6 +159,9 @@ public:
     
     void push( const T & value ) { queue_v->push<T>( value ); }
 
+    write_slice<queue_metadata, T> get_write_slice( size_t length ) {
+	return queue_v->get_write_slice<T>( length );
+    }
 private:
 };
 
@@ -187,6 +190,13 @@ public:
     }
     suffixdep<T> suffix( size_t n, const T & dflt ) const {
 	return create_dep_ty< suffixdep >( n, dflt );
+    }
+	
+    read_slice<queue_metadata, T> get_slice_upto( size_t npop_max, size_t npeek ) {
+	return queue_v->get_slice_upto<T>( npop_max, npeek );
+    }
+    read_slice<queue_metadata, T> get_slice( size_t npop, size_t npeek ) {
+	return queue_v->get_slice<T>( npop, npeek );
     }
 	
     const T & pop() {

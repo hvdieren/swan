@@ -12,7 +12,9 @@ namespace obj {
 class queue_segment;
 
 class queue_index {
-    std::vector<queue_segment *> idx;
+    queue_segment ** vec;
+    size_t length;
+    size_t capacity;
     size_t the_end;
     cas_mutex mutex;
 
@@ -21,12 +23,39 @@ private:
     void unlock() { mutex.unlock(); }
 
 public:
-    queue_index() : the_end( ~0 ) { }
+    queue_index() : length( 0 ), capacity( 8 ), the_end( ~0 ) {
+	vec = new queue_segment *[capacity];
+    }
+    ~queue_index() { delete[] vec; }
 
 private:
-    size_t get_free_position( queue_segment * seg ) {
+    inline size_t find( const queue_segment * seg );
+    inline size_t find( size_t logical );
+    void remove( size_t where ) {
+	for( size_t k=where+1; k < length; ++k )
+	    vec[k-1] = vec[k];
+	length--;
+    }
+
+    size_t get_free_position( queue_segment * seg, size_t seg_pos ) {
 	lock();
-	size_t i = 0;
+	if( length == capacity ) {
+	    queue_segment ** new_vec = new queue_segment *[capacity*2];
+	    memcpy( new_vec, vec, sizeof(queue_segment*)*capacity );
+	    capacity *= 2;
+	    delete[] vec;
+	    vec = new_vec;
+	}
+
+	size_t where = find( seg_pos );
+	for( size_t k=where; k < length; ++k )
+	    vec[k+1] = vec[k];
+	vec[where] = seg;
+	length++;
+	unlock();
+	return where;
+
+/*
 	for( std::vector<queue_segment *>::iterator
 		 I=idx.begin(), E=idx.end(); I != E; ++I, ++i ) {
 	    if( !*I ) {
@@ -37,23 +66,19 @@ private:
 	}
 	size_t slot = i;
 	idx.push_back( seg );
+	vec[len] = seg;
 	unlock();
-	return slot;
+	return len;
+*/
     }
 
 public:
-    inline size_t insert( queue_segment * seg );
+    inline size_t insert( queue_segment * seg ) __attribute__((noinline));
     inline queue_segment * lookup( long logical );
     // inline void replace( int slot, long logical, queue_segment * new_seg );
 
     // Lock is required in case vector resizes.
-    void erase( size_t slot ) {
-	lock();
-	// errs() << "Index " << this << " erase " << idx[slot]
-	       // << " slot " << slot << "\n";
-	idx[slot] = 0;
-	unlock();
-    }
+    inline void erase( queue_segment * seg );
 
     void set_end( size_t ending ) {
 	if( the_end == size_t(~0) || the_end < ending )
@@ -170,6 +195,21 @@ public:
 	logical_pos = logical_;
     }
 
+    bool contains( size_t logical ) const {
+	if( get_logical_head() <= (long)logical
+	    && get_logical_tail() > (long)logical )
+	    return true;
+	else if( get_logical_head() == (long)logical
+		 && get_logical_tail() == (long)logical )
+	    return true;
+	else if( get_peek_dist() > 0
+		 && get_logical_pos() <= (long)logical
+		 && get_logical_tail() > (long)logical )
+	    return true;
+	else
+	    return false;
+    }
+
     // Beware of race condition between propagating logical position
     // versus pushing new segment and updating logical position.
     // Should be ok if link before update position.
@@ -244,6 +284,15 @@ public:
     void pop_bookkeeping( size_t npop ) {
 	__sync_fetch_and_add( &volume_pop, npop );
     }
+
+    void push_bookkeeping( size_t npush ) {
+	q.push_bookkeeping( npush );
+	volume_push += npush;
+    }
+
+    bool has_space( size_t length ) const {
+	return q.has_space( length );
+    }
 	
     template<typename T>
     T & pop( size_t logical ) {
@@ -274,6 +323,11 @@ public:
 	volume_push++;
     }
 
+    template<typename MetaData, typename T>
+    write_slice<MetaData,T> get_write_slice( size_t length ) {
+	return q.get_write_slice<MetaData,T>( length );
+    }
+
     template<typename MetaData,typename T>
     read_slice<MetaData,T> get_slice( size_t logical, size_t npop ) {
 	return q.get_slice<MetaData,T>( logical - logical_pos, npop );
@@ -294,7 +348,7 @@ operator << ( std::ostream & os, const queue_segment & seg ) {
 
 size_t queue_index::insert( queue_segment * seg ) {
     assert( seg->get_logical_pos() >= 0 );
-    size_t slot = get_free_position( seg );
+    size_t slot = get_free_position( seg, seg->get_logical_pos() );
     seg->set_slot( slot );
     // errs() << "Index " << this << " insert logical="
 	// << seg->get_logical_head() << '-'
@@ -309,6 +363,8 @@ queue_segment * queue_index::lookup( long logical ) {
     // errs() << "Index " << this << " lookup logical="
 	   // << logical << " end=" << get_end() << "\n";
 
+    queue_segment * eq = vec[find( logical )];
+#if 0
     queue_segment * eq = 0;
     for( std::vector<queue_segment *>::const_iterator
 	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
@@ -334,6 +390,7 @@ queue_segment * queue_index::lookup( long logical ) {
 	    }
 	}
     }
+#endif
     unlock();
     return eq;
 }
@@ -359,6 +416,45 @@ void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
     unlock();
 }
 */
+
+size_t queue_index::find( const queue_segment * seg ) {
+    size_t begin = 0;
+    size_t end = length;
+    while( end-begin > 1 ) {
+	size_t mid = ( begin + end ) / 2;
+	if( vec[mid] == seg )
+	    return mid;
+	else if( vec[mid]->get_logical_pos() > seg->get_logical_pos() )
+	    end = mid;
+	else
+	    begin = mid;
+    }
+    return begin < end && vec[begin]->get_logical_pos() < seg->get_logical_pos() ? end : begin;
+}
+
+size_t queue_index::find( size_t logical ) {
+    size_t begin = 0;
+    size_t end = length;
+    while( end-begin > 1 ) {
+	size_t mid = ( begin + end ) / 2;
+	if( vec[mid]->contains( logical ) )
+	    return mid;
+	else if( vec[mid]->get_logical_pos() > logical )
+	    end = mid;
+	else
+	    begin = mid;
+    }
+    return begin < end && vec[begin]->get_logical_pos() < logical ? end : begin;
+}
+
+void queue_index::erase( queue_segment * seg ) {
+	lock();
+	// errs() << "Index " << this << " erase " << idx[slot]
+	       // << " slot " << slot << "\n";
+	// idx[slot] = 0;
+	remove( find( seg ) );
+	unlock();
+    }
 
 }//namespace obj
 

@@ -1,59 +1,123 @@
 #include "swan/wf_interface.h"
 
-void generate( obj::pushdep<float> out, int n ) {
-    out.push( 1 );
-    for( int i=1; i < n; ++i )
-	out.push( 0 );
+#define QSIZE   1023
+#define RESERVE QSIZE
+
+void generate( obj::pushdep<float> out, size_t n ) {
+    for( size_t i=0; i < n; ) {
+	size_t ni = std::min(size_t(RESERVE),n-i);
+	obj::write_slice<obj::queue_metadata, float> ws
+	    = out.get_write_slice( ni );
+	for( int j=0; j < ni; ++j ) {
+	    float f = i+j+1;
+	    ws.push( f );
+	}
+	i += ni;
+	ws.commit();
+    }
 }
 
-void delay( obj::popdep<float> in, obj::pushdep<float> out, int n ) {
+void delay( obj::popdep<float> in, obj::pushdep<float> out, size_t n ) {
     float prev = 0;
-    for( int i=0; i < n; ++i ) {
-	float f = in.pop();
-	out.push( f );
-	out.push( prev );
-	prev = f;
+    while( !in.empty() ) {
+	obj::read_slice<obj::queue_metadata, float> rs
+	    = in.get_slice_upto( RESERVE, 0 );
+	obj::write_slice<obj::queue_metadata, float> ws
+	    = out.get_write_slice( 2*std::min(size_t(RESERVE),rs.get_npops()) );
+	for( size_t i=0; i < rs.get_npops(); ++i ) {
+	    float f = rs.pop();
+	    ws.push( f );
+	    ws.push( prev );
+	    prev = f;
+	}
+	rs.commit();
+	ws.commit();
     }
 }
 
-void filter( obj::popdep<float> in, obj::pushdep<float> out, float k, int n ) {
-    for( int i=0; i < n; ++i ) {
-	float f0 = in.pop();
-	float f1 = in.pop();
-	float ei = f0 - k * f1;
-	float ebari = f1 - k * f0;
-	out.push( ei );
-	out.push( ebari );
+void filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+    while( !in.empty() ) {
+	obj::read_slice<obj::queue_metadata, float> rs
+	    = in.get_slice_upto( RESERVE, 0 );
+	obj::write_slice<obj::queue_metadata, float> ws
+	    = out.get_write_slice( std::min(size_t(RESERVE),rs.get_npops()) );
+	for( size_t i=0; i < rs.get_npops()/2; ++i ) {
+	    float f0 = rs.pop();
+	    float f1 = rs.pop();
+	    float ei = f0 - k * f1;
+	    float ebari = f1 - k * f0;
+	    ws.push( ei );
+	    ws.push( ebari );
+	}
+	rs.commit();
+	ws.commit();
     }
 }
 
-void final( obj::popdep<float> in, int n ) {
-    for( int i=0; i < n; ++i ) {
-	float v = in.pop();
-	printf( "%f\n", v );
+void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+    float prev = 0;
+    while( !in.empty() ) {
+	obj::read_slice<obj::queue_metadata, float> rs
+	    = in.get_slice_upto( RESERVE, 0 );
+	obj::write_slice<obj::queue_metadata, float> ws
+	    = out.get_write_slice( 2*std::min(size_t(RESERVE),rs.get_npops()) );
+	for( size_t i=0; i < rs.get_npops(); ++i ) {
+	    float f = rs.pop();
+	    float f0 = f;
+	    float f1 = prev;
+	    prev = f;
+	    float ei = f0 - k * f1;
+	    float ebari = f1 - k * f0;
+	    ws.push( ei );
+	    ws.push( ebari );
+	}
+	rs.commit();
+	ws.commit();
     }
 }
 
-void work( int n ) {
-    obj::hyperqueue<float> q1( 8191, 1 );
+
+void final( obj::popdep<float> in, size_t n ) {
+    float running = 0;
+    while( !in.empty() ) {
+	obj::read_slice<obj::queue_metadata, float> rs
+	    = in.get_slice_upto( RESERVE, 0 );
+	for( size_t i=0; i < rs.get_npops(); ++i ) {
+	    float v = rs.pop();
+	    // printf( "%f\n", v );
+	    running += v;
+	}
+	rs.commit();
+    }
+}
+
+void work( size_t n ) {
+    obj::hyperqueue<float> * q1[11];
     obj::hyperqueue<float> * q2[11];
 
-    for( int i=2; i < 10; ++i )
-	q2[i] = new obj::hyperqueue<float>( 8191, 0 );
-
-    spawn( generate, (obj::pushdep<float>)q1, n );
-    for( int i=2; i < 10; ++i ) {
-	spawn( delay, (obj::popdep<float>)q1, (obj::pushdep<float>)*q2[i], n<<(i-1) );
-	spawn( filter, (obj::popdep<float>)*q2[i],
-	       (obj::pushdep<float>)*q2[i+1], (float)2, n<<(i-1) );
+    for( int i=2; i <= 10; ++i ) {
+	q1[i] = new obj::hyperqueue<float>( QSIZE, 0 );
+	q2[i] = new obj::hyperqueue<float>( QSIZE, 0 );
     }
-    spawn( final, (obj::popdep<float>)*q2[10], n<<9 );
+
+    spawn( generate, (obj::pushdep<float>)*q1[2], n );
+    for( int i=2; i < 10; ++i ) {
+	spawn( delay_filter, (obj::popdep<float>)*q1[i],
+	       (obj::pushdep<float>)*q1[i+1], (float)i, n );
+/*
+	spawn( delay, (obj::popdep<float>)*q1[i],
+	       (obj::pushdep<float>)*q2[i], n );
+	spawn( filter, (obj::popdep<float>)*q2[i],
+	       (obj::pushdep<float>)*q1[i+1], (float)i, n );
+*/
+    }
+    spawn( final, (obj::popdep<float>)*q1[10], n );
 
     ssync();
 }
 
 int main( int argc, char * argv[] ) {
-    int n = 10;
+    size_t n = 10;
     if( argc > 1 )
 	n = atoi( argv[1] );
 

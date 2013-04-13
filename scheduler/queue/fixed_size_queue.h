@@ -14,27 +14,60 @@
 namespace obj {
 
 template<typename MetaData, typename T>
-class read_slice {
-    const char * buffer;
-    size_t npop;
+class write_slice {
+    char * buffer;
+    size_t length;
+    size_t npush;
     queue_version<MetaData> * version;
 
 public:
-    read_slice( const char * buffer_, size_t npop_ )
-	: buffer( buffer_ ), npop( npop_ ), version( 0 ) { }
+    write_slice( char * buffer_, size_t length_ )
+	: buffer( buffer_ ), length( length_ ), npush( 0 ),
+	  version( 0 ) { }
     void set_version( queue_version<MetaData> * version_ ) {
 	version = version_;
     }
 
-    size_t get_npops() const { return npop; }
+    size_t get_length() const { return length; }
+
+    void commit() {
+	version->push_bookkeeping( npush );
+    }
+
+    void push( T & t ) {
+	assert( npush < length );
+	memcpy( reinterpret_cast<T *>( buffer ), &t, sizeof(T) );
+	buffer += sizeof(T);
+	++npush;
+    }
+};
+
+
+template<typename MetaData, typename T>
+class read_slice {
+    const char * buffer;
+    size_t length;
+    size_t npop;
+    queue_version<MetaData> * version;
+
+public:
+    read_slice( const char * buffer_, size_t length_ )
+	: buffer( buffer_ ), length( length_ ), npop( 0 ), version( 0 ) { }
+    void set_version( queue_version<MetaData> * version_ ) {
+	version = version_;
+    }
+
+    size_t get_npops() const { return length; }
 
     void commit() {
 	version->pop_bookkeeping( npop );
     }
 
     const T & pop() {
+	assert( npop < length );
 	const char * e = buffer;
 	buffer += sizeof(T);
+	++npop;
 	return *reinterpret_cast<const T *>( e );
     }
 
@@ -63,24 +96,6 @@ class fixed_size_queue
     pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 4*sizeof(size_t) + sizeof(char *)> pad2;
 	
 private:
-    static size_t log2_up( size_t uu ) {
-	volatile size_t u = uu;
-	if( u == 0 )
-	    return 1;
-	else {
-	    volatile size_t l = 0;
-	    while( u > 0 ) {
-		u >>= 1;
-		l++;
-	    }
-	    if( (uu & (uu-1)) == 0 )
-		return l-1;
-	    else
-		return l;
-	}
-    }
-	
-private:
     // Credit:
     // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
     static size_t roundup_pow2( size_t v ) {
@@ -105,11 +120,9 @@ private:
 public:
     template<typename T>
     static size_t get_buffer_space( size_t max_size ) {
-	size_t size = max_size * get_element_size<T>();
-	size_t log_size = log2_up( size );
-	assert( log_size > 0 && (size_t(1)<<(log_size-1)) < size
-		&& size <= (size_t(1)<<log_size) );
-	return size_t(1) << log_size;
+	// One unused element
+	size_t size = (max_size+1) * get_element_size<T>();
+	return roundup_pow2( size );
     }
 
 private:
@@ -119,7 +132,7 @@ private:
 		      size_t elm_size_, size_t max_size, size_t peekoff_ )
 	: head( 0 ), tail( peekoff_*elm_size_ ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
-	  size( roundup_pow2( max_size * elm_size ) ),
+	  size( roundup_pow2( (max_size+1) * elm_size ) ),
 	  mask( size-1 ), buffer( buffer_ ), peekoff( peekoff_ ) {
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
@@ -138,6 +151,14 @@ public:
 	// Freeze tail at end of buffer to avoid wrap-around in case of peeking
 	size_t full_marker = peekoff > 0 ? 0 : head;
 	return ((tail+elm_size) & mask) == full_marker;
+    }
+
+    bool has_space( size_t length ) const {
+	if( head <= tail ) {
+	    return ( size - tail - (head == 0 ? 1 : 0) ) >= elm_size*length;
+	} else {
+	    return ( head - tail - 1 ) >= elm_size*length;
+	}
     }
 	
     // peek first element
@@ -181,6 +202,17 @@ public:
 	    tail = (tail+elm_size) & mask;
 	    return true;
 	}
+    }
+
+    void push_bookkeeping( size_t npush ) {
+	assert( (tail + elm_size * npush) <= size );
+	tail = (tail + elm_size * npush) & mask;
+	assert( tail != head );
+    }
+
+    template<typename MetaData, typename T>
+    write_slice<MetaData,T> get_write_slice( size_t length ) {
+	return write_slice<MetaData,T>( &buffer[tail], length );
     }
 
     template<typename MetaData, typename T>

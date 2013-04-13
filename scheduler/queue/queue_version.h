@@ -514,9 +514,14 @@ public:
 	return queue.get_index();
     }
 
+    void push_bookkeeping( size_t npush ) {
+	user.push_bookkeeping( npush );
+    }
+
     void pop_bookkeeping( size_t npop ) {
 	queue.pop_bookkeeping( npop, qindex );
-	count -= npop;
+	if( count >= 0 )
+	    count -= npop;
     }
 
     template<typename T>
@@ -538,6 +543,23 @@ public:
     }
 
     template<typename T>
+    write_slice<MetaData,T> get_write_slice( size_t length ) {
+	// Make sure we have a local, usable queue
+	if( !user.get_tail() ) {
+	    user.push_segment<T>(
+		user.get_logical() > 0 ? user.get_logical() - peekoff
+		: user.get_logical(), length, peekoff, qindex );
+
+	    segmented_queue q = user.split();
+	    push_head( q );
+	}
+	write_slice<MetaData,T> slice
+	    = user.get_write_slice<MetaData,T>( length, qindex );
+	slice.set_version( this );
+	return slice;
+    }
+
+    template<typename T>
     read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
 	assert( npeek <= peekoff && "Peek outside requested range" );
 	ensure_queue_head();
@@ -548,7 +570,7 @@ public:
     }
     template<typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
-	assert( npeek-npop+1 <= peekoff && "Peek outside requested range" );
+	assert( npeek-npop <= peekoff && "Peek outside requested range" );
 	ensure_queue_head();
 	read_slice<MetaData,T> slice
 	    = queue.get_slice<MetaData,T>( npop, npeek, qindex );
@@ -575,6 +597,7 @@ public:
     }
 
     // Potentially differentiate const T & t versus T && t
+    // TODO: need push_fixed?
     template<typename T>
     void push( const T & t ) {
 	// Make sure we have a local, usable queue

@@ -73,7 +73,7 @@ public:
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
 		if( q->get_slot() >= 0 ) {
-		    idx.erase( q->get_slot() );
+		    idx.erase( q /*->get_slot()*/ );
 		    // errs() << "ERROR: cannot free local segment if slotted\n";
 		    // abort();
 		}
@@ -228,6 +228,21 @@ public:
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push<T>( value );
     }
+
+    void push_bookkeeping( size_t npush ) {
+	tail->push_bookkeeping( npush );
+    }
+
+    template<typename MetaData, typename T>
+    write_slice<MetaData,T> get_write_slice( size_t length, queue_index & idx ) {
+	// Push a fresh segment if we don't have enough room on the
+	// current one.
+	if( !tail->has_space( length ) ) {
+	    push_segment<T>( tail->get_logical_tail(), length,
+			     tail->get_peek_dist(), idx );
+	}
+	return tail->get_write_slice<MetaData,T>( length );
+    }
 };
 
 class segmented_queue_pop : public segmented_queue_headonly {
@@ -302,7 +317,7 @@ private:
 		    // consumers?
 		    if( erase ) {
 			if( erase && head->get_slot() >= 0 ) {
-			    idx.erase( head->get_slot() );
+			    idx.erase( head /* ->get_slot() */ );
 			    head->set_slot( -1 );
 			}
 			delete head;
@@ -435,7 +450,7 @@ public:
 	    await( idx );
 	} while( true );
 
-	size_t pos = get_index() + npeek - 1;
+	size_t pos = get_index() + npop + npeek - 1;
 	assert( !head->is_empty_wpeek( pos )
 		&& "read range crosses queue segments" );
 
