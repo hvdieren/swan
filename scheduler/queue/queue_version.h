@@ -462,8 +462,7 @@ private:
 	    assert( children.get_head() );
 	    assert( !children.get_tail() );
 	    if( queue_segment * seg = children.get_head() ) {
-		if( seg->get_slot() >= 0 )
-		    children.set_head( 0 ); // Moved to index
+		children.set_head( 0 ); // Moved to index
 	    }
 	}
 	// if( parent )

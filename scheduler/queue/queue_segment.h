@@ -6,15 +6,14 @@
 #include <stdio.h>
 #include <iostream>
 #include "swan/queue/fixed_size_queue.h"
+#include "swan/queue/avl.h"
 
 namespace obj {
 
 class queue_segment;
 
 class queue_index {
-    queue_segment ** vec;
-    size_t length;
-    size_t capacity;
+    avl_tree<queue_segment, size_t> idx;
     size_t the_end;
     cas_mutex mutex;
 
@@ -23,61 +22,11 @@ private:
     void unlock() { mutex.unlock(); }
 
 public:
-    queue_index() : length( 0 ), capacity( 8 ), the_end( ~0 ) {
-	vec = new queue_segment *[capacity];
-    }
-    ~queue_index() { delete[] vec; }
-
-private:
-    inline size_t find( const queue_segment * seg );
-    inline size_t find( size_t logical );
-    void remove( size_t where ) {
-	for( size_t k=where+1; k < length; ++k )
-	    vec[k-1] = vec[k];
-	length--;
-    }
-
-    size_t get_free_position( queue_segment * seg, size_t seg_pos ) {
-	lock();
-	if( length == capacity ) {
-	    queue_segment ** new_vec = new queue_segment *[capacity*2];
-	    memcpy( new_vec, vec, sizeof(queue_segment*)*capacity );
-	    capacity *= 2;
-	    delete[] vec;
-	    vec = new_vec;
-	}
-
-	size_t where = find( seg_pos );
-	for( size_t k=where; k < length; ++k )
-	    vec[k+1] = vec[k];
-	vec[where] = seg;
-	length++;
-	unlock();
-	return where;
-
-/*
-	for( std::vector<queue_segment *>::iterator
-		 I=idx.begin(), E=idx.end(); I != E; ++I, ++i ) {
-	    if( !*I ) {
-		*I = seg;
-		unlock();
-		return i;
-	    }
-	}
-	size_t slot = i;
-	idx.push_back( seg );
-	vec[len] = seg;
-	unlock();
-	return len;
-*/
-    }
+    queue_index() : the_end( ~0 ) { }
 
 public:
-    inline size_t insert( queue_segment * seg ) __attribute__((noinline));
-    inline queue_segment * lookup( long logical );
-    // inline void replace( int slot, long logical, queue_segment * new_seg );
-
-    // Lock is required in case vector resizes.
+    inline void insert( queue_segment * seg );
+    inline queue_segment * lookup( size_t logical );
     inline void erase( queue_segment * seg );
 
     void set_end( size_t ending ) {
@@ -94,24 +43,27 @@ public:
 class queue_segment
 {
     fixed_size_queue q;
-    queue_segment * next;
     long logical_pos; // -1 is unknown
 long hash;
     size_t volume_pop, volume_push;
-    int slot;
+    queue_segment * next;
+    queue_segment * child[2];
+    short balance;
     volatile bool producing;
     bool copied_peek;
+
+    friend struct avl_traits<queue_segment, size_t>;
 
     // Pad to 16 bytes because this should suite all data types.
     // There is no guarantee to naturally align any element store in the queue,
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
-		 + sizeof(queue_segment *)
 		 + sizeof(long)
 		 + sizeof(long)
 		 + sizeof(size_t)
 		 + sizeof(size_t)
-		 + sizeof(int)
+		 + 3*sizeof(queue_segment *)
+		 + sizeof(short)
 		 + sizeof(bool)
 		 + sizeof(volatile bool) > padding;
 
@@ -120,11 +72,11 @@ long hash;
 private:
     queue_segment( typeinfo_array tinfo, long logical_, char * buffer,
 		   size_t elm_size, size_t max_size, size_t peekoff_ )
-	: q( tinfo, buffer, elm_size, max_size, peekoff_ ), next( 0 ),
+	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  // If logical known and not first buffer, then subtract peek length
 	  logical_pos( logical_ ),
-	  volume_pop( 0 ), volume_push( peekoff_ ),
-	  slot( -1 ), producing( true ), copied_peek( logical_pos == 0 ) {
+	  volume_pop( 0 ), volume_push( peekoff_ ), next( 0 ),
+	  producing( true ), copied_peek( logical_pos == 0 ) {
 	hash = 0xbebebebe;
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
 	// errs() << "queue_segment create " << *this << std::endl;
@@ -132,7 +84,6 @@ private:
 public:
     ~queue_segment() {
 	// errs() << "queue_segment destruct: " << *this << std::endl;
-	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
     }
     void check_hash() const {
@@ -140,7 +91,6 @@ public:
     }
     void as_if_delete() {
 	// errs() << "queue_segment as-if-destruct: " << *this << std::endl;
-	assert( slot < 0 && "queue_segment slotted when destructed" );
 	assert( logical_pos >= 0 && "logical position unknown when destructed" );
 	assert( hash == 0xbebebebe );
 	hash = 0xdeadbeef;
@@ -171,8 +121,6 @@ public:
 
     size_t get_peek_dist() const { return q.get_peek_dist(); }
 
-    int  get_slot() const { return slot; }
-    void set_slot( int slot_ ) { slot = slot_; }
     long get_logical_head() const {
 	return logical_pos < 0 ? -1 : logical_pos + volume_pop;
     }
@@ -336,34 +284,73 @@ public:
 private:
 };
 
+} // end namespace obj
+
+template<>
+struct avl_traits<obj::queue_segment, size_t> {
+    typedef obj::queue_segment queue_segment;
+
+    static queue_segment * & left( queue_segment * n ) {
+	return n->child[(int)dir_left];
+    }
+    static queue_segment * & right( queue_segment * n ) {
+	return n->child[(int)dir_right];
+    }
+    static queue_segment * & child( queue_segment * n, avl_dir_t dir ) {
+	return n->child[(int)dir];
+    }
+    static avl_cmp_t compare( queue_segment * l, queue_segment * r ) {
+	if( l->logical_pos < r->logical_pos )
+	    return cmp_lt;
+	else if( l->logical_pos > r->logical_pos )
+	    return cmp_gt;
+	else
+	    return cmp_eq;
+    }
+    static avl_cmp_t compare( queue_segment * seg, size_t & logical ) {
+	if( size_t(seg->logical_pos) > logical )
+	    return cmp_gt;
+	else if( seg->logical_pos + seg->volume_push  < logical )
+	    return cmp_lt;
+	else
+	    return cmp_eq;
+    }
+    static short & balance( queue_segment * n ) {
+	return n->balance;
+    }
+};
+
+// re-open namespace obj
+namespace obj {
+
 inline std::ostream &
 operator << ( std::ostream & os, const queue_segment & seg ) {
     return os << "Segment: @" << &seg << " producing=" << seg.producing
-	      << " slot=" << seg.slot
 	      << " @" << seg.logical_pos
 	      << " volume-pop=" << seg.volume_pop
 	      << " volume-push=" << seg.volume_push
 	      << " next=" << seg.next << ' ' << seg.q;
 }
 
-size_t queue_index::insert( queue_segment * seg ) {
+void queue_index::insert( queue_segment * seg ) {
     assert( seg->get_logical_pos() >= 0 );
-    size_t slot = get_free_position( seg, seg->get_logical_pos() );
-    seg->set_slot( slot );
+    lock();
+    idx.insert( seg );
+    unlock();
     // errs() << "Index " << this << " insert logical="
 	// << seg->get_logical_head() << '-'
 	// << seg->get_logical_tail()
 	// << " seg " << *seg << " at slot " << slot
 	// << "\n";
-    return slot;
 }
 
-queue_segment * queue_index::lookup( long logical ) {
+queue_segment * queue_index::lookup( size_t logical ) {
     lock();
     // errs() << "Index " << this << " lookup logical="
 	   // << logical << " end=" << get_end() << "\n";
 
-    queue_segment * eq = vec[find( logical )];
+    queue_segment * eq = idx.find( logical );
+    // queue_segment * eq = vec[find( logical )];
 #if 0
     queue_segment * eq = 0;
     for( std::vector<queue_segment *>::const_iterator
@@ -395,64 +382,13 @@ queue_segment * queue_index::lookup( long logical ) {
     return eq;
 }
 
-/*
-void queue_index::replace( int slot, long logical, queue_segment * new_seg ) {
-    lock();
-    queue_segment * seg = idx[slot];
-    assert( seg && "Segment not indexed" );
-    errs() << "Index replace " << seg << " @" << slot
-	   << " for new_seg=" << *new_seg
-	   << " at logical=" << logical << "\n";
-
-
-    if( new_seg->get_slot() >= 0 ) {
-	idx[slot] = 0;
-    } else {
-	idx[slot] = new_seg;
-	new_seg->set_slot( slot );
-    }
-    // Premature: must check that first half of segment is left unconsumed
-    seg->set_slot( -1 );
-    unlock();
-}
-*/
-
-size_t queue_index::find( const queue_segment * seg ) {
-    size_t begin = 0;
-    size_t end = length;
-    while( end-begin > 1 ) {
-	size_t mid = ( begin + end ) / 2;
-	if( vec[mid] == seg )
-	    return mid;
-	else if( vec[mid]->get_logical_pos() > seg->get_logical_pos() )
-	    end = mid;
-	else
-	    begin = mid;
-    }
-    return begin < end && vec[begin]->get_logical_pos() < seg->get_logical_pos() ? end : begin;
-}
-
-size_t queue_index::find( size_t logical ) {
-    size_t begin = 0;
-    size_t end = length;
-    while( end-begin > 1 ) {
-	size_t mid = ( begin + end ) / 2;
-	if( vec[mid]->contains( logical ) )
-	    return mid;
-	else if( vec[mid]->get_logical_pos() > logical )
-	    end = mid;
-	else
-	    begin = mid;
-    }
-    return begin < end && vec[begin]->get_logical_pos() < logical ? end : begin;
-}
-
 void queue_index::erase( queue_segment * seg ) {
 	lock();
 	// errs() << "Index " << this << " erase " << idx[slot]
 	       // << " slot " << slot << "\n";
 	// idx[slot] = 0;
-	remove( find( seg ) );
+	// remove( find( seg ) );
+	idx.remove( seg );
 	unlock();
     }
 

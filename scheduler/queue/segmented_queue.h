@@ -72,11 +72,9 @@ public:
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
-		if( q->get_slot() >= 0 ) {
-		    idx.erase( q /*->get_slot()*/ );
-		    // errs() << "ERROR: cannot free local segment if slotted\n";
-		    // abort();
-		}
+		idx.erase( q );
+		// errs() << "ERROR: cannot free local segment\n";
+		// abort();
 		delete q;
 		// q->as_if_delete();
 	    }
@@ -316,10 +314,8 @@ private:
 		    // TODO: when to delete a segment in case of multiple
 		    // consumers?
 		    if( erase ) {
-			if( erase && head->get_slot() >= 0 ) {
-			    idx.erase( head /* ->get_slot() */ );
-			    head->set_slot( -1 );
-			}
+			if( erase )
+			    idx.erase( head );
 			delete head;
 			// head->as_if_delete();
 		    }
