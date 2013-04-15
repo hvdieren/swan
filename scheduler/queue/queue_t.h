@@ -271,8 +271,10 @@ public:
 	
     size_t get_index() const { return queue_v->get_index(); }
 	
-    // We must consume the whole prefix
-    bool empty() const { return queue_v->get_count() == 0; }
+    // We must consume the whole prefix (unless at end of queue)
+    bool empty() {
+	return queue_v->get_count() == 0 || queue_v->empty();
+    }
 
     size_t get_length() const { return queue_v->get_count(); }
     size_t get_length_setting() const { return count; }

@@ -300,6 +300,8 @@ struct avl_traits<obj::queue_segment, size_t> {
 	return n->child[(int)dir];
     }
     static avl_cmp_t compare( queue_segment * l, queue_segment * r ) {
+	// errs() << "compare: l=" << *l << std::endl;
+	// errs() << "         r=" << *r << std::endl;
 	if( l->logical_pos < r->logical_pos )
 	    return cmp_lt;
 	else if( l->logical_pos > r->logical_pos )
@@ -329,7 +331,10 @@ operator << ( std::ostream & os, const queue_segment & seg ) {
 	      << " @" << seg.logical_pos
 	      << " volume-pop=" << seg.volume_pop
 	      << " volume-push=" << seg.volume_push
-	      << " next=" << seg.next << ' ' << seg.q;
+	      << " next=" << seg.next
+	      << " child=" << seg.child[0] << "," << seg.child[1]
+	      << " B=" << seg.balance
+	      << ' ' << seg.q;
 }
 
 void queue_index::insert( queue_segment * seg ) {
@@ -338,56 +343,25 @@ void queue_index::insert( queue_segment * seg ) {
     idx.insert( seg );
     unlock();
     // errs() << "Index " << this << " insert logical="
-	// << seg->get_logical_head() << '-'
-	// << seg->get_logical_tail()
-	// << " seg " << *seg << " at slot " << slot
-	// << "\n";
+	   // << seg->get_logical_head() << '-'
+	   // << seg->get_logical_tail()
+	   // << " seg " << *seg << std::endl;
 }
 
 queue_segment * queue_index::lookup( size_t logical ) {
     lock();
     // errs() << "Index " << this << " lookup logical="
-	   // << logical << " end=" << get_end() << "\n";
-
+	   // << logical << " end=" << get_end() << std::endl;
     queue_segment * eq = idx.find( logical );
-    // queue_segment * eq = vec[find( logical )];
-#if 0
-    queue_segment * eq = 0;
-    for( std::vector<queue_segment *>::const_iterator
-	     I=idx.begin(), E=idx.end(); I != E; ++I ) {
-	if( queue_segment * seg = *I ) {
-	    // errs() << "Index entry " << *seg << " logical="
-		// << seg->get_logical_head() << '-'
-		// << seg->get_logical_tail() << "\n";
-	    if( seg ) {
-		if( seg->get_logical_head() <= logical ) {
-		    if( seg->get_logical_tail() > logical ) {
-			unlock();
-			return seg;
-		    } else if( seg->get_logical_tail() == logical
-			       && seg->get_logical_head() == logical )
-			eq = seg;
-		} else if( seg->get_peek_dist() > 0
-			   && seg->get_logical_pos() <= logical
-			   && seg->get_logical_tail() > logical ) {
-		    // This represents a different access modality
-		    unlock();
-		    return seg;
-		}
-	    }
-	}
-    }
-#endif
+    // errs() << "Index " << this << " lookup logical="
+	   // << logical << " found " << *eq << std::endl;
     unlock();
     return eq;
 }
 
 void queue_index::erase( queue_segment * seg ) {
 	lock();
-	// errs() << "Index " << this << " erase " << idx[slot]
-	       // << " slot " << slot << "\n";
-	// idx[slot] = 0;
-	// remove( find( seg ) );
+	// errs() << "Index " << this << " erase " << *seg << std::endl;
 	idx.remove( seg );
 	unlock();
     }

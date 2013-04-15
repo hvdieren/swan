@@ -39,6 +39,8 @@ public:
     avl_tree() : root( 0 ) { }
 
     void insert( node_t * n ) {
+	// errs() << "AVL " << this << " insert: root=" << root
+	       // << " n=" << *n << std::endl;
 	short change = 0;
 	traits::left( n ) = 0;
 	traits::right( n ) = 0;
@@ -47,19 +49,26 @@ public:
     }
 
     void remove( node_t * n ) {
+	// errs() << "AVL " << this << " remove: root=" << root
+	       // << " n=" << *n << std::endl;
 	short change = 0;
 	remove_helper( root, n, change );
+	// errs() << "AVL " << this << " remove done: root=" << root
+	       // << " n=" << n << std::endl;
     }
 
     node_t * find( key_t & k ) const {
+	// errs() << "AVL " << this << " find: root=" << root << std::endl;
 	return find_helper( root, k );
     }
 
 private:
     static node_t * find_helper( node_t * root, key_t & k ) {
+	// errs() << "find_helper: root=" << root << " key=" << k << std::endl;
 	if( !root )
 	    return 0;
 	cmp_t cmp = traits::compare( root, k );
+	// errs() << "find_helper: compare=" << (int)cmp << std::endl;
 	if( cmp == cmp_eq )
 	    return root;
 	return find_helper( traits::child( root, cmp == cmp_lt
@@ -145,6 +154,8 @@ private:
 	node_t * old_other = traits::child( root, other );
 
 	root = traits::child( traits::child( old_root, other ), dir );
+
+	traits::child( old_root, other ) = traits::child( root, dir );
 	traits::child( root, dir ) = old_root;
 
 	traits::child( old_other, dir ) = traits::child( root, other );
@@ -159,19 +170,34 @@ private:
 	return 1;
     }
 
+#ifndef NDEBUG
+    static short check_balance( node_t * root ) {
+	if( !root )
+	    return 0;
+
+	short ldepth = check_balance( traits::left( root ) );
+	short rdepth = check_balance( traits::right( root ) );
+
+	if( rdepth - ldepth != traits::balance( root ) )
+	    abort();
+	return std::max( ldepth, rdepth ) + 1;
+    }
+#endif // NDEBUG
+
     static bool remove_helper( node_t * & root, node_t * n, short & change ) {
 	if( !root ) {
 	    change = 0;
 	    return false;
 	}
 
-	int decrease = 0;
+	// errs() << "AVL remove_helper: root=" << *root << std::endl;
+
+	short decrease = 0;
 	bool found = false;
 
-	cmp_t result = traits::compare( root, n );
-	dir_t dir = result == cmp_lt ? dir_left : dir_right;
-
-	if( result != cmp_eq ) {
+	    cmp_t result = traits::compare( root, n );
+	if( root != n ) {
+	    dir_t dir = result == cmp_lt ? dir_left : dir_right;
 	    found = remove_helper( traits::child( root, dir ), n, change );
 	    if( !found )
 		return found;
@@ -186,14 +212,14 @@ private:
 	    } else if( !traits::left( root ) ) {
 		node_t * to_delete = root;
 		root = traits::right( root );
-		traits::left( to_delete ) = 0;
+		change = 1;
 		traits::right( to_delete ) = 0;
 		return found;
 	    } else if( !traits::right( root ) ) {
 		node_t * to_delete = root;
 		root = traits::left( root );
+		change = 1;
 		traits::left( to_delete ) = 0;
-		traits::right( to_delete ) = 0;
 		return found;
 	    } else {
 		node_t * tmp = traits::right( root );
@@ -204,15 +230,16 @@ private:
 		    tmp = traits::left( tmp );
 		}
 
-		if( parent )
-		    remove_helper( traits::left( parent ),
-				   traits::left( parent ), change );
-		else
-		    remove_helper( traits::right( root ),
-				   traits::right( root ), change );
+		// errs() << "AVL erase: root=" << *root
+		       // << " tmp=" << *tmp << " parent=" << parent
+		       // << std::endl;
 
-		traits::left( tmp ) = traits::left( n );
-		traits::right( tmp ) = traits::right( n );
+		remove_helper( traits::right( root ), tmp, decrease );
+
+		traits::left( tmp ) = traits::left( root );
+		traits::right( tmp ) = traits::right( root );
+		traits::balance( tmp ) = traits::balance( root );
+		root = tmp;
 	    }
 	}
 
@@ -222,9 +249,8 @@ private:
 		change = rebalance( root );
 	    else
 		change = 1;
-	} else {
+	} else
 	    change = 0;
-	}
 
 	return found;
     }

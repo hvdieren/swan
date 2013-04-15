@@ -263,11 +263,12 @@ private:
 	if( likely( !head->is_empty( pos ) ) )
 	    return;
 
+	// errs() << "await " << *this << " head=" << *head << std::endl;
+
 	// As long as nothing has appeared in the queue and the producing
 	// flag is on, we don't really know if the queue is empty or not.
 	// Spin until something appears at the next index we will read.
 	do {
-	    // errs() << "await " << *this << std::endl;
 	    head->check_hash();
 
 	    while( head->is_empty( pos ) && head->is_producing() ) {
@@ -379,6 +380,7 @@ public:
     }
 
     void pop_bookkeeping( size_t npop, queue_index & idx ) {
+	// errs() << *this << " pop bookkeeping " << npop << "\n";
 	size_t pos = get_index() + npop - 1;
 	size_t t = head->get_logical_tail();
 	if( t > (long)pos ) {

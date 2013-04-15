@@ -518,6 +518,7 @@ public:
     }
 
     void pop_bookkeeping( size_t npop ) {
+	// errs() << "QV " << *this << " pop bookkeeping " << npop << "\n";
 	queue.pop_bookkeeping( npop, qindex );
 	if( count >= 0 )
 	    count -= npop;
@@ -561,15 +562,23 @@ public:
     template<typename T>
     read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
 	assert( npeek <= peekoff && "Peek outside requested range" );
-	ensure_queue_head();
-	read_slice<MetaData,T> slice
-	    = queue.get_slice_upto<MetaData,T>( npop_max, npeek, qindex );
-	slice.set_version( this );
-	return slice;
+
+	if( (flags & qf_fixed) && empty() ) {
+	    read_slice<MetaData,T> slice( 0, 0 );
+	    slice.set_version( this );
+	    return slice;
+	} else {
+	    ensure_queue_head();
+	    read_slice<MetaData,T> slice
+		= queue.get_slice_upto<MetaData,T>( npop_max, npeek, qindex );
+	    slice.set_version( this );
+	    return slice;
+	}
     }
     template<typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
 	assert( npeek-npop <= peekoff && "Peek outside requested range" );
+	assert( !empty() );
 	ensure_queue_head();
 	read_slice<MetaData,T> slice
 	    = queue.get_slice<MetaData,T>( npop, npeek, qindex );

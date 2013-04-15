@@ -188,16 +188,20 @@ void run_lpf_fb_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, LPF
 	while( N > 0 ) {
 	    obj::read_slice<obj::queue_metadata, float> slice
 		= fbin.get_slice_upto( (data->decimation+1)*N, NUM_TAPS+data->decimation );
-	    for( size_t i=0; i < slice.get_npops(); i += data->decimation+1 ) {
-		float sum = run_lpf( &slice.peek(i), data);
+	    for( size_t i=0; i+data->decimation < slice.get_npops(); i += data->decimation+1 ) {
+		float sum = run_lpf( &slice.peek(0), data);
+		for( size_t j=0; j < size_t(data->decimation+1); ++j )
+		    slice.pop();
 		fbout.push( sum );
 		N--;
 	    }
-	    slice.commit();
+/*
 	    if( size_t n = slice.get_npops() % (data->decimation+1) ) {
 		while( n++ < (data->decimation+1) )
-		    fbin.pop();
+		    slice.pop();
 	    }
+*/
+	    slice.commit();
 	}
     } else {
 	spawn( run_lpf_fb_sub, fbin.prefix( (data->decimation+1)*(N/2) ),
@@ -238,8 +242,8 @@ void run_demod_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, int 
 	    for( size_t i=0; i < slice.get_npops(); i++ ) {
 		float temp, gain;
 		gain = MAX_AMPLITUDE * SAMPLING_RATE / (BANDWIDTH * M_PI);
-		float fpl0 = slice.peek(i);
-		float fpl1 = slice.peek(i+1);
+		float fpl0 = slice.pop();
+		float fpl1 = slice.peek(0);
 		temp = fpl0 * fpl1;
 		temp = gain * atan(temp);
 		fbout.push( temp );
@@ -301,7 +305,8 @@ void run_equalizer_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, 
 		
 		/* Run the child filters. */
 		for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-		    lpf_out[i] = run_lpf(&slice.peek(j), &data->lpf[i]);
+		    lpf_out[i] = run_lpf(&slice.peek(0), &data->lpf[i]);
+		slice.pop();
 
 		/* Now process the results of the filters.  Remember that each band is
 		 * output(hi)-output(lo). */

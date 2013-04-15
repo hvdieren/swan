@@ -1,6 +1,12 @@
+//
+// Speedup described in:
+// Application-Specific Customization and Scalability of Soft Multiprocessors
+// http://www.ann.ece.ufl.edu/courses/eel6935_13spr/papers/Application_Specific_Customization_and_Scalability_of_Soft_Multiprocessors.pdf
+// and is limited to 10-20% on 16 (soft-core) processors.
+//
 #include "swan/wf_interface.h"
 
-#define QSIZE   1023
+#define QSIZE   8191
 #define RESERVE QSIZE
 
 void generate( obj::pushdep<float> out, size_t n ) {
@@ -54,7 +60,7 @@ void filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n )
     }
 }
 
-void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+void delay_filter_segment( obj::prefixdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
     float prev = 0;
     while( !in.empty() ) {
 	obj::read_slice<obj::queue_metadata, float> rs
@@ -76,8 +82,22 @@ void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size
     }
 }
 
+void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+    while( !in.empty() ) {
+	spawn( delay_filter_segment, in.prefix( RESERVE ),
+	       (obj::pushdep<float>)out, k, size_t(RESERVE) );
+    }
+    ssync();
+}
 
-void final( obj::popdep<float> in, size_t n ) {
+struct add_monad {
+    typedef float value_type;
+    typedef obj::cheap_reduction_tag reduction_tag;
+    static void identity( float * p ) { *p = 0; }
+    static void reduce( float * left, float * right ) { *left += *right; }
+};
+
+void final_segment( obj::prefixdep<float> in, obj::reduction<add_monad> sum, size_t n ) {
     float running = 0;
     while( !in.empty() ) {
 	obj::read_slice<obj::queue_metadata, float> rs
@@ -89,6 +109,17 @@ void final( obj::popdep<float> in, size_t n ) {
 	}
 	rs.commit();
     }
+    sum += running;
+}
+
+float final( obj::popdep<float> in, size_t n ) {
+    obj::object_t<float> sum;
+    while( !in.empty() ) {
+	spawn( final_segment, in.prefix( RESERVE ),
+	       (obj::reduction<add_monad>)sum, size_t(RESERVE) );
+    }
+    ssync();
+    return (float)sum;
 }
 
 void work( size_t n ) {
@@ -111,7 +142,8 @@ void work( size_t n ) {
 	       (obj::pushdep<float>)*q1[i+1], (float)i, n );
 */
     }
-    spawn( final, (obj::popdep<float>)*q1[10], n );
+    chandle<float> sum;
+    spawn( final, sum, (obj::popdep<float>)*q1[10], n );
 
     ssync();
 }
