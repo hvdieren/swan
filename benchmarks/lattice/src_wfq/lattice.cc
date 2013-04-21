@@ -6,7 +6,7 @@
 //
 #include "swan/wf_interface.h"
 
-#define QSIZE   8191
+#define QSIZE   16383
 #define RESERVE QSIZE
 
 void generate( obj::pushdep<float> out, size_t n ) {
@@ -60,14 +60,16 @@ void filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n )
     }
 }
 
-void delay_filter_segment( obj::prefixdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+void delay_filter_segment( obj::prefixdep<float> in, obj::suffixdep<float> out, float k, size_t n ) {
     float prev = 0;
     while( !in.empty() ) {
 	obj::read_slice<obj::queue_metadata, float> rs
 	    = in.get_slice_upto( RESERVE, 0 );
+	size_t n0 = rs.get_npops();
+	size_t n1 = (n0/2);
 	obj::write_slice<obj::queue_metadata, float> ws
-	    = out.get_write_slice( 2*std::min(size_t(RESERVE),rs.get_npops()) );
-	for( size_t i=0; i < rs.get_npops(); ++i ) {
+	    = out.get_write_slice( 2*n1 );
+	for( size_t i=0; i < n1; ++i ) {
 	    float f = rs.pop();
 	    float f0 = f;
 	    float f1 = prev;
@@ -77,15 +79,28 @@ void delay_filter_segment( obj::prefixdep<float> in, obj::pushdep<float> out, fl
 	    ws.push( ei );
 	    ws.push( ebari );
 	}
-	rs.commit();
 	ws.commit();
+	ws = out.get_write_slice( 2*(n0-n1) );
+	for( size_t i=n1; i < n0; ++i ) {
+	    float f = rs.pop();
+	    float f0 = f;
+	    float f1 = prev;
+	    prev = f;
+	    float ei = f0 - k * f1;
+	    float ebari = f1 - k * f0;
+	    ws.push( ei );
+	    ws.push( ebari );
+	}
+	ws.commit();
+	rs.commit();
     }
+    out.squash_count();
 }
 
 void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
     while( !in.empty() ) {
 	spawn( delay_filter_segment, in.prefix( RESERVE ),
-	       (obj::pushdep<float>)out, k, size_t(RESERVE) );
+	       out.suffix( 2*RESERVE ), k, size_t(RESERVE) );
     }
     ssync();
 }
