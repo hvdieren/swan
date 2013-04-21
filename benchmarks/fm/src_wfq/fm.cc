@@ -133,34 +133,6 @@ void begin(void)
     ssync();
 }
 
-#if 0
-// out: up to IN_BUFFER_LEN (fill as much as possible)
-void get_floats_sub(obj::suffixdep<float> fb, int x, int n)
-{
-    if( n < 8192 ) {
-	/* Fill the remaining space in fb with 1.0. */
-	int i = n;
-	while( i-- > 0 ) {
-	    fb.push( (float)x );
-	    x++;
-	}
-    } else {
-	spawn( get_floats_sub, fb.suffix( n/2 ), x, n/2 );
-	call( get_floats_sub, fb.suffix( n-n/2 ), x+n/2, n-n/2 );
-	ssync();
-    }
-}
-
-void get_floats(obj::pushdep<float> fb, int n)
-{
-    static int x = 0;
-  
-    //errs() << "get_float start\n";
-    call( get_floats_sub, fb.suffix( n ), x, n );
-    x += n;
-    //errs() << "get_float end\n";
-}
-#else
 // out: up to IN_BUFFER_LEN (fill as much as possible)
 void get_floats_sub(obj::suffixdep<float> fb, int x, int n)
 {
@@ -188,8 +160,6 @@ void get_floats(obj::pushdep<float> fb, int n)
     }
     ssync();
 }
-#endif
-
 
 void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
 {
@@ -213,52 +183,6 @@ void init_lpf_data(LPFData *data, float freq, int taps, int decimation)
   }
 }
 
-#if 0
-// in: consume/move: data->decimation+1 = DECIMATION+1 = 5
-// in: read: NUM_TAPS=64
-// out: 1
-// data: in
-void run_lpf_fb_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, LPFData *data, int s, int N)
-{
-    if( N < 8192 ) {
-	while( N > 0 ) {
-	    obj::read_slice<obj::queue_metadata, float> slice
-		= fbin.get_slice_upto( (data->decimation+1)*N, NUM_TAPS+data->decimation );
-	    size_t i=0;
-	    for( ; i+data->decimation < slice.get_npops(); i += data->decimation+1 ) {
-		float sum = run_lpf( &slice.peek(0), data);
-		for( size_t j=0; j < size_t(data->decimation+1); ++j )
-		    slice.pop();
-		fbout.push( sum );
-		N--;
-	    }
-	    if( i < slice.get_npops() ) {
-		float sum = run_lpf( &slice.peek(0), data);
-		fbout.push( sum );
-		N--;
-	    }
-	    slice.commit();
-	    if( i < slice.get_npops() ) {
-		for( size_t j=0; j++ < (data->decimation+1); ++j )
-		    fbin.pop();
-	    }
-	}
-    } else {
-	spawn( run_lpf_fb_sub, fbin.prefix( (data->decimation+1)*(N/2) ),
-	       fbout.suffix( N/2 ), data, s, N/2 );
-	call( run_lpf_fb_sub, fbin.prefix( (data->decimation+1)*(N-N/2) ),
-	      fbout.suffix( N-N/2 ), data, s+N/2, N-N/2 );
-	ssync();
-    }
-}
-
-void run_lpf_fb(obj::popdep<float> fbin, obj::pushdep<float> fbout, LPFData *data, int N)
-{
-    spawn( run_lpf_fb_sub, fbin.prefix( (data->decimation+1)*N ),
-	   fbout.suffix( N ), data, 0, N );
-    ssync();
-}
-#else
 // in: consume/move: data->decimation+1 = DECIMATION+1 = 5
 // in: read: NUM_TAPS=64
 // out: 1
@@ -302,7 +226,6 @@ void run_lpf_fb(obj::popdep<float> fbin, obj::pushdep<float> fbout, LPFData *dat
     }
     ssync();
 }
-#endif
 
 float run_lpf(const float *in, LPFData *data)
 {
@@ -315,41 +238,6 @@ float run_lpf(const float *in, LPFData *data)
   return sum;
 }
 
-#if 0
-// in: consume 1, read 2
-// out: produce 1
-void run_demod_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, int N)
-{
-    //errs() << "run_demod_sub start " << N << "\n";
-    if( N < 8192 ) {
-	while( N > 0 ) {
-	    obj::read_slice<obj::queue_metadata, float> slice
-		= fbin.get_slice_upto( N, 1 );
-	    for( size_t i=0; i < slice.get_npops(); i++ ) {
-		float temp, gain;
-		gain = MAX_AMPLITUDE * SAMPLING_RATE / (BANDWIDTH * M_PI);
-		float fpl0 = slice.pop();
-		float fpl1 = slice.peek(0);
-		temp = fpl0 * fpl1;
-		temp = gain * atan(temp);
-		fbout.push( temp );
-	    }
-	    N -= slice.get_npops();
-	    slice.commit();
-	}
-    } else {
-	spawn( run_demod_sub, fbin.prefix( N/2 ), fbout.suffix( N/2 ), N/2 );
-	call( run_demod_sub, fbin.prefix( N-N/2 ), fbout.suffix( N-N/2 ), N-N/2 );
-	ssync();
-    }
-    //errs() << "run_demod_sub end " << N << "\n";
-}
-
-void run_demod(obj::popdep<float> fbin, obj::pushdep<float> fbout, int N)
-{
-    call( run_demod_sub, fbin.prefix( N ), fbout.suffix( N ), N );
-}
-#else
 // in: consume 1, read 2
 // out: produce 1
 void run_demod_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, int N)
@@ -383,7 +271,6 @@ void run_demod(obj::popdep<float> fbin, obj::pushdep<float> fbout, int N)
     }
     ssync();
 }
-#endif
 
 void init_equalizer(EqualizerData *data)
 {
@@ -406,52 +293,6 @@ void init_equalizer(EqualizerData *data)
   }
 }
 
-#if 0
-// in:
-//  - each call to run_lpf produces 1 element on a private buffer,
-//    which is immediately consumed
-//  - we do as run_lpf otherwise
-// in: consume/move: data->decimation+1 = 0+1 = 1
-// in: read: NUM_TAPS=64
-// out: 1
-// data: in
-void run_equalizer_sub(obj::prefixdep<float> fbin, obj::suffixdep<float> fbout, EqualizerData *data, int N) {
-    if( N < 16384 ) {
-	while( N > 0 ) {
-	    obj::read_slice<obj::queue_metadata, float> slice
-		= fbin.get_slice_upto( N, 64 );
-	    for( size_t j=0; j < slice.get_npops(); j++ ) {
-		int i;
-		float lpf_out[EQUALIZER_BANDS + 1];
-		float sum = 0.0;
-		
-		/* Run the child filters. */
-		for (i = 0; i < EQUALIZER_BANDS + 1; i++)
-		    lpf_out[i] = run_lpf(&slice.peek(0), &data->lpf[i]);
-		slice.pop();
-
-		/* Now process the results of the filters.  Remember that each band is
-		 * output(hi)-output(lo). */
-		// HV: lpf_out[EQUALIZER_BANDS] has not been initialized?
-		for (i = 0; i < EQUALIZER_BANDS; i++)
-		    sum += (lpf_out[i+1] - lpf_out[i]) * data->gain[i];
-
-		fbout.push( sum );
-	    }
-	    N -= slice.get_npops();
-	    slice.commit();
-	}
-    } else {
-	spawn( run_equalizer_sub, fbin.prefix( N/2 ), fbout.suffix( N/2 ), data, N/2 );
-	call( run_equalizer_sub, fbin.prefix( N-N/2 ), fbout.suffix( N-N/2 ), data, N-N/2 );
-	ssync();
-    }
-}
-
-void run_equalizer(obj::popdep<float> fbin, obj::pushdep<float> fbout, EqualizerData *data, int N) {
-    call( run_equalizer_sub, fbin.prefix(N), fbout.suffix(N), data, N );
-}
-#else
 // in:
 //  - each call to run_lpf produces 1 element on a private buffer,
 //    which is immediately consumed
@@ -498,43 +339,7 @@ void run_equalizer(obj::popdep<float> fbin, obj::pushdep<float> fbout, Equalizer
     }
     ssync();
 }
-#endif
 
-#if 0
-// in: all, usually just 1 present
-float write_floats(obj::prefixdep<float> fb, int N)
-{
-  /* printf() any data that's available: */
-#ifdef raw
-  while (fb->rpos < fb->rlen)
-    print_float(fb->buff[fb->rpos++]);
-#else
-/* Better to resort to some kind of checksum for checking correctness...
-*/
-
-  if( N < 16384 ) {
-    float running = 0;
-    for( int i=0; i < N; ++i ) {
-	running += fb.pop();
-	// printf("%f\n", fb.pop());
-    }
-    return running;
-  } else {
-      chandle<float> r;
-      spawn( write_floats, r, fb.prefix( N/2 ), N/2 );
-      float c = call( write_floats, fb.prefix( N-N/2 ), N-N/2 );
-      ssync();
-      return r + c;
-  }
-/*
-  errs() << "write_floats start " << N << "\n";
-  for( int i=0; i < N; ++i )
-      printf("%f\n", fb.pop());
-  errs() << "write_floats end\n";
-*/
-#endif
-}
-#else
 struct add_monad {
     typedef float value_type;
     typedef obj::cheap_reduction_tag reduction_tag;
@@ -573,4 +378,3 @@ float write_floats(obj::prefixdep<float> fb, int N) {
     ssync();
     return sum;
 }
-#endif
