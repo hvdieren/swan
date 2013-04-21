@@ -80,6 +80,13 @@ worker_state::profile_worker::profile_worker() :
      memset( &time_longjmp, 0, sizeof(time_longjmp) );
      memset( &time_clueless, 0, sizeof(time_clueless) );
      memset( &time_release_ready, 0, sizeof(time_release_ready) );
+#if PROFILE_QUEUE
+     memset( &queue.sq_await, 0, sizeof(queue.sq_await) );
+     memset( &queue.sq_peek, 0, sizeof(queue.sq_peek) );
+     memset( &queue.qs_peek, 0, sizeof(queue.qs_peek) );
+     memset( &queue.qs_pop, 0, sizeof(queue.qs_pop) );
+     memset( &queue.qv_qhead, 0, sizeof(queue.qv_qhead) );
+#endif // PROFILE_QUEUE
 }
 
 worker_state::profile_worker::~profile_worker() {
@@ -114,6 +121,13 @@ worker_state::profile_worker::summarize( const worker_state::profile_worker & w 
     pp_time_add( &time_longjmp, &w.time_longjmp );
     pp_time_add( &time_clueless, &w.time_clueless );
     pp_time_add( &time_release_ready, &w.time_release_ready );
+#if PROFILE_QUEUE
+    pp_time_add( &queue.sq_await, &w.queue.sq_await );
+    pp_time_add( &queue.sq_peek, &w.queue.sq_peek );
+    pp_time_add( &queue.qs_peek, &w.queue.qs_peek );
+    pp_time_add( &queue.qs_pop, &w.queue.qs_pop );
+    pp_time_add( &queue.qv_qhead, &w.queue.qv_qhead );
+#endif // PROFILE_QUEUE
 }
 #endif
 
@@ -167,6 +181,13 @@ worker_state::profile_worker::dump_profile( size_t id ) const {
     SHOW( time_longjmp );
     SHOW( time_clueless );
     SHOW( time_release_ready );
+#if PROFILE_QUEUE
+    SHOW( queue.sq_await );
+    SHOW( queue.sq_peek );
+    SHOW( queue.qs_peek );
+    SHOW( queue.qs_pop );
+    SHOW( queue.qv_qhead );
+#endif // PROFILE_QUEUE
 #undef SHOW
 }
 #endif

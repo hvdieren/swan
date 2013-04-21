@@ -280,8 +280,14 @@ public:
 	
     template<typename T>
     T & pop( size_t logical ) {
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().qs_pop );
+#endif // PROFILE_QUEUE
 	while( q.empty() || ( logical - size_t(logical_pos) < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().qs_pop );
+#endif // PROFILE_QUEUE
 	// Translate global position we're popping from to local queue position
 	// Two behaviors of the fixed_size_queue:
 	// * As a real queue, round-robin when used by one popper
@@ -294,8 +300,14 @@ public:
 
     template<typename T>
     T & peek( size_t logical ) {
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().qs_peek );
+#endif // PROFILE_QUEUE
 	while( q.empty() || ( logical - size_t(logical_pos) < q.get_peek_dist() && !copied_peek ) )
 	    sched_yield();
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().qs_peek );
+#endif // PROFILE_QUEUE
 
 	return q.peek<T>( logical - logical_pos );
     }

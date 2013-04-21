@@ -39,8 +39,8 @@
 #include "alc_mmappol.h"
 #include "alc_flpol.h"
 
-#if PROFILE_WORKER || TIME_STEALING
-#include "pp_time.h"
+#if PROFILE_WORKER || TIME_STEALING || PROFILE_QUEUE
+#include "swan/../util/pp_time.h"
 #endif
 
 class stack_frame;
@@ -77,6 +77,10 @@ public:
 
     void reset() { } // delay = 0; }
 };
+
+namespace obj {
+    class profile_queue;
+}
 
 class worker_state {
     // typedef exp_backoff<10,1100,1000000> backoff_t;
@@ -127,6 +131,10 @@ public:
 	pp_time_t time_longjmp;
 	pp_time_t time_clueless;
 	pp_time_t time_release_ready;
+
+#if PROFILE_QUEUE
+	obj::profile_queue queue;
+#endif // PROFILE_QUEUE
 
 	size_t num_invoke;
 	size_t num_waiting;

@@ -495,17 +495,23 @@ private:
 	    // has been created already.
 	    // More complicated case (current): use the queue_index to figure
 	    // out what queue segment starts at the required logical position.
+#if PROFILE_QUEUE
+	    pp_time_start( &get_profile_queue().qv_qhead );
+#endif // PROFILE_QUEUE
 	    while( !queue.get_head() ) {
 		sched_yield();
 
 		// Special case. We need to re-check this here due to concurrency
 		// issues (the_end may be set between initial check and lookup).
 		if( size_t(queue.get_logical()) > qindex.get_end() )
-		    return;
+		    break;
 
 		// Search the index
 		queue.set_head( qindex.lookup( queue.get_logical() ) );
 	    }
+#if PROFILE_QUEUE
+	    pp_time_end( &get_profile_queue().qv_qhead );
+#endif // PROFILE_QUEUE
 	}
     }
 

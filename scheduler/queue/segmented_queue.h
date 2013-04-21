@@ -315,6 +315,10 @@ private:
 	if( likely( !head->is_empty( pos ) ) )
 	    return;
 
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().sq_await );
+#endif // PROFILE_QUEUE
+
 	// errs() << "await0 " << *this << " head=" << *head << std::endl;
 
 	// As long as nothing has appeared in the queue and the producing
@@ -330,7 +334,7 @@ private:
 		sched_yield();
 	    }
 	    if( !head->is_empty( pos ) )
-		return;
+		break;
 	    if( !head->is_producing() ) {
 		if( head->get_next() ) {
 		    pop_head( idx );
@@ -340,10 +344,14 @@ private:
 		    // This may be an error or not, depending on whether
 		    // we are polling the queue for emptiness, or trying
 		    // to pop.
-		    return;
+		    break;
 		}
 	    }
 	} while( true );
+
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().sq_await );
+#endif // PROFILE_QUEUE
     }
 
 public:
@@ -434,6 +442,10 @@ public:
 	       // << " offset=" << off
 	       // << " position=" << pos << "\n";
 
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
+
 	queue_segment * seg = head;
 	head->check_hash();
 	while( unlikely( seg->is_empty_wpeek( pos ) ) ) {
@@ -444,6 +456,9 @@ public:
 		break;
 	    sched_yield();
 	}
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
 
 	assert( !seg->is_empty_wpeek( pos ) );
 	return seg->peek<T>( pos );
