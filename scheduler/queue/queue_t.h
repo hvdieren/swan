@@ -310,11 +310,17 @@ public:
 	return suffixdep<T>::create( get_nc_version(), n, dflt );
     }
     
-    void push( const T & value ) { queue_v->push<T>( value ); }
+    void push( const T & value ) { queue_v->push_fixed<T>( value ); }
+
+    void squash_count() { queue_v->squash_count(); }
 	
     size_t get_length() const { return queue_v->get_count(); }
     size_t get_length_setting() const { return count; }
     const T & get_default() const { return dflt; }
+
+    write_slice<queue_metadata, T> get_write_slice( size_t length ) {
+	return queue_v->get_write_slice<T>( length );
+    }
 
 public:
     // For concepts: need not be implemented, must be non-static and public

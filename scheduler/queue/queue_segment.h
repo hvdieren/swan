@@ -8,6 +8,8 @@
 #include "swan/queue/fixed_size_queue.h"
 #include "swan/queue/avl.h"
 
+#define DBG_ALLOC 1
+
 namespace obj {
 
 class queue_segment;
@@ -25,9 +27,9 @@ public:
     queue_index() : the_end( ~0 ) { }
 
 public:
-    inline void insert( queue_segment * seg );
-    inline queue_segment * lookup( size_t logical );
-    inline void erase( queue_segment * seg );
+    void insert( queue_segment * seg );
+    queue_segment * lookup( size_t logical );
+    void erase( queue_segment * seg );
 
     void set_end( size_t ending ) {
 	if( the_end == size_t(~0) || the_end < ending )
@@ -40,12 +42,18 @@ public:
 // NOTE:
 // If pushes occur concurrently on the same queue, then each will operate on
 // a distinct queue_segment. Pops may occur concurrently on the same segment.
+class segmented_queue_base;
+
 class queue_segment
 {
     fixed_size_queue q;
     long logical_pos; // -1 is unknown
-long hash;
     size_t volume_pop, volume_push;
+#if DBG_ALLOC
+    long hash;
+    segmented_queue_base * dseg;
+#endif
+    size_t dflag;
     queue_segment * next;
     queue_segment * child[2];
     short balance;
@@ -59,8 +67,11 @@ long hash;
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
 		 + sizeof(long)
+		 + 2*sizeof(size_t)
+#if DBG_ALLOC
 		 + sizeof(long)
-		 + sizeof(size_t)
+		 + sizeof(segmented_queue_base *)
+#endif
 		 + sizeof(size_t)
 		 + 3*sizeof(queue_segment *)
 		 + sizeof(short)
@@ -75,25 +86,43 @@ private:
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  // If logical known and not first buffer, then subtract peek length
 	  logical_pos( logical_ ),
-	  volume_pop( 0 ), volume_push( peekoff_ ), next( 0 ),
-	  producing( true ), copied_peek( logical_pos == 0 ) {
+	  volume_pop( 0 ), volume_push( peekoff_ ), dflag( 0 ),
+#if DBG_ALLOC
+	  dseg( 0 ),
+#endif
+	  next( 0 ), producing( true ), copied_peek( logical_pos == 0 ) {
+#if DBG_ALLOC
 	hash = 0xbebebebe;
+#endif
 	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
 	// errs() << "queue_segment create " << *this << std::endl;
     }
+private:
+    ~queue_segment() { }
 public:
-    ~queue_segment() {
-	// errs() << "queue_segment destruct: " << *this << std::endl;
-	assert( logical_pos >= 0 && "logical position unknown when destructed" );
-    }
     void check_hash() const {
+#if DBG_ALLOC
 	assert( hash == 0xbebebebe );
+#endif
+	assert( !dflag );
     }
-    void as_if_delete() {
-	// errs() << "queue_segment as-if-destruct: " << *this << std::endl;
-	assert( logical_pos >= 0 && "logical position unknown when destructed" );
-	assert( hash == 0xbebebebe );
-	hash = 0xdeadbeef;
+
+    static void deallocate( queue_segment * seg, segmented_queue_base * d ) {
+	// errs() << "deallocate " << *seg << " by " << d << std::endl;
+#if DBG_ALLOC
+#endif
+	if( __sync_fetch_and_add( &seg->dflag, 1 ) == 0 ) {
+	    assert( seg->logical_pos >= 0 && "logical position unknown when destructed" );
+	    assert( seg->dflag == 1 );
+#if DBG_ALLOC
+	    assert( seg->hash == 0xbebebebe );
+	    assert( !seg->dseg );
+	    seg->hash = 0xdeadbeef;
+	    seg->dseg = d;
+#endif
+	    if( 1 ) // set to 0 to avoid memory reuse (debugging)
+		delete seg;
+	}
     }
 	
 public:
@@ -106,10 +135,10 @@ public:
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
 	char * buffer = &memory[sizeof(queue_segment)];
 	size_t step = fixed_size_queue::get_element_size<T>();
-	tinfo.construct<T>( buffer, &memory[buffer_size], step );
-	return new (memory) queue_segment( tinfo, logical, buffer,
-					   fixed_size_queue::get_element_size<T>(),
+	tinfo.construct<T>( buffer, &buffer[buffer_size], step );
+	return new (memory) queue_segment( tinfo, logical, buffer, step,
 					   seg_size, peekoff );
+	return (queue_segment*)memory;
     }
 
     // Accessor functions for control (not exposed to user API)
@@ -143,6 +172,7 @@ public:
 	logical_pos = logical_;
     }
 
+/*
     bool contains( size_t logical ) const {
 	if( get_logical_head() <= (long)logical
 	    && get_logical_tail() > (long)logical )
@@ -157,6 +187,7 @@ public:
 	else
 	    return false;
     }
+*/
 
     // Beware of race condition between propagating logical position
     // versus pushing new segment and updating logical position.
@@ -178,6 +209,7 @@ public:
     // size_t get_volume_pop() const { return volume_pop; }
     // size_t get_volume_push() const { return volume_push; }
     bool all_done() const {
+	check_hash();
 	return copied_peek && volume_pop + q.get_peek_dist() == volume_push;
     }
 
@@ -191,11 +223,13 @@ public:
 	// TODO: How to avoid memory de-allocation here?
 
 	assert( next_->volume_pop + ( next_->copied_peek ? next_->q.get_peek_dist() : 0 ) <= next_->volume_push );
+	assert( next_->logical_pos == get_logical_tail()
+		|| logical_pos < 0 );
+	assert( volume_push > q.get_peek_dist() );
 
 	next = next_;
 	// errs() << "Link " << this << " ltail=" << get_logical_tail()
 	       // << " to " << next << " pos=" << next->logical_pos << std::endl;
-	assert( next->logical_pos == get_logical_tail() );
     }
 
 /* UNUSED
@@ -214,8 +248,8 @@ public:
 
     bool is_empty( size_t logical ) const {
 	return ( ( logical - logical_pos < q.get_peek_dist() )
-		 ? !copied_peek 
-		 : (long)logical >= get_logical_tail() )
+		 ? !copied_peek : false )
+	    || (long)logical >= get_logical_tail()
 	    || !q.is_produced( logical - logical_pos );
     }
 
@@ -230,10 +264,12 @@ public:
 
     // Queue pop and push methods
     void pop_bookkeeping( size_t npop ) {
+	check_hash();
 	__sync_fetch_and_add( &volume_pop, npop );
     }
 
     void push_bookkeeping( size_t npush ) {
+	check_hash();
 	q.push_bookkeeping( npush );
 	volume_push += npush;
     }
@@ -321,51 +357,5 @@ struct avl_traits<obj::queue_segment, size_t> {
 	return n->balance;
     }
 };
-
-// re-open namespace obj
-namespace obj {
-
-inline std::ostream &
-operator << ( std::ostream & os, const queue_segment & seg ) {
-    return os << "Segment: @" << &seg << " producing=" << seg.producing
-	      << " @" << seg.logical_pos
-	      << " volume-pop=" << seg.volume_pop
-	      << " volume-push=" << seg.volume_push
-	      << " next=" << seg.next
-	      << " child=" << seg.child[0] << "," << seg.child[1]
-	      << " B=" << seg.balance
-	      << ' ' << seg.q;
-}
-
-void queue_index::insert( queue_segment * seg ) {
-    assert( seg->get_logical_pos() >= 0 );
-    lock();
-    idx.insert( seg );
-    unlock();
-    // errs() << "Index " << this << " insert logical="
-	   // << seg->get_logical_head() << '-'
-	   // << seg->get_logical_tail()
-	   // << " seg " << *seg << std::endl;
-}
-
-queue_segment * queue_index::lookup( size_t logical ) {
-    lock();
-    // errs() << "Index " << this << " lookup logical="
-	   // << logical << " end=" << get_end() << std::endl;
-    queue_segment * eq = idx.find( logical );
-    // errs() << "Index " << this << " lookup logical="
-	   // << logical << " found " << *eq << std::endl;
-    unlock();
-    return eq;
-}
-
-void queue_index::erase( queue_segment * seg ) {
-	lock();
-	// errs() << "Index " << this << " erase " << *seg << std::endl;
-	idx.remove( seg );
-	unlock();
-    }
-
-}//namespace obj
 
 #endif // QUEUE_QUEUE_SEGMENT_H

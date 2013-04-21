@@ -73,10 +73,7 @@ public:
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
 		idx.erase( q );
-		// errs() << "ERROR: cannot free local segment\n";
-		// abort();
-		delete q;
-		// q->as_if_delete();
+		queue_segment::deallocate( q, this );
 	    }
 	}
     }
@@ -193,9 +190,15 @@ public:
 	return tail ? tail->get_logical_tail_wpeek() : logical;
     }
 
+    // TODO: There is a potential race condition between setting logical_pos
+    // through linking segments (reduce) and creating segments with a copied
+    // (stale) logical_pos of -1.
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, size_t peekoff,
 		       queue_index & idx ) {
+	if( tail ) {
+	    assert( tail->get_logical_tail() == logical_pos );
+	}
 	queue_segment * seg
 	    = queue_segment::template create<T>( logical_pos, max_size, peekoff );
 	logical = seg->get_logical_head();
@@ -234,8 +237,9 @@ public:
     template<typename MetaData, typename T>
     write_slice<MetaData,T> get_write_slice( size_t length, queue_index & idx ) {
 	// Push a fresh segment if we don't have enough room on the
-	// current one.
-	if( !tail->has_space( length ) ) {
+	// current one. Subtract again peek distance from length. Rationale:
+	// we have already reserved this space in the current segment.
+	if( !tail->has_space( length-tail->get_peek_dist() ) ) {
 	    push_segment<T>( tail->get_logical_tail(), length,
 			     tail->get_peek_dist(), idx );
 	}
@@ -252,6 +256,54 @@ public:
     size_t get_volume_pop() const { return volume_pop; }
 
 private:
+    void pop_head( queue_index & idx ) {
+	if( queue_segment * seg = head->get_next() ) {
+	    size_t pos = get_index();
+
+	    // Note: this case is executed only once per segment,
+	    // namely for the task that pops the tail of this segment.
+
+	    // errs() << "head " << head << " runs out, pop segment (empty)\n";
+	    // Are we totally done with this segment?
+	    // TODO: this may introduce a data race and not deallocate
+	    // some segments as a result. Or even dealloc more than
+	    // once...
+	    // TODO: situation got worse with peeking
+	    // IDEA: incorporate peeked condition as add one to
+	    // push and pop volume rather than separate boolen condition
+	    bool erase = head->all_done();
+
+	    // Every segment linked from a known position (we can
+	    // only pop from a known position) should also be known.
+	    // However, there is a race condition in the reduction
+	    // and updating of the logicial position that may occur
+	    // (rarely) and that may imply that the value has not been
+	    // properly propagated yet. We fix the correctness aspect
+	    // of that here, propagating the position if needed.
+	    // There is also a potential performance aspect as in
+	    // case of those races we will not be able to find some
+	    // segments in the index during some time.
+	    if( seg->get_logical_pos() < 0 )
+		seg->propagate_logical_pos( head->get_logical_tail(), idx );
+
+	    // Compute our new position based on logical_pos, which is
+	    // constant (as opposed to head and tail which differ by
+	    // the number of pushes and pops performed).
+	    logical = seg->get_logical_pos();
+	    volume_pop = pos - logical;
+	    assert( (long)pos >= logical );
+
+	    // TODO: when to delete a segment in case of multiple
+	    // consumers?
+	    if( erase ) {
+		idx.erase( head );
+		queue_segment::deallocate( head, this );
+	    }
+
+	    head = seg;
+	}
+    }
+
     void await( queue_index & idx ) {
 	assert( head );
 
@@ -263,12 +315,14 @@ private:
 	if( likely( !head->is_empty( pos ) ) )
 	    return;
 
-	// errs() << "await " << *this << " head=" << *head << std::endl;
+	// errs() << "await0 " << *this << " head=" << *head << std::endl;
 
 	// As long as nothing has appeared in the queue and the producing
 	// flag is on, we don't really know if the queue is empty or not.
 	// Spin until something appears at the next index we will read.
 	do {
+	    // errs() << "await " << *this << " head=" << *head << std::endl;
+
 	    head->check_hash();
 
 	    while( head->is_empty( pos ) && head->is_producing() ) {
@@ -278,50 +332,9 @@ private:
 	    if( !head->is_empty( pos ) )
 		return;
 	    if( !head->is_producing() ) {
-		if( queue_segment * seg = head->get_next() ) {
-		    // Note: this case is executed only once per segment,
-		    // namely for the task that pops the tail of this segment.
-
-		    // errs() << "head " << head << " runs out, pop segment (empty)\n";
-		    // Are we totally done with this segment?
-		    // TODO: this may introduce a data race and not deallocate
-		    // some segments as a result. Or even dealloc more than
-		    // once...
-		    // TODO: situation got worse with peeking
-		    // IDEA: incorporate peeked condition as add one to
-		    // push and pop volume rather than separate boolen condition
-		    bool erase = head->all_done();
-
-		    // Every segment linked from a known position (we can
-		    // only pop from a known position) should also be known.
-		    // However, there is a race condition in the reduction
-		    // and updating of the logicial position that may occur
-		    // (rarely) and that may imply that the value has not been
-		    // properly propagated yet. We fix the correctness aspect
-		    // of that here, propagating the position if needed.
-		    // There is also a potential performance aspect as in
-		    // case of those races we will not be able to find some
-		    // segments in the index during some time.
-		    if( seg->get_logical_pos() < 0 )
-			seg->propagate_logical_pos( head->get_logical_tail(), idx );
-
-		    // Compute our new position based on logical_pos, which is
-		    // constant (as opposed to head and tail which differ by
-		    // the number of pushes and pops performed).
-		    logical = seg->get_logical_pos();
-		    volume_pop = pos - logical;
-		    assert( (long)pos >= logical );
-
-		    // TODO: when to delete a segment in case of multiple
-		    // consumers?
-		    if( erase ) {
-			if( erase )
-			    idx.erase( head );
-			delete head;
-			// head->as_if_delete();
-		    }
-
-		    head = seg;
+		if( head->get_next() ) {
+		    pop_head( idx );
+		    pos = get_index();
 		} else {
 		    // In this case, we know the queue is empty.
 		    // This may be an error or not, depending on whether
@@ -379,21 +392,24 @@ public:
 	return r;
     }
 
-    void pop_bookkeeping( size_t npop, queue_index & idx ) {
+    void pop_bookkeeping( size_t npop, queue_index & idx, bool dealloc ) {
 	// errs() << *this << " pop bookkeeping " << npop << "\n";
 	size_t pos = get_index() + npop - 1;
 	size_t t = head->get_logical_tail();
 	if( t > (long)pos ) {
 	    volume_pop += npop;
 	    head->pop_bookkeeping( npop );
+	    if( dealloc && head->is_empty( get_index() ) && !head->is_producing() )
+		pop_head( idx );
 	} else {
+	    abort();
 	    size_t n = t - get_index();
 	    assert( n < npop );
 	    volume_pop += n;
 	    head->pop_bookkeeping( n );
 	    await( idx );
 	    if( npop > n )
-		pop_bookkeeping( npop - n, idx );
+		pop_bookkeeping( npop - n, idx, dealloc );
 	}
 /*
 	while( npop-- > 0 )  {

@@ -243,9 +243,13 @@ public:
 		&& "QV::children must be un-owned on destruct" );
 	assert( !right.get_head() && !right.get_tail()
 		&& "QV::right must be empty on destruct" );
+	assert( (flags & (qf_fixed|qf_push)) != (qf_fixed|qf_push)
+		|| count == 0 );
 
 	user.erase( qindex );
     }
+
+    void squash_count() { count = 0; }
 
     void reduce_sync() {
 	// user <- children REDUCE user
@@ -461,9 +465,7 @@ private:
 	    // multiple "heads" of traces of the queue.
 	    assert( children.get_head() );
 	    assert( !children.get_tail() );
-	    if( queue_segment * seg = children.get_head() ) {
-		children.set_head( 0 ); // Moved to index
-	    }
+	    children.set_head( 0 ); // Moved to index
 	}
 	// if( parent )
 	    // errs() << "   result: " << *parent << "\n";
@@ -515,11 +517,13 @@ public:
 
     void push_bookkeeping( size_t npush ) {
 	user.push_bookkeeping( npush );
+	if( count >= 0 )
+	    count -= npush;
     }
 
     void pop_bookkeeping( size_t npop ) {
 	// errs() << "QV " << *this << " pop bookkeeping " << npop << "\n";
-	queue.pop_bookkeeping( npop, qindex );
+	queue.pop_bookkeeping( npop, qindex, count > npop );
 	if( count >= 0 )
 	    count -= npop;
     }
@@ -548,13 +552,14 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), length, peekoff, qindex );
+		: user.get_logical(), std::max(length+peekoff,max_size),
+		peekoff, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	write_slice<MetaData,T> slice
-	    = user.get_write_slice<MetaData,T>( length, qindex );
+	    = user.get_write_slice<MetaData,T>( length+peekoff, qindex );
 	slice.set_version( this );
 	return slice;
     }
@@ -563,6 +568,10 @@ public:
     read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
 	assert( npeek <= peekoff && "Peek outside requested range" );
 
+	// Count sets an upper limit on allowable pops
+	npop_max = std::min( npop_max, size_t(count) );
+
+	// empty() involves count == 0 check.
 	if( (flags & qf_fixed) && empty() ) {
 	    read_slice<MetaData,T> slice( 0, 0 );
 	    slice.set_version( this );
@@ -605,7 +614,6 @@ public:
     }
 
     // Potentially differentiate const T & t versus T && t
-    // TODO: need push_fixed?
     template<typename T>
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
@@ -622,12 +630,35 @@ public:
 	user.push<T>( &t, max_size, peekoff, qindex );
     }
 
+    template<typename T>
+    void push_fixed( const T & t ) {
+	// Make sure we have a local, usable queue
+	if( !user.get_tail() ) {
+	    user.push_segment<T>(
+		user.get_logical() > 0 ? user.get_logical() - peekoff
+		: user.get_logical(), max_size, peekoff, qindex );
+
+	    segmented_queue q = user.split();
+	    push_head( q );
+	}
+	// errs() << "push-fixed QV=" << this << " user="
+	       // << user << " value=" << t << "\n";
+
+	assert( count > 0 && "No more remaing pushes allowed" );
+	count--;
+
+	user.push<T>( &t, max_size, peekoff, qindex );
+    }
+
+
     // Only for pop!
     bool empty() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	ensure_queue_head();
 	if( size_t(queue.get_logical()) > qindex.get_end() )
+	    return true;
+	if( (flags & qf_fixed) && count == 0 )
 	    return true;
 	return queue.empty( qindex );
     }

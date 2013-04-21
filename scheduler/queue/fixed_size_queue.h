@@ -34,11 +34,12 @@ public:
 	version->push_bookkeeping( npush );
     }
 
-    void push( T & t ) {
+    bool push( T & t ) {
 	assert( npush < length );
 	memcpy( reinterpret_cast<T *>( buffer ), &t, sizeof(T) );
 	buffer += sizeof(T);
 	++npush;
+	return npush < length;
     }
 };
 
@@ -90,7 +91,7 @@ class fixed_size_queue
     const typeinfo_array tinfo;
     const size_t elm_size;
     const size_t size;
-    const size_t mask;
+    /*const*/ size_t dont_use_mask;
     char * const buffer;
     size_t peekoff;
     pad_multiple<CACHE_ALIGNMENT, sizeof(typeinfo_array) + 4*sizeof(size_t) + sizeof(char *)> pad2;
@@ -132,8 +133,9 @@ private:
 		      size_t elm_size_, size_t max_size, size_t peekoff_ )
 	: head( 0 ), tail( peekoff_*elm_size_ ), tinfo( tinfo_ ),
 	  elm_size( elm_size_ ),
-	  size( roundup_pow2( (max_size+1) * elm_size ) ),
-	  mask( size-1 ), buffer( buffer_ ), peekoff( peekoff_ ) {
+	  // size( roundup_pow2( (max_size+1) * elm_size ) ), mask( size-1 ),
+	  size( (max_size+1) * elm_size ),
+	  buffer( buffer_ ), peekoff( peekoff_ ) {
 	static_assert( sizeof(fixed_size_queue) % CACHE_ALIGNMENT == 0,
 		       "padding failed" );
     }
@@ -150,7 +152,7 @@ public:
     bool full() const volatile {
 	// Freeze tail at end of buffer to avoid wrap-around in case of peeking
 	size_t full_marker = peekoff > 0 ? 0 : head;
-	return ((tail+elm_size) & mask) == full_marker;
+	return ((tail+elm_size) % size) == full_marker;
     }
 
     bool has_space( size_t length ) const {
@@ -165,7 +167,7 @@ public:
     char* front() const { return &buffer[head]; }
 
     bool is_produced( size_t pos ) const {
-	pos = (pos * elm_size) & mask;
+	pos = (pos * elm_size) % size;
 	if( head <= tail )
 	    return head <= pos && pos < tail;
 	else
@@ -174,7 +176,7 @@ public:
 
     template<typename T>
     T & peek( size_t pos ) {
-	char* value = &buffer[(pos*elm_size) & mask];
+	char* value = &buffer[(pos*elm_size) % size];
 	return *reinterpret_cast<T *>( value );
     }
 
@@ -182,11 +184,11 @@ public:
     template<typename T>
     T & pop( size_t pos ) {
 	assert( elm_size == sizeof(T) );
-	char* value = &buffer[(pos*elm_size) & mask];
+	char* value = &buffer[(pos*elm_size) % size];
 	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
-	if( ((pos*elm_size) & mask) == head )
-	    head = (head+elm_size) & mask;
+	if( ((pos*elm_size) % size) == head )
+	    head = (head+elm_size) % size;
 	return r;
     }
 	
@@ -199,14 +201,14 @@ public:
 	} else {
 	    // std::copy<T>( *reinterpret_cast<T *>( &buffer[tail] ), *value );
 	    memcpy( reinterpret_cast<T *>( &buffer[tail] ), value, sizeof(T) );
-	    tail = (tail+elm_size) & mask;
+	    tail = (tail+elm_size) % size;
 	    return true;
 	}
     }
 
     void push_bookkeeping( size_t npush ) {
 	assert( (tail + elm_size * npush) <= size );
-	tail = (tail + elm_size * npush) & mask;
+	tail = (tail + elm_size * npush) % size;
 	assert( tail != head );
     }
 
@@ -234,7 +236,7 @@ public:
 
 inline std::ostream & operator << ( std::ostream & os, const fixed_size_queue & q ) {
     return os << " QUEUE: head=" << q.head << " tail=" << q.tail
-	      << " size=" << q.size << " mask=" << std::hex << q.mask
+	      << " size=" << q.size << " mask=" << std::hex << 0 // q.mask
 	      << std::dec;
 }
 
