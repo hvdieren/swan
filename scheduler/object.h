@@ -430,7 +430,7 @@ public:
     }
 
     template<typename T>
-    static typename std::enable_if<!std::is_void<T>::value>::type
+    static typename std::enable_if<!std::is_void<T>::value && !std::is_scalar<T>::value>::type
     construct( void * start, void * end, size_t step ) {
 	for( char * ptr=reinterpret_cast<char *>( start );
 	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
@@ -439,7 +439,7 @@ public:
     }
 
     template<typename T>
-    static typename std::enable_if<std::is_void<T>::value>::type
+    static typename std::enable_if<std::is_void<T>::value || std::is_scalar<T>::value>::type
     construct( void *, void *, size_t ) { }
 
     void destruct( void * start, void * end, size_t step ) const {
@@ -471,7 +471,7 @@ class obj_payload {
 private:
     ctr_t refcnt;
     typeinfo tinfo;
-    pad_multiple<64, sizeof(ctr_t)> pad; // put payload at 64-byte boundary
+    pad_multiple<64, sizeof(ctr_t)+sizeof(typeinfo)> pad; // put payload at 64-byte boundary
 
     template<typename MetaData>
     friend class obj_version;
