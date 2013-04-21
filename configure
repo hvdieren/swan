@@ -4509,7 +4509,7 @@ fi;
 
 fi
 
-ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/bzip2f/src_cilk++/Makefile benchmarks/bzip2f/src_wf/Makefile benchmarks/bzip2f/src_wfq/Makefile benchmarks/fft/src_wf/Makefile benchmarks/lu/src_wf/Makefile benchmarks/lu/src_wfo/Makefile benchmarks/strassen/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wf/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh benchmarks/fm/src_c/Makefile benchmarks/fm/src_wfo/Makefile benchmarks/fm/src_wfq/Makefile benchmarks/fm/src_wfoq/Makefile benchmarks/streamit_fft/src_c/Makefile benchmarks/streamit_fft/src_wfq/Makefile benchmarks/lattice/src_wfq/Makefile scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/bzip2f/src_cilk++/Makefile benchmarks/bzip2f/src_wf/Makefile benchmarks/bzip2f/src_wfq/Makefile benchmarks/fft/src_wf/Makefile benchmarks/lu/src_wf/Makefile benchmarks/lu/src_wfo/Makefile benchmarks/strassen/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wf/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh benchmarks/fm/src_c/Makefile benchmarks/fm/src_wfo/Makefile benchmarks/fm/src_wfq/Makefile benchmarks/fm/src_wfoq/Makefile benchmarks/streamit_fft/src_c/Makefile benchmarks/streamit_fft/src_wfq/Makefile benchmarks/lattice/src_wfq/Makefile benchmarks/lattice/src_wfo/Makefile scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
 
 ac_config_commands="$ac_config_commands exec-scripts-create.sh"
 
@@ -5255,6 +5255,7 @@ do
     "benchmarks/streamit_fft/src_c/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/streamit_fft/src_c/Makefile" ;;
     "benchmarks/streamit_fft/src_wfq/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/streamit_fft/src_wfq/Makefile" ;;
     "benchmarks/lattice/src_wfq/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/lattice/src_wfq/Makefile" ;;
+    "benchmarks/lattice/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/lattice/src_wfo/Makefile" ;;
     "scripts/create.sh") CONFIG_FILES="$CONFIG_FILES scripts/create.sh" ;;
     "util/Makefile") CONFIG_FILES="$CONFIG_FILES util/Makefile" ;;
     "util/Makefile.use_us") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_us" ;;
