@@ -86,8 +86,10 @@ private:
 
 	cmp_t result = traits::compare( root, n );
 
-	if( result == cmp_eq )
+	if( result == cmp_eq ) {
+	    abort();
 	    return true;
+	}
 
 	bool found;
 	if( result == cmp_lt )
@@ -223,12 +225,9 @@ private:
 		return found;
 	    } else {
 		node_t * tmp = traits::right( root );
-		node_t * parent = 0;
 
-		while( traits::left( tmp ) ) {
-		    parent = tmp;
+		while( traits::left( tmp ) )
 		    tmp = traits::left( tmp );
-		}
 
 		// errs() << "AVL erase: root=" << *root
 		       // << " tmp=" << *tmp << " parent=" << parent
