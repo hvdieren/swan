@@ -8,14 +8,21 @@
 #include "swan/queue/fixed_size_queue.h"
 #include "swan/queue/avl.h"
 
-#define DBG_ALLOC 1
+#define DBG_ALLOC 0
 
 namespace obj {
 
 class queue_segment;
 
+struct queue_key_t {
+    size_t logical;
+    size_t seqno;
+};
+
 class queue_index {
-    avl_tree<queue_segment, size_t> idx;
+    avl_tree<queue_segment, queue_key_t> idx;
+    long head_pop, tail_pop;
+    size_t head_seqno, tail_seqno;
     size_t the_end;
     cas_mutex mutex;
 
@@ -24,12 +31,40 @@ private:
     void unlock() { mutex.unlock(); }
 
 public:
-    queue_index() : the_end( ~0 ) { }
+    queue_index() : head_pop( 0 ), tail_pop( 0 ), head_seqno( 0 ), tail_seqno( 0 ),
+		    the_end( ~0 ) { }
 
 public:
     void insert( queue_segment * seg );
-    queue_segment * lookup( size_t logical );
+    queue_segment * lookup( size_t logical, size_t push_seqno );
     void erase( queue_segment * seg );
+
+    size_t get_head_pop() const { return head_pop; }
+
+    void pop1( size_t num ) {
+	lock();
+	head_pop += num;
+	unlock();
+    }
+    void pop( size_t num ) {
+	lock();
+	head_pop += num;
+	head_seqno++;
+	if( head_seqno == tail_seqno ) {
+	    assert( tail_pop == head_pop || tail_pop < 0 );
+	    tail_pop = head_pop;
+	}
+	unlock();
+    }
+    void prefix( long num ) {
+	lock();
+	if( num < 0 )
+	    tail_pop = -1;
+	else
+	    tail_pop += num;
+	tail_seqno++;
+	unlock();
+    }
 
     void set_end( size_t ending ) {
 	if( the_end == size_t(~0) || the_end < ending )
@@ -54,20 +89,22 @@ class queue_segment
     segmented_queue_base * dseg;
 #endif
     size_t dflag;
+    size_t seqno;
     queue_segment * next;
     queue_segment * child[2];
     short balance;
     volatile bool producing;
     bool copied_peek;
+    cas_mutex mux;
 
-    friend struct avl_traits<queue_segment, size_t>;
+    friend struct avl_traits<queue_segment, queue_key_t>;
 
     // Pad to 16 bytes because this should suite all data types.
     // There is no guarantee to naturally align any element store in the queue,
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
 		 + sizeof(long)
-		 + 2*sizeof(size_t)
+		 + 3*sizeof(size_t)
 #if DBG_ALLOC
 		 + sizeof(long)
 		 + sizeof(segmented_queue_base *)
@@ -76,20 +113,25 @@ class queue_segment
 		 + 3*sizeof(queue_segment *)
 		 + sizeof(short)
 		 + sizeof(bool)
-		 + sizeof(volatile bool) > padding;
+		 + sizeof(volatile bool)
+		 + sizeof(int)
+		 + sizeof(cas_mutex) > padding;
 
     friend std::ostream & operator << ( std::ostream & os, const queue_segment & seg );
 
 private:
     queue_segment( typeinfo_array tinfo, long logical_, char * buffer,
-		   size_t elm_size, size_t max_size, size_t peekoff_ )
+		   size_t elm_size, size_t max_size, size_t peekoff_,
+		   size_t seqno_ )
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  // If logical known and not first buffer, then subtract peek length
 	  logical_pos( logical_ ),
-	  volume_pop( 0 ), volume_push( peekoff_ ), dflag( 0 ),
+	  volume_pop( 0 ), volume_push( peekoff_ ),
 #if DBG_ALLOC
 	  dseg( 0 ),
 #endif
+	  dflag( 0 ),
+	  seqno( seqno_ ),
 	  next( 0 ), producing( true ), copied_peek( logical_pos == 0 ) {
 #if DBG_ALLOC
 	hash = 0xbebebebe;
@@ -100,6 +142,9 @@ private:
 private:
     ~queue_segment() { }
 public:
+    void lock() { mux.lock(); }
+    void unlock() { mux.unlock(); }
+
     void check_hash() const {
 #if DBG_ALLOC
 	assert( hash == 0xbebebebe );
@@ -129,7 +174,7 @@ public:
     // Allocate control fields and data buffer in one go
     template<typename T>
     static queue_segment * create( long logical, size_t seg_size,
-				   size_t peekoff ) {
+				   size_t peekoff, size_t seqno ) {
 	typeinfo_array tinfo = typeinfo_array::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space<T>( seg_size );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
@@ -137,7 +182,7 @@ public:
 	size_t step = fixed_size_queue::get_element_size<T>();
 	tinfo.construct<T>( buffer, &buffer[buffer_size], step );
 	return new (memory) queue_segment( tinfo, logical, buffer, step,
-					   seg_size, peekoff );
+					   seg_size, peekoff, seqno );
 	return (queue_segment*)memory;
     }
 
@@ -166,11 +211,13 @@ public:
 	    logical_pos + volume_push - q.get_peek_dist();
     }
     long get_logical_pos() const { return logical_pos; }
+/* unused
     void set_logical_pos( int logical_ ) {
 	// errs() << "Update logical position of " << this
 	// << " from " << logical_pos << " to " << logical_ << "\n";
 	logical_pos = logical_;
     }
+*/
 
 /*
     bool contains( size_t logical ) const {
@@ -194,14 +241,20 @@ public:
     // Should be ok if link before update position.
     void propagate_logical_pos( long logical, queue_index & idx ) {
 	// Done if known.
+	lock();
 	if( logical_pos >= 0 ) {
 	    assert( logical_pos == logical );
+	    unlock();
 	    return;
 	}
-	// assert( logical_pos < 0
-		// && "logical position must be unknown when updating" );
+	assert( logical_pos < 0
+		&& "logical position must be unknown when updating" );
+	// Lock segment such that we cannot propagate the logical position into
+	// a segment that is currently being pushed at unknown index. Such a race
+	// may leave the newly pushed segment at unknown position.
 	logical_pos = logical;
 	idx.insert( this );
+	unlock();
 	if( next )
 	    next->propagate_logical_pos( get_logical_tail(), idx );
     }
@@ -266,6 +319,7 @@ public:
     void pop_bookkeeping( size_t npop ) {
 	check_hash();
 	__sync_fetch_and_add( &volume_pop, npop );
+	assert( volume_pop <= volume_push );
     }
 
     void push_bookkeeping( size_t npush ) {
@@ -332,10 +386,24 @@ public:
 private:
 };
 
+inline std::ostream &
+operator << ( std::ostream & os, const queue_segment & seg ) {
+    return os << "Segment: @" << &seg
+	      << " @" << seg.logical_pos
+	      << " volume-pop=" << seg.volume_pop
+	      << " volume-push=" << seg.volume_push
+	      << " producing=" << seg.producing
+	      << " next=" << seg.next
+	      << " child=" << seg.child[0] << "," << seg.child[1]
+	      << " B=" << seg.balance
+	      << " seqno=" << seg.seqno
+	      << ' ' << seg.q;
+}
+
 } // end namespace obj
 
 template<>
-struct avl_traits<obj::queue_segment, size_t> {
+struct avl_traits<obj::queue_segment, obj::queue_key_t> {
     typedef obj::queue_segment queue_segment;
 
     static queue_segment * & left( queue_segment * n ) {
@@ -357,13 +425,23 @@ struct avl_traits<obj::queue_segment, size_t> {
 	else
 	    return cmp_eq;
     }
-    static avl_cmp_t compare( queue_segment * seg, size_t & logical ) {
-	if( size_t(seg->logical_pos) > logical )
+    static avl_cmp_t compare( queue_segment * seg, obj::queue_key_t & key ) {
+	if( size_t(seg->logical_pos) > key.logical )
 	    return cmp_gt;
-	else if( seg->logical_pos + seg->volume_push  < logical )
+/* if commented back in, then make sure we distinguish primary and secondary match
+	else if( seg->logical_pos + seg->volume_push == key.logical
+		 && !seg->is_producing() && seg->seqno == key.seqno )
+	    return cmp_eq;
+*/
+	else if( seg->logical_pos + seg->volume_push <= key.logical )
 	    return cmp_lt;
 	else
-	    return cmp_eq;
+	    // Older segments are visible to newer pops
+	    return seg->seqno <= key.seqno ? cmp_eq : cmp_gt;
+    }
+    static bool is_secondary( queue_segment * seg, obj::queue_key_t & key ) {
+	return seg->logical_pos + seg->volume_push == key.logical
+	    && !seg->is_producing() && seg->seqno == key.seqno;
     }
     static short & balance( queue_segment * n ) {
 	return n->balance;

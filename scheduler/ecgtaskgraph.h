@@ -1151,7 +1151,7 @@ struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
     }
 };
 
-// queue prefix pop dependency traits
+// queue prefix dependency traits
 // TODO: prefix should wait for any prior pop. Pop should not wait for
 // prior prefix.
 template<>
@@ -1176,7 +1176,7 @@ struct dep_traits<ecgtg_metadata, task_metadata, prefixdep> {
     }
 };
 
-// queue suffix pop dependency traits
+// queue suffix dependency traits
 template<>
 struct dep_traits<ecgtg_metadata, task_metadata, suffixdep> {
     template<typename T>

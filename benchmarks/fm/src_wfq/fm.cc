@@ -107,6 +107,7 @@ void begin(void)
     init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
     init_equalizer(&eq_data);
 
+#if 0
     /* The low-pass filter will need NUM_TAPS+1 items; read them if we
      * need to. */
     spawn(get_floats,(obj::pushdep<float>)fb1,(numiters+NUM_TAPS-1+3)*5+NUM_TAPS);
@@ -130,6 +131,18 @@ void begin(void)
     spawn(run_equalizer, (obj::popdep<float>)fb3, (obj::pushdep<float>)fb4, &eq_data, numiters);
     chandle<float> w;
     spawn(write_floats, w, fb4.prefix(numiters), numiters);
+    ssync();
+#endif
+
+    spawn(get_floats,(obj::pushdep<float>)fb1,(numiters)*5+(NUM_TAPS-1+3)*5+NUM_TAPS);
+    spawn(run_lpf_fb, (obj::popdep<float>)fb1, (obj::pushdep<float>)fb2,
+	  &lpf_data, numiters+NUM_TAPS-1+2);
+    spawn(run_demod, (obj::popdep<float>)fb2, (obj::pushdep<float>)fb3,
+	  numiters+NUM_TAPS);
+    spawn(run_equalizer, (obj::popdep<float>)fb3, (obj::pushdep<float>)fb4, &eq_data, numiters);
+    chandle<float> w;
+    spawn(write_floats, w, fb4.prefix(numiters), numiters);
+
     ssync();
 }
 

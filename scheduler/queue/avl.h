@@ -22,6 +22,7 @@ struct avl_traits {
     static NodeType * & child( NodeType * n, avl_dir_t dir );
     static avl_cmp_t compare( NodeType * l, NodeType * r );
     static avl_cmp_t compare( NodeType * l, KeyType & k );
+    static bool is_secondary( NodeType * l, KeyType & k );
     static short & balance( NodeType * n );
 };
 
@@ -57,13 +58,13 @@ public:
 	       // << " n=" << n << std::endl;
     }
 
-    node_t * find( key_t & k ) const {
+    node_t * find( key_t & k, node_t *& secondary ) const {
 	// errs() << "AVL " << this << " find: root=" << root << std::endl;
-	return find_helper( root, k );
+	return find_helper( root, k, secondary );
     }
 
 private:
-    static node_t * find_helper( node_t * root, key_t & k ) {
+    static node_t * find_helper( node_t * root, key_t & k, node_t *& secondary ) {
 	// errs() << "find_helper: root=" << root << " key=" << k << std::endl;
 	if( !root )
 	    return 0;
@@ -71,8 +72,10 @@ private:
 	// errs() << "find_helper: compare=" << (int)cmp << std::endl;
 	if( cmp == cmp_eq )
 	    return root;
+	if( traits::is_secondary( root, k ) )
+	    secondary = root;
 	return find_helper( traits::child( root, cmp == cmp_lt
-					   ? dir_left : dir_right ), k );
+					   ? dir_left : dir_right ), k, secondary );
     }
 
     static bool insert_helper( node_t * & root, node_t * n, short & change ) {

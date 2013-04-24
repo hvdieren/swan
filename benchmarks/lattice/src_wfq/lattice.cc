@@ -14,7 +14,7 @@ void generate( obj::pushdep<float> out, size_t n ) {
 	size_t ni = std::min(size_t(RESERVE),n-i);
 	obj::write_slice<obj::queue_metadata, float> ws
 	    = out.get_write_slice( ni );
-	for( int j=0; j < ni; ++j ) {
+	for( size_t j=0; j < ni; ++j ) {
 	    float f = i+j+1;
 	    ws.push( f );
 	}
@@ -97,7 +97,7 @@ void delay_filter_segment( obj::prefixdep<float> in, obj::suffixdep<float> out, 
     out.squash_count();
 }
 
-void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k, size_t n ) {
+void delay_filter( obj::popdep<float> in, obj::pushdep<float> out, float k ) {
     while( !in.empty() ) {
 	spawn( delay_filter_segment, in.prefix( RESERVE ),
 	       out.suffix( 2*RESERVE ), k, size_t(RESERVE) );
@@ -112,8 +112,11 @@ struct add_monad {
     static void reduce( float * left, float * right ) { *left += *right; }
 };
 
-void final_segment( obj::prefixdep<float> in, obj::reduction<add_monad> sum, size_t n ) {
+size_t final_count = 0;
+
+void final_segment( obj::prefixdep<float> in, float * sum ) {
     float running = 0;
+    size_t cnt = 0;
     while( !in.empty() ) {
 	obj::read_slice<obj::queue_metadata, float> rs
 	    = in.get_slice_upto( RESERVE, 0 );
@@ -122,45 +125,48 @@ void final_segment( obj::prefixdep<float> in, obj::reduction<add_monad> sum, siz
 	    // printf( "%f\n", v );
 	    running += v;
 	}
+	cnt += rs.get_npops();
 	rs.commit();
     }
-    sum += running;
+    *sum += running;
+    __sync_fetch_and_add( &final_count, cnt );
 }
 
-float final( obj::popdep<float> in, size_t n ) {
-    obj::object_t<float> sum;
+void final( obj::popdep<float> in, obj::reduction<add_monad> sum ) {
+    float * sump = sum;
     while( !in.empty() ) {
-	spawn( final_segment, in.prefix( RESERVE ),
-	       (obj::reduction<add_monad>)sum, size_t(RESERVE) );
+	spawn( final_segment, in.prefix( RESERVE ), sump );
     }
     ssync();
-    return (float)sum;
 }
 
 void work( size_t n ) {
     obj::hyperqueue<float> * q1[11];
-    obj::hyperqueue<float> * q2[11];
 
-    for( int i=2; i <= 10; ++i ) {
+    for( int i=2; i <= 10; ++i )
 	q1[i] = new obj::hyperqueue<float>( QSIZE, 0 );
-	q2[i] = new obj::hyperqueue<float>( QSIZE, 0 );
-    }
 
-    spawn( generate, (obj::pushdep<float>)*q1[2], n );
-    for( int i=2; i < 10; ++i ) {
-	spawn( delay_filter, (obj::popdep<float>)*q1[i],
-	       (obj::pushdep<float>)*q1[i+1], (float)i, n );
-/*
-	spawn( delay, (obj::popdep<float>)*q1[i],
-	       (obj::pushdep<float>)*q2[i], n );
-	spawn( filter, (obj::popdep<float>)*q2[i],
-	       (obj::pushdep<float>)*q1[i+1], (float)i, n );
-*/
+    obj::object_t<float> sum;
+
+    for( size_t j=0; j < n; ) {
+	size_t ni = std::min( size_t(RESERVE), n-j );
+	j += ni;
+
+	size_t nx = ni;
+
+	spawn( generate, (obj::pushdep<float>)*q1[2], ni );
+	for( int i=2; i < 10; ++i ) {
+	    spawn( delay_filter, (obj::popdep<float>)*q1[i],
+		   (obj::pushdep<float>)*q1[i+1], (float)i );
+	    nx *= 2;
+	}
+	spawn( final, (obj::popdep<float>)*q1[10], (obj::reduction<add_monad>)sum );
+	// spawn( final, q1[10]->prefix( nx ), (obj::reduction<add_monad>)sum );
     }
-    chandle<float> sum;
-    spawn( final, sum, (obj::popdep<float>)*q1[10], n );
 
     ssync();
+
+    printf( "Values popped in final_segment(): %ld\n", final_count );
 }
 
 int main( int argc, char * argv[] ) {

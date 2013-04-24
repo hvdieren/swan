@@ -14,18 +14,6 @@ profile_queue & get_profile_queue() {
 }
 #endif // PROFILE_QUEUE
 
-inline std::ostream &
-operator << ( std::ostream & os, const queue_segment & seg ) {
-    return os << "Segment: @" << &seg << " producing=" << seg.producing
-	      << " @" << seg.logical_pos
-	      << " volume-pop=" << seg.volume_pop
-	      << " volume-push=" << seg.volume_push
-	      << " next=" << seg.next
-	      << " child=" << seg.child[0] << "," << seg.child[1]
-	      << " B=" << seg.balance
-	      << ' ' << seg.q;
-}
-
 void queue_index::insert( queue_segment * seg ) {
     assert( seg->get_logical_pos() >= 0 );
     lock();
@@ -37,15 +25,20 @@ void queue_index::insert( queue_segment * seg ) {
 	   // << " seg " << *seg << std::endl;
 }
 
-queue_segment * queue_index::lookup( size_t logical ) {
+queue_segment * queue_index::lookup( size_t logical, size_t push_seqno ) {
+    queue_key_t key = { logical, push_seqno };
+
     lock();
     // errs() << "Index " << this << " lookup logical="
-	   // << logical << " end=" << get_end() << std::endl;
-    queue_segment * eq = idx.find( logical );
+	   // << logical << " seqno=" << push_seqno << " end=" << get_end() << std::endl;
+    queue_segment * secondary = 0;
+    queue_segment * eq = idx.find( key, secondary );
+    if( !eq )
+	eq = secondary;
     if( eq )
 	eq->check_hash();
     // errs() << "Index " << this << " lookup logical="
-	   // << logical << " found " << *eq << std::endl;
+	   // << logical << " found " << eq << std::endl;
     unlock();
     return eq;
 }
