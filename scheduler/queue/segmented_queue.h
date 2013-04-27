@@ -8,8 +8,6 @@
 
 namespace obj {
 
-class queue_index;
-
 class segmented_queue_base {
 protected:
     // Place-holder until we have allocated a queue_segment to hold
@@ -61,12 +59,11 @@ protected:
 
 public: 
     segmented_queue() : head( 0 ), tail( 0 ) { }
-    void erase( queue_index & idx ) {
+    void erase() {
 	// Ownership is determined when both head and tail are non-NULL.
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
-		idx.erase( q );
 		queue_segment::deallocate( q, this );
 	    }
 	}
@@ -95,7 +92,7 @@ public:
 
 public:
     segmented_queue &
-    reduce( segmented_queue & right, queue_index & idx ) {
+    reduce( segmented_queue & right ) {
 	if( !tail ) {
 	    if( !head ) {
 		head = right.get_head();
@@ -106,7 +103,7 @@ public:
 	} else if( right.get_head() ) {
 	    if( tail->get_logical_tail() >= 0 )
 		right.get_head()->propagate_logical_pos(
-		    tail->get_logical_tail(), idx );
+		    tail->get_logical_tail() );
 	    tail->set_next( right.get_head() );
 	    tail = right.get_tail(); // may be 0
 	    right.reset();
@@ -117,14 +114,14 @@ public:
     }
 
     segmented_queue &
-    reduce_reverse( segmented_queue & left, queue_index & idx ) {
-	left.reduce( *this, idx );
+    reduce_reverse( segmented_queue & left ) {
+	left.reduce( *this );
 	std::swap( left, *this );
 	return *this;
     }
 
     segmented_queue &
-    reduce_headonly( segmented_queue & right, queue_index & idx ) {
+    reduce_headonly( segmented_queue & right ) {
 	assert( right.get_head() && !right.get_tail() );
 
 	if( !tail ) {
@@ -136,7 +133,7 @@ public:
 	} else {
 	    if( tail->get_logical_tail() >= 0 )
 		right.get_head()->propagate_logical_pos( 
-		    tail->get_logical_tail(), idx );
+		    tail->get_logical_tail() );
 	    tail->set_next( right.get_head() );
 	    tail = 0;
 	    right.reset();
@@ -189,7 +186,7 @@ public:
     // (stale) logical_pos of -1.
     template<typename T>
     void push_segment( long logical_pos, size_t max_size, size_t peekoff,
-		       size_t seqno, queue_index & idx ) {
+		       size_t seqno ) {
 	if( tail ) {
 	    assert( tail->get_logical_tail() == logical_pos );
 	}
@@ -207,24 +204,17 @@ public:
 	    head = seg;
 	}
 	tail = seg;
-
-	if( logical_pos >= 0 ) {
-	    tail->lock();
-	    idx.insert( tail );
-	    tail->unlock();
-	}
     }
 
     template<typename T>
-    void push( const T * value, size_t max_size, size_t peekoff, size_t seqno,
-	       queue_index & idx ) {
+    void push( const T * value, size_t max_size, size_t peekoff, size_t seqno ) {
 	assert( tail );
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
 	if( tail->is_full() ) {
 	    // tail->lock();
-	    push_segment<T>( tail->get_logical_tail(), max_size, peekoff, seqno, idx );
+	    push_segment<T>( tail->get_logical_tail(), max_size, peekoff, seqno );
 	    // tail->unlock();
 	}
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
@@ -238,7 +228,7 @@ public:
     }
 
     template<typename MetaData, typename T>
-    write_slice<MetaData,T> get_write_slice( size_t length, size_t seqno, queue_index & idx ) {
+    write_slice<MetaData,T> get_write_slice( size_t length, size_t seqno ) {
 	// Push a fresh segment if we don't have enough room on the
 	// current one. Subtract again peek distance from length. Rationale:
 	// we have already reserved this space in the current segment.
@@ -246,7 +236,7 @@ public:
 	    queue_segment * old_tail = tail;
 	    old_tail->lock();
 	    push_segment<T>( tail->get_logical_tail(), length,
-			     tail->get_peek_dist(), seqno, idx );
+			     tail->get_peek_dist(), seqno );
 	    old_tail->unlock();
 	}
 	return tail->get_write_slice<MetaData,T>( length );
@@ -262,7 +252,7 @@ public:
     size_t get_volume_pop() const { return volume_pop; }
 
 private:
-    void pop_head( queue_index & idx ) {
+    void pop_head() {
 	// errs() << "pop_head head=" << *head << std::endl;
 	if( queue_segment * seg = head->get_next() ) {
 	    head->lock();
@@ -295,7 +285,7 @@ private:
 	    // case of those races we will not be able to find some
 	    // segments in the index during some time.
 	    if( seg->get_logical_pos() < 0 )
-		seg->propagate_logical_pos( head->get_logical_tail(), idx );
+		seg->propagate_logical_pos( head->get_logical_tail() );
 
 	    // Compute our new position based on logical_pos, which is
 	    // constant (as opposed to head and tail which differ by
@@ -308,7 +298,6 @@ private:
 	    // TODO: when to delete a segment in case of multiple
 	    // consumers?
 	    if( erase ) {
-		idx.erase( head );
 		queue_segment::deallocate( head, this );
 	    } else {
 		head->unlock();
@@ -319,7 +308,7 @@ private:
 	assert( head );
     }
 
-    void await( queue_index & idx ) {
+    void await() {
 	assert( head );
 
 	// Position where we want to read.
@@ -353,7 +342,7 @@ private:
 		break;
 	    if( !head->is_producing() ) {
 		if( head->get_next() ) {
-		    pop_head( idx );
+		    pop_head();
 		    pos = get_index();
 		} else {
 		    // In this case, we know the queue is empty.
@@ -386,7 +375,7 @@ public:
 	    head = 0;
     }
 
-    bool empty( queue_index & idx ) {
+    bool empty() {
 	assert( head );
 
 	// Is there anything in the queue? If so, return not empty
@@ -395,7 +384,7 @@ public:
 
 	// Spin until we are sure about emptiness (nothing more to be produced
 	// for sure).
-	await( idx );
+	await();
 
 	// Now check again. This result is for sure.
 	return head->is_empty( get_index() );
@@ -406,9 +395,9 @@ public:
     }
 
     template<typename T>
-    T & pop( queue_index & idx ) {
+    T & pop() {
 	// Spin until the desired information appears in the queue.
-	await( idx );
+	await();
 
 	// We must be able to pop now.
 	size_t pos = get_index();
@@ -424,7 +413,7 @@ public:
 	return r;
     }
 
-    void pop_bookkeeping( size_t npop, queue_index & idx, bool dealloc ) {
+    void pop_bookkeeping( size_t npop, bool dealloc ) {
 	// errs() << *this << " pop bookkeeping " << npop << std::endl;
 	size_t pos = get_index() + npop;
 	size_t t = head->get_logical_tail();
@@ -435,30 +424,30 @@ public:
 		   // << " SQ=" << *this
 		   // << " position=" << pos << std::endl;
 	    if( dealloc && head->is_empty( get_index() ) && !head->is_producing() )
-		pop_head( idx );
+		pop_head();
 	} else {
 	    abort();
 	    size_t n = t - get_index();
 	    assert( n < npop );
 	    volume_pop += n;
 	    head->pop_bookkeeping( n );
-	    await( idx );
+	    await();
 	    if( npop > n )
-		pop_bookkeeping( npop - n, idx, dealloc );
+		pop_bookkeeping( npop - n, dealloc );
 	}
 /*
 	while( npop-- > 0 )  {
 	    volume_pop++;
 	    head->pop_bookkeeping( 1 );
-	    await( idx );
+	    await();
 	}
 */
     }
 
     template<typename T>
-    T & peek( size_t off, queue_index & idx ) {
+    T & peek( size_t off ) {
 	// Spin until the desired information appears in the queue.
-	await( idx );
+	await();
 
 	// We must be able to pop now.
 	size_t pos = get_index() + off;
@@ -495,15 +484,15 @@ public:
     // and pop npop, where it is assumed that npeek >= npop, i.e., the peeked
     // elements include the popped ones.
     template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek, queue_index & idx ) {
+    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
 	long npop;
-	await( idx );
+	await();
 	do { 
 	    long available = head->get_logical_tail() - get_index();
 	    npop = std::min( (long)npop_max, available );
 	    if( npop > 0 )
 		break;
-	    await( idx );
+	    await();
 	} while( true );
 
 #ifndef NDEBUG
@@ -520,7 +509,7 @@ public:
     }
 
     template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek, queue_index & idx ) {
+    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
 	assert( npeek >= npop );
 	// If we know that npeek <= peekoff, then we should be fine with npop > 1
 	// except when the pops span segments, i.e., all npeek values in current
@@ -529,7 +518,7 @@ public:
 	// assert( npop == 1 );
 
 	// Spin until the desired information appears in the queue.
-	await( idx );
+	await();
 
 	// The last index we want to peek
 	size_t pos = get_index() + npeek - 1;

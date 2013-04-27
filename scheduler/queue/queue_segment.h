@@ -19,23 +19,6 @@ struct queue_key_t {
     size_t seqno;
 };
 
-class queue_index {
-    avl_tree<queue_segment, queue_key_t> idx;
-    mcs_mutex mutex;
-
-private:
-    void lock( mcs_mutex::node * node ) { mutex.lock( node ); }
-    void unlock( mcs_mutex::node * node ) { mutex.unlock( node ); }
-
-public:
-    queue_index() { }
-
-public:
-    void insert( queue_segment * seg );
-    queue_segment * lookup( size_t logical, size_t push_seqno );
-    void erase( queue_segment * seg );
-};
-
 // NOTE:
 // If pushes occur concurrently on the same queue, then each will operate on
 // a distinct queue_segment. Pops may occur concurrently on the same segment.
@@ -201,7 +184,7 @@ public:
     // Beware of race condition between propagating logical position
     // versus pushing new segment and updating logical position.
     // Should be ok if link before update position.
-    void propagate_logical_pos( long logical, queue_index & idx ) {
+    void propagate_logical_pos( long logical ) {
 	// Done if known.
 	lock();
 	if( logical_pos >= 0 ) {
@@ -215,10 +198,9 @@ public:
 	// a segment that is currently being pushed at unknown index. Such a race
 	// may leave the newly pushed segment at unknown position.
 	logical_pos = logical;
-	idx.insert( this );
 	unlock();
 	if( next )
-	    next->propagate_logical_pos( get_logical_tail(), idx );
+	    next->propagate_logical_pos( get_logical_tail() );
     }
 
     // size_t get_volume_pop() const { return volume_pop; }

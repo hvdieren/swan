@@ -52,8 +52,7 @@ namespace obj {
 template<typename MetaData>
 class queue_base;
 
-enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3, qf_fixed=4,
-		     qf_knhead=8, qf_kntail=16 };
+enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3, qf_knhead=8, qf_kntail=16 };
 
 inline std::ostream & operator << ( std::ostream & os, queue_flags_t f );
 
@@ -92,15 +91,12 @@ private:
     // It appears we need to keep logical_head in case we pass to a push,
     // then we will loose the position of the pop (head).
     // long logical_head;
-    // Remaining allowed number of pops or pushes for qf_fixed
-    long count;
     // Sequence number of push range. Increment for every pop.
     size_t push_seqno;
 
     // Index structure: where to find segments at certain logical offsets.
     // TODO: store this in queue_t and pass pointer to it in here, copy on
     // nesting. That will make the storage of the index unique per queue.
-    queue_index & qindex;
     size_t max_size;
 
     size_t peekoff;
@@ -121,11 +117,11 @@ public:
 
 protected:
     // Normal constructor, called from queue_t constructor
-    queue_version( queue_index & qindex_, long max_size_, size_t peekoff_ )
+    queue_version( long max_size_, size_t peekoff_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
 	  // logical_head( 0 ),
-	  count( -1 ), push_seqno( 0 ), qindex( qindex_ ),
+	  push_seqno( 0 ),
 	  max_size( max_size_ ), peekoff( peekoff_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
@@ -143,23 +139,15 @@ protected:
 public:
     // This code is written with pushdep in mind; may need to be specialized
     // to popdep
-    queue_version( queue_version<metadata_t> * qv,
-		   qmode_t qmode, long fixed_length )
+    queue_version( queue_version<metadata_t> * qv, qmode_t qmode )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
-	  // logical_head( qv->logical_head ),
-	  count( fixed_length ),
 	  push_seqno( parent->push_seqno ),
-	  qindex( qv->qindex ), max_size( qv->max_size ),
+	  max_size( qv->max_size ),
 	  peekoff( qv->peekoff ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	assert( flags_t(qmode & parent->flags & ~qf_fixed)
-		== flags_t(qmode & ~qf_fixed)
-		&& "increasing set of permissions on a spawn" );
-	assert( ( !(parent->flags & qf_fixed) || (parent->flags & qf_fixed) )
-		&& "if parent fixed-length, then child must be too" );
 	// assert( !(parent->flags & qf_knhead) || parent->logical_head >= 0 );
 	// assert( !(parent->flags & qf_kntail) || parent->user.get_logical() >= 0 );
 
@@ -170,12 +158,8 @@ public:
 	// non-atomic update.
 	long plogical_tail = parent->user.get_logical_tail_wpeek();
 	if( flags & qf_push ) {
-	    if( !(qmode & qf_fixed) )
-		parent->flags = flags_t( parent->flags & ~qf_kntail );
-	    if( parent->flags & qf_kntail )
-		plogical_tail += fixed_length;
-	    else
-		plogical_tail = -1;
+	    parent->flags = flags_t( parent->flags & ~qf_kntail );
+	    plogical_tail = -1;
 	}
 
 	user.take( parent->user );
@@ -194,39 +178,17 @@ public:
 	    if( parent->flags & qf_push ) // qf_pop is implied on parent
 		parent->push_seqno++;
 
-	    // qindex.prefix( count ); // -1 if unknown (!qf_fixed)
-
-	    if( !(qmode & qf_fixed) )
-		parent->flags = flags_t( parent->flags & ~qf_knhead );
-	    else {
-		assert( count >= 0 );
-		if( parent->count > 0 ) {
-		    // errs() << "fixed pop finish count=" << count << " parent count=" << parent->count << " parent=" << parent << std::endl;
-		    assert( parent->count >= count );
-		    parent->count -= count;
-		}
-	    }
-/*
-	    if( parent->flags & qf_knhead )
-		parent->logical_head += fixed_length;
-	    else
-		parent->logical_head = -1;
-*/
+	    parent->flags = flags_t( parent->flags & ~qf_knhead );
 
 	    // Only initialize queue if this is a pop, pushpop or prefix dep.
-	    assert( !(flags & qf_fixed) || parent->queue.get_logical() >= 0 );
 	    queue.take( parent->queue );
-	    assert( !(flags & qf_fixed) || queue.get_logical() >= 0 );
 
 	    // parent->queue.logical indicates the pop 'tail': where the next
 	    // task (sibling to this) will be popping from.
 	    // queue.logical indicates the local pop 'head': where this task
 	    // or its decendants will be popping from.
 	    // parent->queue.set_logical( parent->logical_head );
-	    if( qmode & qf_fixed )
-		parent->queue.set_logical( queue.get_logical() + count );
-	    else
-		parent->queue.set_logical( -1 );
+	    parent->queue.set_logical( -1 );
 	}
 
 	// Link in chain with siblings
@@ -242,14 +204,6 @@ public:
 	    parent->chead = parent->ctail = this;
 	}
 	unlock();
-
-/*
-	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
-	    // assert( flags & qf_knhead ); // benchmark specific tmp test...
-	    if( flags & qf_knhead )
-		assert( logical_head >= 0 );
-	}
-*/
 
 /*
 	errs() << "QV nest constructor for: " << *this << std::endl;
@@ -268,22 +222,13 @@ public:
 		&& "QV::children must be un-owned on destruct" );
 	assert( !right.get_head() && !right.get_tail()
 		&& "QV::right must be empty on destruct" );
-	// assert( (flags & (qf_fixed|qf_push)) != (qf_fixed|qf_push)
-		// || count == 0 );
-	assert( !(flags & qf_fixed) || count == 0 );
 
-	user.erase( qindex );
-    }
-
-    void squash_count() { count = 0; }
-
-    size_t get_available_count( size_t n ) const {
-	return count < 0 ? n : std::min( n, size_t(count) );
+	user.erase();
     }
 
     void reduce_sync() {
 	// user <- children REDUCE user
-	user.reduce_reverse( children, qindex );
+	user.reduce_reverse( children );
     }
 
     // TODO: replace push argument by checking flags
@@ -305,20 +250,20 @@ public:
 	    fright->lock();
 
 	// Reducing everything into a single queue
-	children.reduce( user.reduce( right, qindex ), qindex );
+	children.reduce( user.reduce( right ) );
 
 	// Move up hierarchy. Get last segment after reduction because our local
 	// list may potentially be nil if we selected not to push.
 	queue_segment * last_seg = 0;
 	if( fleft ) {
-	    fleft->right.reduce( children, qindex );
+	    fleft->right.reduce( children );
 	    last_seg = fleft->right.get_tail();
 	} else {
 	    assert( parent );
-	    parent->children.reduce( children, qindex );
+	    parent->children.reduce( children );
 	    last_seg = parent->children.get_tail();
 	    if( is_stack )
-		parent->user.reduce( parent->children, qindex );
+		parent->user.reduce( parent->children );
 	}
 
 	// Clear producing flag
@@ -342,32 +287,9 @@ public:
 	}
 
 
-	// prefixdep
-	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
-	    // TODO: A high-overhead alternative. Probably we shouldn't
-	    // have to do this...
-	    while( count > 0 ) {
-		if( !empty() ) {
-		    // errs() << "count=" << count << " remaining to pop..." << std::endl;
-		    abort(); // tmp
-		    assert( queue.get_head() );
-		    queue.pop<T>( qindex );
-		    count--;
-		} else {
-		    count = 0; // Squash ...
-		}
-	    }
-	}
-
 	if( (flags & qf_pop) ) {
-	    if( parent->flags & qf_push ) {
-		// qindex.pop( queue.get_volume_pop() ); -- NOP
-	    }
-
 	    // Swap queues between finishing child and parent
-	    if( !(flags & qf_fixed) ) {
-		parent->queue.take( queue );
-		assert( !(flags & qf_fixed) || parent->queue.get_logical() >= 0 );
+	    parent->queue.take( queue );
 
 	    // If we are having pops, then erase the queue, get it from the index.
 	    // This makes the assumption that pops and prefixes are not mixed at
@@ -376,13 +298,12 @@ public:
 	    // We generally do not want to carry the queue segment over through the
 	    // parent. -- should be in take()?
 		parent->queue.set_head( 0 );
-	    }
 
 	    // What about prefix executing in parallel?
 	    // Right reduce (move info to right) here: if we have a right sibling
 	    // that is a pop, tell it what the logical position is. Else, tell
 	    // the parent.
-	    if( parent->queue.get_logical() >= 0 && !(flags & qf_fixed) ) {
+	    if( parent->queue.get_logical() >= 0 ) {
 		queue_version<MetaData> * rpop = fright;
 		while( rpop ) {
 		    if( rpop->flags & qf_pop )
@@ -390,14 +311,11 @@ public:
 		    rpop = rpop->fright;
 		}
 		if( rpop ) {
-		    assert( !(rpop->flags & qf_fixed) || parent->queue.get_logical() >= 0 );
 		    assert( rpop->queue.get_logical() < 0 ||
-			    rpop->queue.get_logical() == parent->queue.get_logical()
-			    || (flags & qf_fixed) );
+			    rpop->queue.get_logical() == parent->queue.get_logical() );
 		    rpop->queue.set_logical( parent->queue.get_logical() );
 		    parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
 		    // errs() << "right reduce pop head to " << *rpop << std::endl;
-		    assert( !(rpop->flags & qf_fixed) || rpop->queue.get_logical() >= 0 );
 		} else {
 		    parent->flags = flags_t(parent->flags | qf_knhead);
 		}
@@ -469,7 +387,7 @@ private:
 	    lock();
 	    parent->unlock();
 
-	    fleft->right.reduce_headonly( q, qindex );
+	    fleft->right.reduce_headonly( q );
 
 	    fleft->unlock();
 	    unlock();
@@ -481,7 +399,7 @@ private:
 
 	    bool cont = !parent->children.get_tail();
 	    // stack/full distinction?
-	    parent->children.reduce_headonly( q, qindex );
+	    parent->children.reduce_headonly( q );
 
 	    unlock();
             parent->unlock();
@@ -521,34 +439,8 @@ public:
 
 private:
     void ensure_queue_head() {
-	// assert( logical_head == qindex.get_head_pop() || logical_head < 0 );
-	assert( !(flags & qf_fixed) || queue.get_logical() >= 0 );
-
 	if( !queue.get_head() ) {
 	    // errs() << "ensure_queue_head: " << *this << std::endl;
-	    if( queue.get_logical() < 0 ) {
-		abort();
-/*
-		// This is a hack to solve a bug in case of push/pop/push/pop
-		// type of code.
-		if( !(flags & qf_fixed) ) {
-		    // logical_head = qindex.get_head_pop();
-		    queue.set_logical( qindex.get_head_pop() );
-		    flags = queue_flags_t( flags | qf_knhead );
-		    // errs() << "ensure_queue_head update: " << *this << std::endl;
-		}
-*/
-/*
-		parent->lock();
-		assert( ( fleft == 0 || (fleft->flags & qf_push) )
-			&& "Must not have left pop sibling to recover queue head" );
-		queue.take( parent->queue );
-		logical_head = queue.get_logical();
-		flags = queue_flags_t( flags | qf_knhead );
-		parent->queue.set_logical( parent->logical_head );
-		parent->unlock();
-*/
-	    }
 	    assert( queue.get_logical() >= 0 && "logical index of head queue"
 		    " segment must be known" );
 
@@ -566,13 +458,6 @@ private:
 #endif // PROFILE_QUEUE
 
 	    while( !queue.get_head() ) {
-		// Search the index
-		if( queue_segment * seg
-		    = qindex.lookup( queue.get_logical(), push_seqno ) ) {
-		    queue.set_head( seg );
-		    break;
-		}
-
 		// If there are no older producing push tasks, then bail out.
 		queue_version<MetaData> * qv = this;
 		bool all_left = true;
@@ -612,15 +497,11 @@ public:
 
     void push_bookkeeping( size_t npush ) {
 	user.push_bookkeeping( npush );
-	if( count >= 0 )
-	    count -= npush;
     }
 
     void pop_bookkeeping( size_t npop ) {
 	// errs() << "QV " << *this << " pop bookkeeping " << npop << "\n";
-	queue.pop_bookkeeping( npop, qindex, count > long(npop) );
-	if( count >= 0 )
-	    count -= npop;
+	queue.pop_bookkeeping( npop, false );
     }
 
     template<typename T>
@@ -629,7 +510,7 @@ public:
 	// until we have made contact with the task that pushes.
 	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
-	T & r = queue.pop<T>( qindex );
+	T & r = queue.pop<T>();
 	// errs() << "pop QV=" << this << " queue="
 	       // << queue << " value=" << r << "\n";
 	return r;
@@ -640,7 +521,7 @@ public:
 	assert( off <= peekoff && "Peek outside requested range" );
 	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
-	return queue.peek<T>( off, qindex );
+	return queue.peek<T>( off );
     }
 
     template<typename T>
@@ -650,13 +531,13 @@ public:
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
 		: user.get_logical(), std::max(length+peekoff,max_size),
-		peekoff, push_seqno, qindex );
+		peekoff, push_seqno );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	write_slice<MetaData,T> slice
-	    = user.get_write_slice<MetaData,T>( length+peekoff, push_seqno, qindex );
+	    = user.get_write_slice<MetaData,T>( length+peekoff, push_seqno );
 	slice.set_version( this );
 	return slice;
     }
@@ -665,23 +546,14 @@ public:
     read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
 	assert( npeek <= peekoff && "Peek outside requested range" );
 
-	// Count sets an upper limit on allowable pops
-	npop_max = std::min( npop_max, size_t(count) );
-
 	// empty() involves count == 0 check.
-	if( (flags & qf_fixed) && empty() ) {
-	    read_slice<MetaData,T> slice( 0, 0 );
-	    slice.set_version( this );
-	    return slice;
-	} else {
-	    assert( !empty() );
-	    ensure_queue_head(); // should be done by empty()
-	    assert( queue.get_head() );
-	    read_slice<MetaData,T> slice
-		= queue.get_slice_upto<MetaData,T>( npop_max, npeek, qindex );
-	    slice.set_version( this );
-	    return slice;
-	}
+	assert( !empty() );
+	ensure_queue_head(); // should be done by empty()
+	assert( queue.get_head() );
+	read_slice<MetaData,T> slice
+	    = queue.get_slice_upto<MetaData,T>( npop_max, npeek );
+	slice.set_version( this );
+	return slice;
     }
     template<typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
@@ -690,27 +562,23 @@ public:
 	assert( !empty() );
 	ensure_queue_head();
 	read_slice<MetaData,T> slice
-	    = queue.get_slice<MetaData,T>( npop, npeek, qindex );
+	    = queue.get_slice<MetaData,T>( npop, npeek );
 	slice.set_version( this );
 	return slice;
     }
 
-    long get_count() const { return count; }
-
     template<typename T>
     const T & pop_fixed( const T & dflt ) {
 	// errs() << "pop QV=" << this << " queue=" << queue << "\n";
-	assert( count > 0 && "No more remaing pops allowed" );
 
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
-	count--;
-	if( queue.empty( qindex ) )
+	if( queue.empty() )
 	    return dflt;
 	else
-	    return queue.pop<T>( qindex );
+	    return queue.pop<T>();
 	// errs() << "prefix pop " << this << " count=" << count << "\n";
     }
 
@@ -721,14 +589,14 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, push_seqno, qindex );
+		: user.get_logical(), max_size, peekoff, push_seqno );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	// errs() << "push QV=" << this << " user="
 	       // << user << " value=" << t << "\n";
-	user.push<T>( &t, max_size, peekoff, push_seqno, qindex );
+	user.push<T>( &t, max_size, peekoff, push_seqno );
     }
 
     template<typename T>
@@ -737,7 +605,7 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, push_seqno, qindex );
+		: user.get_logical(), max_size, peekoff, push_seqno );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -745,10 +613,7 @@ public:
 	// errs() << "push-fixed QV=" << this << " user="
 	       // << user << " value=" << t << "\n";
 
-	assert( count > 0 && "No more remaing pushes allowed" );
-	count--;
-
-	user.push<T>( &t, max_size, peekoff, qindex );
+	user.push<T>( &t, max_size, peekoff );
     }
 
 
@@ -763,11 +628,7 @@ public:
 	    // errs() << "QV empty due to non-producing final segment" << std::endl;
 	    return true;
 	}
-	if( (flags & qf_fixed) && count == 0 ) {
-	    // errs() << "QV empty due to fixed count exceeded" << std::endl;
-	    return true;
-	}
-	bool r = queue.empty( qindex );
+	bool r = queue.empty();
 	// errs() << "QV empty? " << r << std::endl;
 	return r;
     }
@@ -780,7 +641,6 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " children=" << v.children
        << " user=" << v.user
        << " right=" << v.right
-       << " count=" << v.count
        << " seqno=" << v.push_seqno
        << " flags=" << v.flags;
     return os;
@@ -794,10 +654,6 @@ std::ostream & operator << ( std::ostream & os, queue_flags_t f ) {
     }
     if( f & qf_pop ) {
 	os << sep << "pop";
-	sep = "|";
-    }
-    if( f & qf_fixed ) {
-	os << sep << "fixed";
 	sep = "|";
     }
     if( f & qf_knhead ) {

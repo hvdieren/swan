@@ -52,12 +52,9 @@ protected:
 template<typename T>
 class hyperqueue : protected queue_version<queue_metadata>
 {
-    // There is one index structure per hyperqueue
-    queue_index qindex;
-
 public:
     explicit hyperqueue( size_t size = 128, size_t peekoff = 0 )
-	: queue_version<queue_metadata>( qindex, size, peekoff ) { }
+	: queue_version<queue_metadata>( size, peekoff ) { }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep >(); }
