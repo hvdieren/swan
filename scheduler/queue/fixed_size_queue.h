@@ -198,13 +198,12 @@ public:
 
     // returns NULL if pop fails
     template<typename T>
-    T & pop( size_t pos ) {
+    T & pop() {
 	assert( elm_size == sizeof(T) );
-	char* value = &buffer[(pos*elm_size) % size];
+	char* value = &buffer[(head*elm_size) % size];
 	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
-	if( ((pos*elm_size) % size) == head )
-	    head = (head+elm_size) % size;
+	head = (head+elm_size) % size;
 	return r;
     }
 	

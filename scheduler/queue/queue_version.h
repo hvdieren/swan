@@ -128,9 +128,6 @@ protected:
 
 	assert( peekoff < max_size && "Peek only across one segment boundary" );
 
-	user.set_logical( 0 ); // logical tail
-	queue.set_logical( 0 ); // logical head
-
 	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
 	
@@ -149,21 +146,11 @@ public:
 		       // "padding failed" );
 
 	// assert( !(parent->flags & qf_knhead) || parent->logical_head >= 0 );
-	// assert( !(parent->flags & qf_kntail) || parent->user.get_logical() >= 0 );
 
 	// Link in frame with siblings and parent
 	parent->lock();
 
-	// Update parent flags and logical. Flags require lock due to
-	// non-atomic update.
-	long plogical_tail = parent->user.get_logical_tail_wpeek();
-	if( flags & qf_push ) {
-	    parent->flags = flags_t( parent->flags & ~qf_kntail );
-	    plogical_tail = -1;
-	}
-
 	user.take( parent->user );
-	parent->user.set_logical( plogical_tail );
 	if( (flags & qf_push) ) {
 	    if( user.get_tail() ) {
 		user.get_tail()->set_producing();
@@ -182,13 +169,6 @@ public:
 
 	    // Only initialize queue if this is a pop, pushpop or prefix dep.
 	    queue.take( parent->queue );
-
-	    // parent->queue.logical indicates the pop 'tail': where the next
-	    // task (sibling to this) will be popping from.
-	    // queue.logical indicates the local pop 'head': where this task
-	    // or its decendants will be popping from.
-	    // parent->queue.set_logical( parent->logical_head );
-	    parent->queue.set_logical( -1 );
 	}
 
 	// Link in chain with siblings
@@ -303,7 +283,7 @@ public:
 	    // Right reduce (move info to right) here: if we have a right sibling
 	    // that is a pop, tell it what the logical position is. Else, tell
 	    // the parent.
-	    if( parent->queue.get_logical() >= 0 ) {
+	    if( parent->queue.get_head() >= 0 ) {
 		queue_version<MetaData> * rpop = fright;
 		while( rpop ) {
 		    if( rpop->flags & qf_pop )
@@ -311,10 +291,8 @@ public:
 		    rpop = rpop->fright;
 		}
 		if( rpop ) {
-		    assert( rpop->queue.get_logical() < 0 ||
-			    rpop->queue.get_logical() == parent->queue.get_logical() );
-		    rpop->queue.set_logical( parent->queue.get_logical() );
-		    parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
+		    // rpop->queue.set_logical( parent->queue.get_logical() );
+		    // parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
 		    // errs() << "right reduce pop head to " << *rpop << std::endl;
 		} else {
 		    parent->flags = flags_t(parent->flags | qf_knhead);
@@ -440,10 +418,6 @@ public:
 private:
     void ensure_queue_head() {
 	if( !queue.get_head() ) {
-	    // errs() << "ensure_queue_head: " << *this << std::endl;
-	    assert( queue.get_logical() >= 0 && "logical index of head queue"
-		    " segment must be known" );
-
 	    // Find the head of the queue for concurrently popping results.
 	    // Simple case: there are no other popdep tasks on the same queue
 	    // executing, so the other running queue-dep tasks, if any, have
@@ -490,11 +464,6 @@ private:
     }
 
 public:
-    // Debugging - pop interface
-    size_t get_index() const {
-	return queue.get_index();
-    }
-
     void push_bookkeeping( size_t npush ) {
 	user.push_bookkeeping( npush );
     }
@@ -529,9 +498,8 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
-		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), std::max(length+peekoff,max_size),
-		peekoff, push_seqno );
+		std::max(length+peekoff,max_size),
+		peekoff, push_seqno, true ); // review is_head
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -587,9 +555,7 @@ public:
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>(
-		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, push_seqno );
+	    user.push_segment<T>( max_size, peekoff, push_seqno, true );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -604,8 +570,7 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
-		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, push_seqno );
+		max_size, peekoff, push_seqno, true );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -623,7 +588,6 @@ public:
 	// until we have made contact with the task that pushes.
 	ensure_queue_head();
 	// errs() << "QV empty check: QV=" << *this << " queue=" << queue << std::endl;
-	assert( queue.get_logical() >=0 );
 	if( !queue.get_head() ) {
 	    // errs() << "QV empty due to non-producing final segment" << std::endl;
 	    return true;

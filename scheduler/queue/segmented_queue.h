@@ -9,16 +9,8 @@
 namespace obj {
 
 class segmented_queue_base {
-protected:
-    // Place-holder until we have allocated a queue_segment to hold
-    // this value.
-    long logical;
-
 public:
-    segmented_queue_base() : logical( -1 ) { }
-
-    long get_logical() const { return logical; }
-    void set_logical( long logical_ ) { logical = logical_; }
+    segmented_queue_base() { }
 };
 
 class segmented_queue;
@@ -77,15 +69,11 @@ public:
 
     void reset() {
 	head = tail = 0;
-	logical = -1;
     }
 
-    // Retain from.logical as we are keeping the from queue segment at the
-    // same logical position!
     segmented_queue split() {
 	segmented_queue h;
 	h.head = head;
-	h.logical = logical;
 	head = 0;
 	return h;
     }
@@ -96,14 +84,10 @@ public:
 	if( !tail ) {
 	    if( !head ) {
 		head = right.get_head();
-		logical = right.get_logical();
 	    }
 	    tail = right.get_tail();
 	    right.reset();
 	} else if( right.get_head() ) {
-	    if( tail->get_logical_tail() >= 0 )
-		right.get_head()->propagate_logical_pos(
-		    tail->get_logical_tail() );
 	    tail->set_next( right.get_head() );
 	    tail = right.get_tail(); // may be 0
 	    right.reset();
@@ -127,13 +111,9 @@ public:
 	if( !tail ) {
 	    if( !head ) {
 		head = right.get_head();
-		logical = right.get_logical();
 	    }
 	    right.reset();
 	} else {
-	    if( tail->get_logical_tail() >= 0 )
-		right.get_head()->propagate_logical_pos( 
-		    tail->get_logical_tail() );
 	    tail->set_next( right.get_head() );
 	    tail = 0;
 	    right.reset();
@@ -157,7 +137,6 @@ public:
 
     void reset() {
 	head = 0;
-	logical = -1;
     }
 
     void take( segmented_queue_headonly & from ) {
@@ -173,33 +152,16 @@ public:
 	std::swap( *this, from );
     }
 
-    // This works because we know that if head != 0, then also tail != 0.
-    long get_logical_tail() const {
-	return tail ? tail->get_logical_tail() : logical;
-    }
-    long get_logical_tail_wpeek() const {
-	return tail ? tail->get_logical_tail_wpeek() : logical;
-    }
-
-    // TODO: There is a potential race condition between setting logical_pos
-    // through linking segments (reduce) and creating segments with a copied
-    // (stale) logical_pos of -1.
     template<typename T>
-    void push_segment( long logical_pos, size_t max_size, size_t peekoff,
-		       size_t seqno ) {
-	if( tail ) {
-	    assert( tail->get_logical_tail() == logical_pos );
-	}
+    void push_segment( size_t max_size, size_t peekoff, size_t seqno, bool is_head ) {
 	queue_segment * seg
-	    = queue_segment::template create<T>( logical_pos, max_size, peekoff, seqno );
-	logical = seg->get_logical_head();
-
+	    = queue_segment::template create<T>( max_size, peekoff, seqno, is_head );
 	if( tail ) {
 	    tail->set_next( seg );
 	    tail->clr_producing();
 	} else {
 	    assert( !head && "if tail == 0, then also head == 0" );
-	    if( logical == 0 )
+	    if( is_head )
 		seg->rewind();
 	    head = seg;
 	}
@@ -214,7 +176,7 @@ public:
 	// a new segment.
 	if( tail->is_full() ) {
 	    // tail->lock();
-	    push_segment<T>( tail->get_logical_tail(), max_size, peekoff, seqno );
+	    push_segment<T>( max_size, peekoff, seqno, false );
 	    // tail->unlock();
 	}
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
@@ -235,8 +197,7 @@ public:
 	if( !tail->has_space( length-tail->get_peek_dist() ) ) {
 	    queue_segment * old_tail = tail;
 	    old_tail->lock();
-	    push_segment<T>( tail->get_logical_tail(), length,
-			     tail->get_peek_dist(), seqno );
+	    push_segment<T>( length, tail->get_peek_dist(), seqno, false );
 	    old_tail->unlock();
 	}
 	return tail->get_write_slice<MetaData,T>( length );
@@ -256,9 +217,6 @@ private:
 	// errs() << "pop_head head=" << *head << std::endl;
 	if( queue_segment * seg = head->get_next() ) {
 	    head->lock();
-#ifndef NDEBUG
-	    size_t pos = get_index();
-#endif
 
 	    // Note: this case is executed only once per segment,
 	    // namely for the task that pops the tail of this segment.
@@ -272,32 +230,7 @@ private:
 	    // TODO: situation got worse with peeking
 	    // IDEA: incorporate peeked condition as add one to
 	    // push and pop volume rather than separate boolen condition
-	    bool erase = head->all_done();
-
-	    // Every segment linked from a known position (we can
-	    // only pop from a known position) should also be known.
-	    // However, there is a race condition in the reduction
-	    // and updating of the logicial position that may occur
-	    // (rarely) and that may imply that the value has not been
-	    // properly propagated yet. We fix the correctness aspect
-	    // of that here, propagating the position if needed.
-	    // There is also a potential performance aspect as in
-	    // case of those races we will not be able to find some
-	    // segments in the index during some time.
-	    if( seg->get_logical_pos() < 0 )
-		seg->propagate_logical_pos( head->get_logical_tail() );
-
-	    // Compute our new position based on logical_pos, which is
-	    // constant (as opposed to head and tail which differ by
-	    // the number of pushes and pops performed).
-	    // -- bookkeeping of total volume popped? ---
-	    // logical = seg->get_logical_pos();
-	    // volume_pop = pos - logical;
-	    assert( (long)pos >= seg->get_logical_pos() );
-
-	    // TODO: when to delete a segment in case of multiple
-	    // consumers?
-	    if( erase ) {
+	    if( head->all_done() ) {
 		queue_segment::deallocate( head, this );
 	    } else {
 		head->unlock();
@@ -311,12 +244,9 @@ private:
     void await() {
 	assert( head );
 
-	// Position where we want to read.
-	size_t pos = get_index();
-
 	head->check_hash();
 
-	if( likely( !head->is_empty( pos ) ) )
+	if( likely( !head->is_empty() ) )
 	    return;
 
 #if PROFILE_QUEUE
@@ -334,16 +264,15 @@ private:
 
 	    head->check_hash();
 
-	    while( head->is_empty( pos ) && head->is_producing() ) {
+	    while( head->is_empty() && head->is_producing() ) {
 		// busy wait
 		sched_yield();
 	    }
-	    if( !head->is_empty( pos ) )
+	    if( !head->is_empty() )
 		break;
 	    if( !head->is_producing() ) {
 		if( head->get_next() ) {
 		    pop_head();
-		    pos = get_index();
 		} else {
 		    // In this case, we know the queue is empty.
 		    // This may be an error or not, depending on whether
@@ -369,17 +298,14 @@ public:
 
     void take( segmented_queue_pop & from ) {
 	std::swap( *this, from );
-	logical += volume_pop;
 	volume_pop = 0;
-	if( logical < 0 )
-	    head = 0;
     }
 
     bool empty() {
 	assert( head );
 
 	// Is there anything in the queue? If so, return not empty
-	if( likely( !head->is_empty( get_index() ) ) )
+	if( likely( !head->is_empty() ) )
 	    return false;
 
 	// Spin until we are sure about emptiness (nothing more to be produced
@@ -387,11 +313,7 @@ public:
 	await();
 
 	// Now check again. This result is for sure.
-	return head->is_empty( get_index() );
-    }
-
-    size_t get_index() const {
-	return logical + volume_pop;
+	return head->is_empty();
     }
 
     template<typename T>
@@ -399,42 +321,25 @@ public:
 	// Spin until the desired information appears in the queue.
 	await();
 
-	// We must be able to pop now.
-	size_t pos = get_index();
-
 	// errs() << "pop from queue " << head << ": " << *head
-	       // << " SQ=" << *this
-	       // << " position=" << pos << "\n";
+	// << " SQ=" << *this << std::endl;
 
-	assert( !head->is_empty( pos ) );
+	assert( !head->is_empty() );
 
-	T & r = head->pop<T>( pos );
+	T & r = head->pop<T>();
 	volume_pop++;
 	return r;
     }
 
     void pop_bookkeeping( size_t npop, bool dealloc ) {
 	// errs() << *this << " pop bookkeeping " << npop << std::endl;
-	size_t pos = get_index() + npop;
-	size_t t = head->get_logical_tail();
-	if( t >= (long)pos ) {
-	    volume_pop += npop;
-	    head->pop_bookkeeping( npop );
-	    // errs() << "pop_bookkeeping on queue " << head << ": " << *head
-		   // << " SQ=" << *this
-		   // << " position=" << pos << std::endl;
-	    if( dealloc && head->is_empty( get_index() ) && !head->is_producing() )
-		pop_head();
-	} else {
-	    abort();
-	    size_t n = t - get_index();
-	    assert( n < npop );
-	    volume_pop += n;
-	    head->pop_bookkeeping( n );
-	    await();
-	    if( npop > n )
-		pop_bookkeeping( npop - n, dealloc );
-	}
+	volume_pop += npop;
+	head->pop_bookkeeping( npop );
+	// errs() << "pop_bookkeeping on queue " << head << ": " << *head
+	// << " SQ=" << *this
+	// << " position=" << pos << std::endl;
+	if( dealloc && head->is_empty() && !head->is_producing() )
+	    pop_head();
 /*
 	while( npop-- > 0 )  {
 	    volume_pop++;
@@ -449,9 +354,6 @@ public:
 	// Spin until the desired information appears in the queue.
 	await();
 
-	// We must be able to pop now.
-	size_t pos = get_index() + off;
-
 	// errs() << "peek from queue " << head << ": value="
 	       // << std::dec << t << ' ' << *head
 	       // << " SQ=" << *this
@@ -464,11 +366,11 @@ public:
 
 	queue_segment * seg = head;
 	head->check_hash();
-	while( unlikely( seg->is_empty_wpeek( pos ) ) ) {
+	while( unlikely( seg->is_empty() ) ) {
 	    seg->check_hash();
 	    if( !seg->is_producing() )
 		seg = head->get_next();
-	    if( !seg->is_empty_wpeek( pos ) )
+	    if( !seg->is_empty() )
 		break;
 	    sched_yield();
 	}
@@ -476,8 +378,8 @@ public:
 	pp_time_end( &get_profile_queue().sq_peek );
 #endif // PROFILE_QUEUE
 
-	assert( !seg->is_empty_wpeek( pos ) );
-	return seg->peek<T>( pos );
+	assert( !seg->is_empty() );
+	return seg->peek<T>();
     }
 
     // Get access to a part of the buffer that allow to peek npeek elements
@@ -488,24 +390,14 @@ public:
 	long npop;
 	await();
 	do { 
-	    long available = head->get_logical_tail() - get_index();
+	    long available = 0; // head->???();
 	    npop = std::min( (long)npop_max, available );
 	    if( npop > 0 )
 		break;
 	    await();
 	} while( true );
 
-#ifndef NDEBUG
-	size_t pos = get_index() + npop + npeek - 1;
-	// Assertion accurate only for pop (not prefix)
-	// assert( logical + long(volume_pop) == head->get_logical_head() );
-	assert( logical + long(volume_pop) >= head->get_logical_pos()
-		&& logical + long(volume_pop) < head->get_logical_tail() );
-	assert( !head->is_empty_wpeek( pos )
-		&& "read range crosses queue segments" );
-#endif
-
-	return head->get_slice<MetaData,T>( get_index(), npop );
+	return head->get_slice<MetaData,T>( npop );
     }
 
     template<typename MetaData, typename T>
@@ -520,22 +412,8 @@ public:
 	// Spin until the desired information appears in the queue.
 	await();
 
-	// The last index we want to peek
-	size_t pos = get_index() + npeek - 1;
-	
 	// Make sure we have all elements available
-/*
-	while( head->is_empty_wpeek( pos ) && npop > 0 ) {
-	    pos--;
-	    npop--;
-	}
-
-	assert( npop > 0 && "Not able to pop anything" );
-*/
-	assert( !head->is_empty_wpeek( pos )
-		&& "read range crosses queue segments" );
-
-	return head->get_slice<MetaData,T>( get_index(), npop );
+	return head->get_slice<MetaData,T>( npop );
     }
 };
 
@@ -543,7 +421,6 @@ std::ostream &
 operator << ( std::ostream & os, const segmented_queue & seg ) {
     return os << '{' << seg.get_head()
 	      << ", " << seg.get_tail()
-	      << ", @" << seg.get_logical()
 	      << '}';
 }
 
@@ -551,14 +428,12 @@ std::ostream &
 operator << ( std::ostream & os, const segmented_queue_push & seg ) {
     return os << '{' << seg.get_head()
 	      << ", " << seg.get_tail()
-	      << ", @" << seg.get_logical()
 	      << '}';
 }
 
 std::ostream &
 operator << ( std::ostream & os, const segmented_queue_pop & seg ) {
     return os << '{' << seg.get_head()
-	      << ", @" << seg.get_logical()
 	      << "-" << seg.get_volume_pop()
 	      << '}';
 }
