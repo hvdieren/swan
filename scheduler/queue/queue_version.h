@@ -23,6 +23,10 @@
 // + wait on all prior pops
 // + starting head is always known when prefixdep is ready (arg_ready in tickets)
 // + 
+//
+// BUG
+// + The push/pop/push/pop scenario does not work correctly yet. This would be
+//   useful in dedup (e.g.)
 // 
 // For dedup benchmark:
 // + We don't know in advance how many sub-fragments will be identified, so
@@ -87,9 +91,11 @@ private:
     // segmented_queue's (queue and user).
     // It appears we need to keep logical_head in case we pass to a push,
     // then we will loose the position of the pop (head).
-    long logical_head;
+    // long logical_head;
     // Remaining allowed number of pops or pushes for qf_fixed
     long count;
+    // Sequence number of push range. Increment for every pop.
+    size_t push_seqno;
 
     // Index structure: where to find segments at certain logical offsets.
     // TODO: store this in queue_t and pass pointer to it in here, copy on
@@ -118,7 +124,8 @@ protected:
     queue_version( queue_index & qindex_, long max_size_, size_t peekoff_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
-	  logical_head( 0 ), count( -1 ), qindex( qindex_ ),
+	  // logical_head( 0 ),
+	  count( -1 ), push_seqno( 0 ), qindex( qindex_ ),
 	  max_size( max_size_ ), peekoff( peekoff_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
@@ -140,7 +147,9 @@ public:
 		   qmode_t qmode, long fixed_length )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
-	  logical_head( qv->logical_head ), count( fixed_length ),
+	  // logical_head( qv->logical_head ),
+	  count( fixed_length ),
+	  push_seqno( parent->push_seqno ),
 	  qindex( qv->qindex ), max_size( qv->max_size ),
 	  peekoff( qv->peekoff ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
@@ -151,6 +160,8 @@ public:
 		&& "increasing set of permissions on a spawn" );
 	assert( ( !(parent->flags & qf_fixed) || (parent->flags & qf_fixed) )
 		&& "if parent fixed-length, then child must be too" );
+	// assert( !(parent->flags & qf_knhead) || parent->logical_head >= 0 );
+	// assert( !(parent->flags & qf_kntail) || parent->user.get_logical() >= 0 );
 
 	// Link in frame with siblings and parent
 	parent->lock();
@@ -171,38 +182,51 @@ public:
 	parent->user.set_logical( plogical_tail );
 	if( (flags & qf_push) ) {
 	    if( user.get_tail() ) {
-		if( !user.get_tail()->is_producing() )
-		    qindex.unset_end();
 		user.get_tail()->set_producing();
-	    } else if( parent->children.get_tail() ) {
-		if( !parent->children.get_tail()->is_producing() )
-		    qindex.unset_end();
+		// errs() << "set producing: " << *user.get_tail() << std::endl;
+	    } /*else if( parent->children.get_tail() ) {
 		parent->children.get_tail()->set_producing();
-	    }
+		errs() << "set producing: " << *parent->children.get_tail() << std::endl;
+		}*/
 	}
 
 	if( flags & qf_pop ) {
+	    if( parent->flags & qf_push ) // qf_pop is implied on parent
+		parent->push_seqno++;
+
+	    // qindex.prefix( count ); // -1 if unknown (!qf_fixed)
+
 	    if( !(qmode & qf_fixed) )
 		parent->flags = flags_t( parent->flags & ~qf_knhead );
 	    else {
 		assert( count >= 0 );
 		if( parent->count > 0 ) {
+		    // errs() << "fixed pop finish count=" << count << " parent count=" << parent->count << " parent=" << parent << std::endl;
 		    assert( parent->count >= count );
 		    parent->count -= count;
 		}
 	    }
+/*
 	    if( parent->flags & qf_knhead )
 		parent->logical_head += fixed_length;
 	    else
 		parent->logical_head = -1;
+*/
 
 	    // Only initialize queue if this is a pop, pushpop or prefix dep.
+	    assert( !(flags & qf_fixed) || parent->queue.get_logical() >= 0 );
 	    queue.take( parent->queue );
-	    parent->queue.set_logical( parent->logical_head );
+	    assert( !(flags & qf_fixed) || queue.get_logical() >= 0 );
 
-	    // errs() << "create pop QV=" << *this << "\n";
-	    // errs() << "parent pop QV=" << *parent << "\n";
-	    // errs() << "\n";
+	    // parent->queue.logical indicates the pop 'tail': where the next
+	    // task (sibling to this) will be popping from.
+	    // queue.logical indicates the local pop 'head': where this task
+	    // or its decendants will be popping from.
+	    // parent->queue.set_logical( parent->logical_head );
+	    if( qmode & qf_fixed )
+		parent->queue.set_logical( queue.get_logical() + count );
+	    else
+		parent->queue.set_logical( -1 );
 	}
 
 	// Link in chain with siblings
@@ -219,19 +243,20 @@ public:
 	}
 	unlock();
 
+/*
 	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
-	    assert( flags & qf_knhead ); // benchmark specific tmp test...
+	    // assert( flags & qf_knhead ); // benchmark specific tmp test...
 	    if( flags & qf_knhead )
 		assert( logical_head >= 0 );
 	}
-
-	parent->unlock();
+*/
 
 /*
-	errs() << "QV nest constructor for: " << *this << "\n";
-	errs() << "                 parent: " << *parent << "\n";
-	errs() << "\n";
+	errs() << "QV nest constructor for: " << *this << std::endl;
+	errs() << "                 parent: " << *parent << std::endl;
 */
+
+	parent->unlock();
     }
 
     ~queue_version() {
@@ -243,13 +268,18 @@ public:
 		&& "QV::children must be un-owned on destruct" );
 	assert( !right.get_head() && !right.get_tail()
 		&& "QV::right must be empty on destruct" );
-	assert( (flags & (qf_fixed|qf_push)) != (qf_fixed|qf_push)
-		|| count == 0 );
+	// assert( (flags & (qf_fixed|qf_push)) != (qf_fixed|qf_push)
+		// || count == 0 );
+	assert( !(flags & qf_fixed) || count == 0 );
 
 	user.erase( qindex );
     }
 
     void squash_count() { count = 0; }
+
+    size_t get_available_count( size_t n ) const {
+	return count < 0 ? n : std::min( n, size_t(count) );
+    }
 
     void reduce_sync() {
 	// user <- children REDUCE user
@@ -274,103 +304,115 @@ public:
 	if( fright )
 	    fright->lock();
 
-/*
-	errs() << "Reducing hypermaps on " << *this
-	       << " parent=" << *parent
-	       << std::endl;
- */
-
 	// Reducing everything into a single queue
 	children.reduce( user.reduce( right, qindex ), qindex );
 
-	// Clear producing flag on user tail, but only after reducing lists.
-	// Segment becomes final when
-	// * move into parent->children (it is children's tail)
-	// * move into fleft->right (it is right's tail)
-	//      .. but there is potentially a path to a parent's user tail???
-	// * it is user's tail and has a next segment???
-/*
-	errs() << "Reducing hypermaps on " << this
-	       << " result is: children=" << children << "\n";
- */
-
-	// Move up hierarchy
+	// Move up hierarchy. Get last segment after reduction because our local
+	// list may potentially be nil if we selected not to push.
+	queue_segment * last_seg = 0;
 	if( fleft ) {
-	    // fleft->lock();
 	    fleft->right.reduce( children, qindex );
-	    // errs() << "Reduce hypermaps on " << this << " left: " << fleft
-	    // << " right=" << fleft->right << "\n";
-	    // fleft->unlock();
+	    last_seg = fleft->right.get_tail();
 	} else {
 	    assert( parent );
 	    parent->children.reduce( children, qindex );
+	    last_seg = parent->children.get_tail();
 	    if( is_stack )
 		parent->user.reduce( parent->children, qindex );
-/*
-	    errs() << "Reduce hypermaps on " << this
-		   << " parent: " << parent
-		   << " user=" << parent->user
-		   << " children=" << parent->children
-		   << " right=" << parent->right
-		   << "\n";
-*/
 	}
+
+	// Clear producing flag
+	if( (flags & qf_push) && (parent->flags & qf_pushpop) == qf_pushpop
+	    && ( !fright || (fright->flags & qf_pop) )
+	    ) {
+	    // errs() << "Should clear producing... is_stack=" << is_stack << " fright=" << fright << " last_seg=" << last_seg << std::endl;
+
+	    if( last_seg )
+		last_seg->clr_producing();
+
+	    // TODO: This is not accurate! There should not be any later push task
+	    // with non-fixed length. Fixed-length push (suffix) need not be informed
+	    // of its position (although it may help performance if we do).
+	    // Even if we may know the tail, we may need some work to know what it is.
+	    // Perhaps !fleft should read flags&qf_kntail
+	    // is_stack is a hack
+	    if( !fleft && is_stack && last_seg ) {
+		parent->flags = queue_flags_t(parent->flags | qf_kntail);
+	    }
+	}
+
 
 	// prefixdep
 	if( (flags & (qf_pop|qf_fixed)) == (qf_pop|qf_fixed) ) {
-	    // if( queue.get_head() ) {
-	    // errs() << "QV=" << *this << " head=" << *queue.get_head()
-	    // << " advance by " << count << "\n";
-	    // }
-	    // queue.advance_to_end( count );
 	    // TODO: A high-overhead alternative. Probably we shouldn't
 	    // have to do this...
-	    while( count > 0 && !empty() ) {
-		assert( queue.get_head() );
-		queue.pop<T>( qindex );
-		count--;
+	    while( count > 0 ) {
+		if( !empty() ) {
+		    // errs() << "count=" << count << " remaining to pop..." << std::endl;
+		    abort(); // tmp
+		    assert( queue.get_head() );
+		    queue.pop<T>( qindex );
+		    count--;
+		} else {
+		    count = 0; // Squash ...
+		}
 	    }
 	}
 
-	if( (flags & qf_pop) && !(flags & qf_fixed) ) {
-	    // errs() << "Before reduce head pop !fixed: QV=" << *this << "\n";
-	    // errs() << "Before reduce head pop !fixed: parent QV=" << *parent << "\n";
-	    // if( logical_head >= 0 ) {
-	    parent->logical_head = queue.get_index();
-	    parent->flags = flags_t(parent->flags | qf_knhead);
-	    parent->queue.take( queue );
-	    parent->queue.set_logical( parent->logical_head );
-	    // }
+	if( (flags & qf_pop) ) {
+	    if( parent->flags & qf_push ) {
+		// qindex.pop( queue.get_volume_pop() ); -- NOP
+	    }
 
-	    // errs() << "After reduce head pop !fixed: parent QV=" << *parent << "\n";
+	    // Swap queues between finishing child and parent
+	    if( !(flags & qf_fixed) ) {
+		parent->queue.take( queue );
+		assert( !(flags & qf_fixed) || parent->queue.get_logical() >= 0 );
+
+	    // If we are having pops, then erase the queue, get it from the index.
+	    // This makes the assumption that pops and prefixes are not mixed at
+	    // the same level
+	    // if( !(flags & qf_fixed) )
+	    // We generally do not want to carry the queue segment over through the
+	    // parent. -- should be in take()?
+		parent->queue.set_head( 0 );
+	    }
+
+	    // What about prefix executing in parallel?
+	    // Right reduce (move info to right) here: if we have a right sibling
+	    // that is a pop, tell it what the logical position is. Else, tell
+	    // the parent.
+	    if( parent->queue.get_logical() >= 0 && !(flags & qf_fixed) ) {
+		queue_version<MetaData> * rpop = fright;
+		while( rpop ) {
+		    if( rpop->flags & qf_pop )
+			break;
+		    rpop = rpop->fright;
+		}
+		if( rpop ) {
+		    assert( !(rpop->flags & qf_fixed) || parent->queue.get_logical() >= 0 );
+		    assert( rpop->queue.get_logical() < 0 ||
+			    rpop->queue.get_logical() == parent->queue.get_logical()
+			    || (flags & qf_fixed) );
+		    rpop->queue.set_logical( parent->queue.get_logical() );
+		    parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
+		    // errs() << "right reduce pop head to " << *rpop << std::endl;
+		    assert( !(rpop->flags & qf_fixed) || rpop->queue.get_logical() >= 0 );
+		} else {
+		    parent->flags = flags_t(parent->flags | qf_knhead);
+		}
+	    }
+
+	    // else
+		// qindex.pop1( queue.get_volume_pop() ); // no new sequence
 	}
 
 /*
-  errs() << "Reducing hypermaps DONE on " << this
-  << " user=" << user
-  << " children=" << children
-  << " right=" << right
-  << "\n";
+  errs() << "Reducing hypermaps DONE on " << *this << std::endl;
+  errs() << "                    parent " << *parent << std::endl;
 */
 
 	unlink();
-
-	// ???
-	if( (flags & qf_push) && (parent->flags & qf_pushpop) == qf_pushpop
-	    && ( !parent->chead
-		 || (unsigned(parent->chead->flags) & unsigned(qf_pop) ) ) ) {
-	    if( is_stack ) {
-		if( parent->user.get_tail() ) {
-		    qindex.set_end( parent->user.get_tail()->get_logical_tail_wpeek() );
-		    parent->user.get_tail()->clr_producing();
-		}
-	    } else {
-		if( parent->children.get_tail() ) {
-		    qindex.set_end( parent->children.get_tail()->get_logical_tail_wpeek() );
-		    parent->children.get_tail()->clr_producing();
-		}
-	    }
-	}
 
 	if( parent )
 	    parent->unlock();
@@ -482,7 +524,34 @@ public:
 
 private:
     void ensure_queue_head() {
-	if( likely( !queue.get_head() ) ) {
+	// assert( logical_head == qindex.get_head_pop() || logical_head < 0 );
+	assert( !(flags & qf_fixed) || queue.get_logical() >= 0 );
+
+	if( !queue.get_head() ) {
+	    // errs() << "ensure_queue_head: " << *this << std::endl;
+	    if( queue.get_logical() < 0 ) {
+		abort();
+/*
+		// This is a hack to solve a bug in case of push/pop/push/pop
+		// type of code.
+		if( !(flags & qf_fixed) ) {
+		    // logical_head = qindex.get_head_pop();
+		    queue.set_logical( qindex.get_head_pop() );
+		    flags = queue_flags_t( flags | qf_knhead );
+		    // errs() << "ensure_queue_head update: " << *this << std::endl;
+		}
+*/
+/*
+		parent->lock();
+		assert( ( fleft == 0 || (fleft->flags & qf_push) )
+			&& "Must not have left pop sibling to recover queue head" );
+		queue.take( parent->queue );
+		logical_head = queue.get_logical();
+		flags = queue_flags_t( flags | qf_knhead );
+		parent->queue.set_logical( parent->logical_head );
+		parent->unlock();
+*/
+	    }
 	    assert( queue.get_logical() >= 0 && "logical index of head queue"
 		    " segment must be known" );
 
@@ -495,17 +564,46 @@ private:
 	    // has been created already.
 	    // More complicated case (current): use the queue_index to figure
 	    // out what queue segment starts at the required logical position.
+#if PROFILE_QUEUE
+	    pp_time_start( &get_profile_queue().qv_qhead );
+#endif // PROFILE_QUEUE
+
 	    while( !queue.get_head() ) {
-		sched_yield();
-
-		// Special case. We need to re-check this here due to concurrency
-		// issues (the_end may be set between initial check and lookup).
-		if( size_t(queue.get_logical()) > qindex.get_end() )
-		    return;
-
 		// Search the index
-		queue.set_head( qindex.lookup( queue.get_logical() ) );
+		if( queue_segment * seg
+		    = qindex.lookup( queue.get_logical(), push_seqno ) ) {
+		    queue.set_head( seg );
+		    break;
+		}
+
+		// If there are no older producing push tasks, then bail out.
+		queue_version<MetaData> * qv = this;
+		bool all_left = true;
+		do {
+		    if( qv->fleft ) {
+			all_left = false;
+			break;
+		    }
+		    qv = qv->parent;
+		} while( !(qv->flags & qf_push) ); // goto just below parent
+		if( all_left ) {
+		    // errs() << "ensure_queue_head bailout due to lack of left tasks" << std::endl;
+		    break;
+		}
+
+		sched_yield();
 	    }
+/*
+	    if( queue.get_head() )
+		errs() << "ensure_queue_head: QV=" << this << " set qhead=" 
+		       << *queue.get_head() << " queue=" << queue << std::endl;
+	    else
+		errs() << "ensure_queue_head: QV=" << this
+		       << " set qhead=null queue=" << queue << std::endl;
+*/
+#if PROFILE_QUEUE
+	    pp_time_end( &get_profile_queue().qv_qhead );
+#endif // PROFILE_QUEUE
 	}
     }
 
@@ -523,7 +621,7 @@ public:
 
     void pop_bookkeeping( size_t npop ) {
 	// errs() << "QV " << *this << " pop bookkeeping " << npop << "\n";
-	queue.pop_bookkeeping( npop, qindex, count > npop );
+	queue.pop_bookkeeping( npop, qindex, count > long(npop) );
 	if( count >= 0 )
 	    count -= npop;
     }
@@ -532,7 +630,8 @@ public:
     T & pop() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	ensure_queue_head();
+	ensure_queue_head(); // should be done by empty()
+	assert( queue.get_head() );
 	T & r = queue.pop<T>( qindex );
 	// errs() << "pop QV=" << this << " queue="
 	       // << queue << " value=" << r << "\n";
@@ -542,7 +641,8 @@ public:
     template<typename T>
     T & peek( size_t off ) {
 	assert( off <= peekoff && "Peek outside requested range" );
-	ensure_queue_head();
+	ensure_queue_head(); // should be done by empty()
+	assert( queue.get_head() );
 	return queue.peek<T>( off, qindex );
     }
 
@@ -553,13 +653,13 @@ public:
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
 		: user.get_logical(), std::max(length+peekoff,max_size),
-		peekoff, qindex );
+		peekoff, push_seqno, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	write_slice<MetaData,T> slice
-	    = user.get_write_slice<MetaData,T>( length+peekoff, qindex );
+	    = user.get_write_slice<MetaData,T>( length+peekoff, push_seqno, qindex );
 	slice.set_version( this );
 	return slice;
     }
@@ -577,7 +677,9 @@ public:
 	    slice.set_version( this );
 	    return slice;
 	} else {
-	    ensure_queue_head();
+	    assert( !empty() );
+	    ensure_queue_head(); // should be done by empty()
+	    assert( queue.get_head() );
 	    read_slice<MetaData,T> slice
 		= queue.get_slice_upto<MetaData,T>( npop_max, npeek, qindex );
 	    slice.set_version( this );
@@ -586,6 +688,7 @@ public:
     }
     template<typename T>
     read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
+	abort(); // deprecated
 	assert( npeek-npop <= peekoff && "Peek outside requested range" );
 	assert( !empty() );
 	ensure_queue_head();
@@ -604,7 +707,8 @@ public:
 
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	ensure_queue_head();
+	ensure_queue_head(); // should be done by empty()
+	assert( queue.get_head() );
 	count--;
 	if( queue.empty( qindex ) )
 	    return dflt;
@@ -620,14 +724,14 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, qindex );
+		: user.get_logical(), max_size, peekoff, push_seqno, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	// errs() << "push QV=" << this << " user="
 	       // << user << " value=" << t << "\n";
-	user.push<T>( &t, max_size, peekoff, qindex );
+	user.push<T>( &t, max_size, peekoff, push_seqno, qindex );
     }
 
     template<typename T>
@@ -636,7 +740,7 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		user.get_logical() > 0 ? user.get_logical() - peekoff
-		: user.get_logical(), max_size, peekoff, qindex );
+		: user.get_logical(), max_size, peekoff, push_seqno, qindex );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -656,11 +760,19 @@ public:
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
 	ensure_queue_head();
-	if( size_t(queue.get_logical()) > qindex.get_end() )
+	// errs() << "QV empty check: QV=" << *this << " queue=" << queue << std::endl;
+	assert( queue.get_logical() >=0 );
+	if( !queue.get_head() ) {
+	    // errs() << "QV empty due to non-producing final segment" << std::endl;
 	    return true;
-	if( (flags & qf_fixed) && count == 0 )
+	}
+	if( (flags & qf_fixed) && count == 0 ) {
+	    // errs() << "QV empty due to fixed count exceeded" << std::endl;
 	    return true;
-	return queue.empty( qindex );
+	}
+	bool r = queue.empty( qindex );
+	// errs() << "QV empty? " << r << std::endl;
+	return r;
     }
 };
 
@@ -671,8 +783,8 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " children=" << v.children
        << " user=" << v.user
        << " right=" << v.right
-       << " logical_head=" << v.logical_head
        << " count=" << v.count
+       << " seqno=" << v.push_seqno
        << " flags=" << v.flags;
     return os;
 }

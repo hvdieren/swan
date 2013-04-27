@@ -11,7 +11,23 @@
 #include "swan/alc_flpol.h"
 #include "swan/padding.h"
 
+#if PROFILE_QUEUE
+#include "swan/../util/pp_time.h"
+#endif // PROFILE_QUEUE
+
 namespace obj {
+
+#if PROFILE_QUEUE
+struct profile_queue {
+    pp_time_t sq_await;
+    pp_time_t sq_peek;
+    pp_time_t qv_qhead;
+    pp_time_t qs_peek;
+    pp_time_t qs_pop;
+};
+
+profile_queue & get_profile_queue();
+#endif // PROFILE_QUEUE
 
 template<typename MetaData, typename T>
 class write_slice {

@@ -87,6 +87,8 @@ struct add_monad {
     static void reduce( float * left, float * right ) { *left += *right; }
 };
 
+size_t final_count = 0;
+
 void final_segment( obj::indep<float[CHUNK]> in, obj::reduction<add_monad> sum, size_t n ) {
     float running = 0;
     for( size_t i=0; i < n; ++i ) {
@@ -95,6 +97,7 @@ void final_segment( obj::indep<float[CHUNK]> in, obj::reduction<add_monad> sum, 
 	running += v;
     }
     sum += running;
+    __sync_fetch_and_add( &final_count, n );
 }
 
 void work( size_t n ) {
@@ -129,6 +132,8 @@ void work( size_t n ) {
     }
 
     ssync();
+
+    printf( "Values popped in final_segment(): %ld\n", final_count );
 }
 
 int main( int argc, char * argv[] ) {

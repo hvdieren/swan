@@ -1132,23 +1132,6 @@ struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
     }
 };
 
-// queue suffix pop dependency traits
-template<>
-struct dep_traits<ecgtg_metadata, task_metadata, suffixdep> {
-    template<typename T>
-    static void arg_issue( task_metadata * fr, suffixdep<T> & obj,
-			   typename suffixdep<T>::dep_tags * sa ) {
-    }
-    template<typename T>
-    static bool arg_ini_ready( const suffixdep<T> & obj ) {
-	return true;
-    }
-    template<typename T>
-    static void arg_release( task_metadata * fr, suffixdep<T> & obj,
-			     typename suffixdep<T>::dep_tags & sa  ) {
-    }
-};
-
 typedef ecgtg_metadata obj_metadata;
 typedef ecgtg_metadata token_metadata;
 typedef ecgtg_metadata queue_metadata;

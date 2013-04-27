@@ -32,8 +32,10 @@
 #include "lock.h"
 
 #if TIME_STEALING
-#include "pp_time.h"
+#include "swan/../util/pp_time.h"
 #endif
+
+class spawn_deque;
 
 struct call_stack {
     stack_frame * head;

@@ -1383,7 +1383,8 @@ struct cleanup_tags_functor {
     template<typename T, template<typename U> class DepTy>
     typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
-	tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
+	if( !is_released )
+	    tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
 
 	typedef typename DepTy<T>::dep_tags tags_t;
 	tags.~tags_t();
@@ -1437,20 +1438,27 @@ struct release_functor {
 #endif
 
     template<typename T, template<typename U> class DepTy>
-    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value
+                            && !is_prefixdep<DepTy<T>>::value
+                            && !is_suffixdep<DepTy<T>>::value, bool>::type
     operator () ( DepTy<T> obj_int, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
-	// Reduce queue hypermaps - reduce before allowing siblings to launch
-	// TODO: What if returning from a stack frame and not calling release?
-	// queue_version<MetaData> * qv = obj_int.get_version();
-	// qv->lock(); // do not relinquish the lock anymore!
-	// qv->reduce_hypermaps( is_pushdep<DepTy<T>>::value, is_stack );
+	tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
+	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version()->get_parent() );
+	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, tags );
+	return true;
+    }
 
-	// For queues, release must always be performed on the external version
-	// which is the "parent" of the internal version.
-	// DepTy<T> obj_ext
-	    // = DepTy<T>::create( obj_int.get_version()->get_parent() );
-	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_int, tags );
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_prefixdep<DepTy<T>>::value
+                            || is_suffixdep<DepTy<T>>::value, bool>::type
+    operator () ( DepTy<T> obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename DepTy<T>::metadata_t MetaData;
+	tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
+	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version()->get_parent(),
+					     obj_int.get_length(),
+					     obj_int.get_default() );
+	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, tags );
 	return true;
     }
 };
@@ -1484,13 +1492,31 @@ public:
     }
 
     template<typename T, template<typename U> class DepTy>
-    typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
-    operator () ( DepTy<T> & obj_int, 
-		       typename DepTy<T>::dep_tags & tags ) {
+    typename std::enable_if<is_queue_dep<DepTy<T>>::value
+			    && !is_prefixdep<DepTy<T>>::value
+			    && !is_suffixdep<DepTy<T>>::value,
+			    bool>::type
+    operator () ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename pushdep<T>::metadata_t MetaData;
 	// TODO: make sure this code gets called also on a stack frame,
 	// in case the parent frame gets stolen and this one is converted to full!
-	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_int, &tags );
+	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version()->get_parent() );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
+	return true;
+    }
+	
+    template<typename T, template<typename U> class DepTy>
+    typename std::enable_if<is_prefixdep<DepTy<T>>::value
+			    || is_suffixdep<DepTy<T>>::value,
+			    bool>::type
+    operator () ( DepTy<T> & obj_int, typename DepTy<T>::dep_tags & tags ) {
+	typedef typename pushdep<T>::metadata_t MetaData;
+	// TODO: make sure this code gets called also on a stack frame,
+	// in case the parent frame gets stolen and this one is converted to full!
+	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version()->get_parent(),
+					     obj_int.get_length(),
+					     obj_int.get_default() );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
 	
@@ -1655,7 +1681,7 @@ struct dgrab_functor {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
-	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_int, &tags );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
 	
