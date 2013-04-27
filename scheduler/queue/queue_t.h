@@ -244,7 +244,7 @@ public:
 				const T & dflt ) {
 	prefixdep<T> d;
 	d.queue_v = v;
-	d.count = n;
+	d.count = v->get_available_count( n );
 	d.dflt = dflt;
 	return d;
     }
@@ -273,7 +273,8 @@ public:
 	
     // We must consume the whole prefix (unless at end of queue)
     bool empty() {
-	return queue_v->get_count() == 0 || queue_v->empty();
+	// return queue_v->get_count() == 0 || queue_v->empty();
+	return queue_v->empty();
     }
 
     size_t get_length() const { return queue_v->get_count(); }

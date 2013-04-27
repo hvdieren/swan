@@ -21,57 +21,19 @@ struct queue_key_t {
 
 class queue_index {
     avl_tree<queue_segment, queue_key_t> idx;
-    long head_pop, tail_pop;
-    size_t head_seqno, tail_seqno;
-    size_t the_end;
-    cas_mutex mutex;
+    mcs_mutex mutex;
 
 private:
-    void lock() { mutex.lock(); }
-    void unlock() { mutex.unlock(); }
+    void lock( mcs_mutex::node * node ) { mutex.lock( node ); }
+    void unlock( mcs_mutex::node * node ) { mutex.unlock( node ); }
 
 public:
-    queue_index() : head_pop( 0 ), tail_pop( 0 ), head_seqno( 0 ), tail_seqno( 0 ),
-		    the_end( ~0 ) { }
+    queue_index() { }
 
 public:
     void insert( queue_segment * seg );
     queue_segment * lookup( size_t logical, size_t push_seqno );
     void erase( queue_segment * seg );
-
-    size_t get_head_pop() const { return head_pop; }
-
-    void pop1( size_t num ) {
-	lock();
-	head_pop += num;
-	unlock();
-    }
-    void pop( size_t num ) {
-	lock();
-	head_pop += num;
-	head_seqno++;
-	if( head_seqno == tail_seqno ) {
-	    assert( tail_pop == head_pop || tail_pop < 0 );
-	    tail_pop = head_pop;
-	}
-	unlock();
-    }
-    void prefix( long num ) {
-	lock();
-	if( num < 0 )
-	    tail_pop = -1;
-	else
-	    tail_pop += num;
-	tail_seqno++;
-	unlock();
-    }
-
-    void set_end( size_t ending ) {
-	if( the_end == size_t(~0) || the_end < ending )
-	    the_end = ending;
-    }
-    void unset_end() { the_end = ~0; }
-    size_t get_end() const { return the_end; }
 };
 
 // NOTE:
@@ -346,7 +308,6 @@ public:
 	// Two behaviors of the fixed_size_queue:
 	// * As a real queue, round-robin when used by one popper
 	// * As an array, when concurrent pops occur
-	// errs() << "queue_segment: pop @" << logical << " seg=" << *this << "\n";
 	T & r = q.pop<T>( logical - logical_pos );
 	__sync_fetch_and_add( &volume_pop, 1 );
 	return r;
@@ -416,8 +377,6 @@ struct avl_traits<obj::queue_segment, obj::queue_key_t> {
 	return n->child[(int)dir];
     }
     static avl_cmp_t compare( queue_segment * l, queue_segment * r ) {
-	// errs() << "compare: l=" << *l << std::endl;
-	// errs() << "         r=" << *r << std::endl;
 	if( l->logical_pos < r->logical_pos )
 	    return cmp_lt;
 	else if( l->logical_pos > r->logical_pos )
@@ -438,10 +397,6 @@ struct avl_traits<obj::queue_segment, obj::queue_key_t> {
 	else
 	    // Older segments are visible to newer pops
 	    return seg->seqno <= key.seqno ? cmp_eq : cmp_gt;
-    }
-    static bool is_secondary( queue_segment * seg, obj::queue_key_t & key ) {
-	return seg->logical_pos + seg->volume_push == key.logical
-	    && !seg->is_producing() && seg->seqno == key.seqno;
     }
     static short & balance( queue_segment * n ) {
 	return n->balance;
