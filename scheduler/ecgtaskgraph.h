@@ -64,7 +64,6 @@ enum group_t {
     g_reduct,
 #endif
     g_pop,
-    g_prefix,
     g_NUM
 };
 
@@ -957,24 +956,6 @@ public:
 	: pushdep_tags_base( parent ) { }
 };
 
-// Prefixdep (output) dependency tags
-class prefixdep_tags : public prefixdep_tags_base<ecgtg_metadata>,
-		       public serial_dep_tags {
-public:
-    prefixdep_tags( queue_version<ecgtg_metadata> * parent, size_t length )
-	: prefixdep_tags_base( parent, length ) { }
-};
-
-// Suffixdep (output) dependency tags
-class suffixdep_tags : public suffixdep_tags_base<ecgtg_metadata>,
-		       public serial_dep_tags {
-public:
-    suffixdep_tags( queue_version<ecgtg_metadata> * parent, size_t length )
-	: suffixdep_tags_base( parent, length ) { }
-};
-
-
-
 /* @note
  * Locking strategy when doing arg_issue:
  *    Set incoming +1 artificially early in arg_issue_fn or in constructor
@@ -1148,31 +1129,6 @@ struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
     template<typename T>
     static void arg_release( task_metadata * fr, pushdep<T> & obj,
 			     typename pushdep<T>::dep_tags & sa  ) {
-    }
-};
-
-// queue prefix pop dependency traits
-// TODO: prefix should wait for any prior pop. Pop should not wait for
-// prior prefix.
-template<>
-struct dep_traits<ecgtg_metadata, task_metadata, prefixdep> {
-    template<typename T>
-    static void arg_issue( task_metadata * fr, prefixdep<T> & obj,
-			   typename prefixdep<T>::dep_tags * sa ) {
-	// ecgtg_metadata * md = obj.get_version()->get_metadata();
-	// queue_dep_traits::arg_issue( fr, md, sa, g_prefix );
-    }
-    template<typename T>
-    static bool arg_ini_ready( const prefixdep<T> & obj ) {
-	// const ecgtg_metadata * md = obj.get_version()->get_metadata();
-	// return queue_dep_traits::arg_ini_ready( md, g_prefix );
-	return true;
-    }
-    template<typename T>
-    static void arg_release( task_metadata * fr, prefixdep<T> & obj,
-			     typename prefixdep<T>::dep_tags & sa  ) {
-	// ecgtg_metadata * md = obj.get_version()->get_metadata();
-	// queue_dep_traits::arg_release( fr, md, &sa, g_prefix );
     }
 };
 
