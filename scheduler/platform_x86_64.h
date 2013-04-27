@@ -190,6 +190,15 @@ v_atomic_decr_long( volatile uint32_t * address ) {
 
 }
 
+// Auxiliary
+#if __GNUC__ < 4 || ( __GNUC__ == 4 && __GNUC_MINOR__ < 9 )
+template<typename T>
+struct my_is_trivially_destructible : std::has_trivial_destructor<T> { };
+#else
+template<typename T>
+struct my_is_trivially_destructible : std::is_trivially_destructible<T> { };
+#endif
+
 // Representing return values.
 // Cases (documentation):
 // * Integers (of any size up to 32 bits) and pointers are returned in the
@@ -239,7 +248,7 @@ template<typename T>
 static inline
 typename std::enable_if<(std::is_class<T>::value
 			 && std::has_trivial_default_constructor<T>::value
-			 && std::has_trivial_destructor<T>::value)>::type
+			 && my_is_trivially_destructible<T>::value)>::type
 get_value_from_regs() __attribute__((always_inline));
 
 template<typename T>
@@ -284,7 +293,7 @@ template<typename T>
 static
 typename std::enable_if<(std::is_class<T>::value
 			 && std::has_trivial_default_constructor<T>::value
-			 && std::has_trivial_destructor<T>::value)>::type
+			 && my_is_trivially_destructible<T>::value)>::type
 get_value_from_regs() {
     // only implement for the space we provide
     static_assert( sizeof(T) <= 2*sizeof(intptr_t),
@@ -863,7 +872,7 @@ struct arg_passing_struct1<
     ireg, freg, loff, T, M,
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
-			    && std::has_trivial_destructor<T>::value
+			    && my_is_trivially_destructible<T>::value
 			    && sizeof(T) == sizeof(M)
 			    >::type >
     : public arg_passing<ireg, freg, loff, M> {
@@ -890,7 +899,7 @@ struct arg_passing_struct2<
     ireg, freg, loff, T, M1, M2,
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
-			    && std::has_trivial_destructor<T>::value
+			    && my_is_trivially_destructible<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
 			       APS_classify_struct<T, M1, M2> > {
@@ -917,7 +926,7 @@ struct arg_passing_struct3<
     ireg, freg, loff, T, M1, M2, M3,
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
-			    && std::has_trivial_destructor<T>::value
+			    && my_is_trivially_destructible<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
 			       APS_classify_struct<T, M1, M2, M3> > {
@@ -944,7 +953,7 @@ struct arg_passing_struct4<
     ireg, freg, loff, T, M1, M2, M3, M4,
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
-			    && std::has_trivial_destructor<T>::value
+			    && my_is_trivially_destructible<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
 			       APS_classify_struct<T, M1, M2, M3, M4> > {
@@ -971,7 +980,7 @@ struct arg_passing_struct5<
     ireg, freg, loff, T, M1, M2, M3, M4, M5,
     typename std::enable_if<std::is_class<T>::value
 			    && std::has_trivial_default_constructor<T>::value
-			    && std::has_trivial_destructor<T>::value
+			    && my_is_trivially_destructible<T>::value
 			    >::type >
     : public arg_passing_tuple<ireg, freg, loff, T,
 			       APS_classify_struct<T, M1, M2, M3, M4, M5> > {
