@@ -11,18 +11,12 @@
 
 namespace obj {
 
-// NOTE:
-// If pushes occur concurrently on the same queue, then each will operate on
-// a distinct queue_segment. Pops may occur concurrently on the same segment.
-class segmented_queue_base;
-
 class queue_segment
 {
     fixed_size_queue q;
     size_t volume_pop, volume_push;
 #if DBG_ALLOC
     long hash;
-    segmented_queue_base * dseg;
 #endif
     size_t dflag;
     size_t seqno;
@@ -41,7 +35,6 @@ class queue_segment
 		 + 3*sizeof(size_t)
 #if DBG_ALLOC
 		 + sizeof(long)
-		 + sizeof(segmented_queue_base *)
 #endif
 		 + sizeof(size_t)
 		 + 3*sizeof(queue_segment *)
@@ -59,9 +52,6 @@ private:
 		   size_t seqno_, bool is_head )
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  volume_pop( 0 ), volume_push( peekoff_ ),
-#if DBG_ALLOC
-	  dseg( 0 ),
-#endif
 	  dflag( 0 ),
 	  seqno( seqno_ ),
 	  next( 0 ), producing( true ), copied_peek( is_head ) {
@@ -84,7 +74,7 @@ public:
 	assert( !dflag );
     }
 
-    static void deallocate( queue_segment * seg, segmented_queue_base * d ) {
+    static void deallocate( queue_segment * seg ) {
 	// errs() << "deallocate " << *seg << " by " << d << std::endl;
 #if DBG_ALLOC
 #endif
@@ -92,9 +82,7 @@ public:
 	    assert( seg->dflag == 1 );
 #if DBG_ALLOC
 	    assert( seg->hash == 0xbebebebe );
-	    assert( !seg->dseg );
 	    seg->hash = 0xdeadbeef;
-	    seg->dseg = d;
 #endif
 	    if( 1 ) // set to 0 to avoid memory reuse (debugging)
 		delete seg;

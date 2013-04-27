@@ -8,11 +8,6 @@
 
 namespace obj {
 
-class segmented_queue_base {
-public:
-    segmented_queue_base() { }
-};
-
 class segmented_queue;
 class segmented_queue_headonly;
 class segmented_queue_pop;
@@ -37,7 +32,7 @@ operator << ( std::ostream & os, const segmented_queue_pop & seg );
 // pushes to the same hyperqueue will push to different segments by
 // construction. Pops may occur concurrently on the same segments, as may
 // pop and push.
-class segmented_queue : public segmented_queue_base {
+class segmented_queue {
 protected:
     queue_segment * head, * tail;
 
@@ -56,7 +51,7 @@ public:
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
-		queue_segment::deallocate( q, this );
+		queue_segment::deallocate( q );
 	    }
 	}
     }
@@ -82,9 +77,8 @@ public:
     segmented_queue &
     reduce( segmented_queue & right ) {
 	if( !tail ) {
-	    if( !head ) {
+	    if( !head )
 		head = right.get_head();
-	    }
 	    tail = right.get_tail();
 	    right.reset();
 	} else if( right.get_head() ) {
@@ -122,7 +116,7 @@ public:
     }
 };
 
-class segmented_queue_headonly : public segmented_queue_base {
+class segmented_queue_headonly {
 protected:
     queue_segment * head;
 
@@ -231,7 +225,7 @@ private:
 	    // IDEA: incorporate peeked condition as add one to
 	    // push and pop volume rather than separate boolen condition
 	    if( head->all_done() ) {
-		queue_segment::deallocate( head, this );
+		queue_segment::deallocate( head );
 	    } else {
 		head->unlock();
 	    }

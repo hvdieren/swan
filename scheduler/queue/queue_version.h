@@ -52,7 +52,7 @@ namespace obj {
 template<typename MetaData>
 class queue_base;
 
-enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3, qf_knhead=8, qf_kntail=16 };
+enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3 };
 
 inline std::ostream & operator << ( std::ostream & os, queue_flags_t f );
 
@@ -119,7 +119,7 @@ protected:
     // Normal constructor, called from queue_t constructor
     queue_version( long max_size_, size_t peekoff_ )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
-	  flags( flags_t( qf_pushpop | qf_knhead | qf_kntail ) ),
+	  flags( qf_pushpop ),
 	  // logical_head( 0 ),
 	  push_seqno( 0 ),
 	  max_size( max_size_ ), peekoff( peekoff_ ) {
@@ -138,14 +138,12 @@ public:
     // to popdep
     queue_version( queue_version<metadata_t> * qv, qmode_t qmode )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
-	  flags( flags_t(qmode | ( qv->flags & (qf_knhead | qf_kntail) )) ),
+	  flags( flags_t( qmode | qv->flags ) ),
 	  push_seqno( parent->push_seqno ),
 	  max_size( qv->max_size ),
 	  peekoff( qv->peekoff ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
-
-	// assert( !(parent->flags & qf_knhead) || parent->logical_head >= 0 );
 
 	// Link in frame with siblings and parent
 	parent->lock();
@@ -164,8 +162,6 @@ public:
 	if( flags & qf_pop ) {
 	    if( parent->flags & qf_push ) // qf_pop is implied on parent
 		parent->push_seqno++;
-
-	    parent->flags = flags_t( parent->flags & ~qf_knhead );
 
 	    // Only initialize queue if this is a pop, pushpop or prefix dep.
 	    queue.take( parent->queue );
@@ -254,16 +250,6 @@ public:
 
 	    if( last_seg )
 		last_seg->clr_producing();
-
-	    // TODO: This is not accurate! There should not be any later push task
-	    // with non-fixed length. Fixed-length push (suffix) need not be informed
-	    // of its position (although it may help performance if we do).
-	    // Even if we may know the tail, we may need some work to know what it is.
-	    // Perhaps !fleft should read flags&qf_kntail
-	    // is_stack is a hack
-	    if( !fleft && is_stack && last_seg ) {
-		parent->flags = queue_flags_t(parent->flags | qf_kntail);
-	    }
 	}
 
 
@@ -294,8 +280,6 @@ public:
 		    // rpop->queue.set_logical( parent->queue.get_logical() );
 		    // parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
 		    // errs() << "right reduce pop head to " << *rpop << std::endl;
-		} else {
-		    parent->flags = flags_t(parent->flags | qf_knhead);
 		}
 	    }
 	}
@@ -618,14 +602,6 @@ std::ostream & operator << ( std::ostream & os, queue_flags_t f ) {
     }
     if( f & qf_pop ) {
 	os << sep << "pop";
-	sep = "|";
-    }
-    if( f & qf_knhead ) {
-	os << sep << "knhead";
-	sep = "|";
-    }
-    if( f & qf_kntail ) {
-	os << sep << "kntail";
 	sep = "|";
     }
     return os;
