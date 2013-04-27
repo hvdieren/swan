@@ -223,9 +223,9 @@ public:
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
 	if( tail->is_full() ) {
-	    tail->lock();
+	    // tail->lock();
 	    push_segment<T>( tail->get_logical_tail(), max_size, peekoff, seqno, idx );
-	    tail->unlock();
+	    // tail->unlock();
 	}
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push<T>( value );

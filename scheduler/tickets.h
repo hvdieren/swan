@@ -1039,9 +1039,9 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
     static
     void arg_release( task_metadata * fr, popdep<T> & obj_int,
 		      typename popdep<T>::dep_tags & tags ) {
-	popdep<T> obj_ext
-	    = popdep<T>::create( obj_int.get_version()->get_parent() );
-	obj_ext.get_version()->get_metadata()->del_reader();
+	// popdep<T> obj_ext
+	    // = popdep<T>::create( obj_int.get_version()->get_parent() );
+	obj_int.get_version()->get_metadata()->del_reader();
     }
 };
 

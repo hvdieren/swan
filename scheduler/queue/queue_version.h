@@ -402,9 +402,6 @@ public:
 		    parent->flags = flags_t(parent->flags | qf_knhead);
 		}
 	    }
-
-	    // else
-		// qindex.pop1( queue.get_volume_pop() ); // no new sequence
 	}
 
 /*
