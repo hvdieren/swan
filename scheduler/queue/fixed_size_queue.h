@@ -221,6 +221,11 @@ public:
 	}
     }
 
+    void pop_bookkeeping( size_t npop ) {
+	assert( (head + elm_size * npop) <= size );
+	head = (head + elm_size * npop); // % size;
+    }
+
     void push_bookkeeping( size_t npush ) {
 	assert( (tail + elm_size * npush) <= size );
 	tail = (tail + elm_size * npush) % size;

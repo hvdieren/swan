@@ -12,26 +12,20 @@ namespace obj {
 class queue_segment
 {
     fixed_size_queue q;
-    size_t volume_pop, volume_push;
     queue_segment * next;
     queue_segment * child[2];
     short balance;
     volatile bool producing;
     bool copied_peek;
-    cas_mutex mux;
 
     // Pad to 16 bytes because this should suite all data types.
     // There is no guarantee to naturally align any element store in the queue,
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
-		 + sizeof(long)
-		 + 3*sizeof(size_t)
 		 + 3*sizeof(queue_segment *)
 		 + sizeof(short)
-		 + sizeof(bool)
 		 + sizeof(volatile bool)
-		 + sizeof(int)
-		 + sizeof(cas_mutex) > padding;
+		 + sizeof(bool) > padding;
 
     friend std::ostream & operator << ( std::ostream & os, const queue_segment & seg );
 
@@ -40,14 +34,10 @@ private:
 		   size_t elm_size, size_t max_size, size_t peekoff_,
 		   bool is_head )
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
-	  volume_pop( 0 ), volume_push( peekoff_ ),
 	  next( 0 ), producing( true ), copied_peek( is_head ) {
-	/// static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
+	static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
 	// errs() << "queue_segment create " << *this << std::endl;
     }
-public:
-    void lock() { mux.lock(); }
-    void unlock() { mux.unlock(); }
 
 public:
     // Allocate control fields and data buffer in one go
@@ -73,12 +63,6 @@ public:
 
     size_t get_peek_dist() const { return q.get_peek_dist(); }
 
-    // size_t get_volume_pop() const { return volume_pop; }
-    // size_t get_volume_push() const { return volume_push; }
-    bool all_done() const {
-	return copied_peek && volume_pop + q.get_peek_dist() == volume_push;
-    }
-
     // Linking segments in a list
     queue_segment * get_next() const { return next; }
 
@@ -88,39 +72,20 @@ public:
 	next_->copied_peek = true;
 	// TODO: How to avoid memory de-allocation here?
 
-	assert( next_->volume_pop + ( next_->copied_peek ? next_->q.get_peek_dist() : 0 ) <= next_->volume_push );
-	// assert( volume_push > q.get_peek_dist() );
-
 	next = next_;
     }
 
-/* UNUSED
-    void advance_to_end( size_t length ) { 
-	// Some pops did not get done. Tamper with the counters such
-	// that it appears as if we did...
-	if( length > 0 ) {
-	    volume_pop += length+1;
-	    if( volume_push < volume_pop ) {
-		assert( !is_producing() );
-		volume_push = volume_pop;
-	    }
-	}
-    }
-*/
-
     bool is_empty() const { return q.empty(); }
 
-    void rewind() { q.rewind(); volume_push = 0; } // very first segment has no copied-in peek area
+    void rewind() { q.rewind(); }
 
     // Queue pop and push methods
     void pop_bookkeeping( size_t npop ) {
-	__sync_fetch_and_add( &volume_pop, npop );
-	assert( volume_pop <= volume_push );
+	q.pop_bookkeeping( npop );
     }
 
     void push_bookkeeping( size_t npush ) {
 	q.push_bookkeeping( npush );
-	volume_push += npush;
     }
 
     bool has_space( size_t length ) const {
@@ -137,13 +102,7 @@ public:
 #if PROFILE_QUEUE
 	pp_time_end( &get_profile_queue().qs_pop );
 #endif // PROFILE_QUEUE
-	// Translate global position we're popping from to local queue position
-	// Two behaviors of the fixed_size_queue:
-	// * As a real queue, round-robin when used by one popper
-	// * As an array, when concurrent pops occur
-	T & r = q.pop<T>();
-	__sync_fetch_and_add( &volume_pop, 1 );
-	return r;
+	return q.pop<T>();
     }
 
     template<typename T>
@@ -164,7 +123,6 @@ public:
     void push( const T * value ) {
 	while( !q.push( value ) )
 	    sched_yield();
-	volume_push++;
     }
 
     template<typename MetaData, typename T>
@@ -183,8 +141,6 @@ private:
 inline std::ostream &
 operator << ( std::ostream & os, const queue_segment & seg ) {
     return os << "Segment: @" << &seg
-	      << " volume-pop=" << seg.volume_pop
-	      << " volume-push=" << seg.volume_push
 	      << " producing=" << seg.producing
 	      << " next=" << seg.next
 	      << " child=" << seg.child[0] << "," << seg.child[1]

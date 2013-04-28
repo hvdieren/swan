@@ -168,11 +168,8 @@ public:
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
-	if( tail->is_full() ) {
-	    // tail->lock();
+	if( tail->is_full() )
 	    push_segment<T>( max_size, peekoff, false );
-	    // tail->unlock();
-	}
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
 	tail->push<T>( value );
     }
@@ -188,47 +185,17 @@ public:
 	// Push a fresh segment if we don't have enough room on the
 	// current one. Subtract again peek distance from length. Rationale:
 	// we have already reserved this space in the current segment.
-	if( !tail->has_space( length-tail->get_peek_dist() ) ) {
-	    queue_segment * old_tail = tail;
-	    old_tail->lock();
+	if( !tail->has_space( length-tail->get_peek_dist() ) )
 	    push_segment<T>( length, tail->get_peek_dist(), false );
-	    old_tail->unlock();
-	}
 	return tail->get_write_slice<MetaData,T>( length );
     }
 };
 
 class segmented_queue_pop : public segmented_queue_headonly {
-    size_t volume_pop;
-
 public: 
-    segmented_queue_pop() : volume_pop( 0 ) { }
-
-    size_t get_volume_pop() const { return volume_pop; }
+    segmented_queue_pop() { }
 
 private:
-    void pop_head() {
-	// errs() << "pop_head head=" << *head << std::endl;
-	if( queue_segment * seg = head->get_next() ) {
-	    head->lock();
-
-	    // Note: this case is executed only once per segment,
-	    // namely for the task that pops the tail of this segment.
-
-	    // errs() << "head " << head << " runs out, pop segment (empty)\n";
-
-	    // Are we totally done with this segment? -- SHOULD BE ALWAYS YES
-	    if( head->all_done() ) {
-		delete head;
-	    } else {
-		head->unlock();
-	    }
-
-	    head = seg;
-	}
-	assert( head );
-    }
-
     void await() {
 	assert( head );
 
@@ -255,8 +222,9 @@ private:
 	    if( !head->is_empty() )
 		break;
 	    if( !head->is_producing() ) {
-		if( head->get_next() ) {
-		    pop_head();
+		if( queue_segment * seg = head->get_next() ) {
+		    delete head;
+		    head = seg;
 		} else {
 		    // In this case, we know the queue is empty.
 		    // This may be an error or not, depending on whether
@@ -287,7 +255,6 @@ public:
 
     void take( segmented_queue_pop & from ) {
 	std::swap( *this, from );
-	volume_pop = 0;
     }
 
     bool empty() {
@@ -315,27 +282,11 @@ public:
 
 	assert( !head->is_empty() );
 
-	T & r = head->pop<T>();
-	volume_pop++;
-	return r;
+	return head->pop<T>();
     }
 
-    void pop_bookkeeping( size_t npop, bool dealloc ) {
-	// errs() << *this << " pop bookkeeping " << npop << std::endl;
-	volume_pop += npop;
+    void pop_bookkeeping( size_t npop ) {
 	head->pop_bookkeeping( npop );
-	// errs() << "pop_bookkeeping on queue " << head << ": " << *head
-	// << " SQ=" << *this
-	// << " position=" << pos << std::endl;
-	if( dealloc && head->is_empty() && !head->is_producing() )
-	    pop_head();
-/*
-	while( npop-- > 0 )  {
-	    volume_pop++;
-	    head->pop_bookkeeping( 1 );
-	    await();
-	}
-*/
     }
 
     template<typename T>
@@ -421,7 +372,6 @@ operator << ( std::ostream & os, const segmented_queue_push & seg ) {
 std::ostream &
 operator << ( std::ostream & os, const segmented_queue_pop & seg ) {
     return os << '{' << seg.get_head()
-	      << "-" << seg.get_volume_pop()
 	      << '}';
 }
 

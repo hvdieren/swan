@@ -311,8 +311,6 @@ private:
 	// Note: lock parent even though we don't need the parent
 	// to avoid deletion of fleft between if( fleft ) and fleft->lock()
 	// errs() << "push_head: " << *this << "\n";
-	// if( parent )
-	    // errs() << "   parent: " << *parent << "\n";
 	if( parent )
 	    parent->lock();
 	if( fleft ) {
@@ -359,8 +357,6 @@ private:
 	    assert( !children.get_tail() );
 	    children.set_head( 0 ); // Moved to index
 	}
-	// if( parent )
-	    // errs() << "   result: " << *parent << "\n";
     }
 
 
@@ -372,80 +368,26 @@ public:
     const queue_version<metadata_t> * get_parent() const { return parent; }
     queue_version<metadata_t> * get_parent() { return parent; }
 
-private:
-    void ensure_queue_head() {
-	if( !queue.get_head() ) {
-	    // Find the head of the queue for concurrently popping results.
-	    // Simple case: there are no other popdep tasks on the same queue
-	    // executing, so the other running queue-dep tasks, if any, have
-	    // pushdep usage. For this reason, we do not look at the left
-	    // sibling (that is the youngest pushdep task), but we look at the
-	    // common parent, where the head segment has been pushed up, if it
-	    // has been created already.
-	    // More complicated case (current): use the queue_index to figure
-	    // out what queue segment starts at the required logical position.
-#if PROFILE_QUEUE
-	    pp_time_start( &get_profile_queue().qv_qhead );
-#endif // PROFILE_QUEUE
-
-	    while( !queue.get_head() ) {
-		// If there are no older producing push tasks, then bail out.
-		queue_version<MetaData> * qv = this;
-		bool all_left = true;
-		do {
-		    if( qv->fleft ) {
-			all_left = false;
-			break;
-		    }
-		    qv = qv->parent;
-		} while( !(qv->flags & qf_push) ); // goto just below parent
-		if( all_left ) {
-		    // errs() << "ensure_queue_head bailout due to lack of left tasks" << std::endl;
-		    break;
-		}
-
-		sched_yield();
-	    }
-/*
-	    if( queue.get_head() )
-		errs() << "ensure_queue_head: QV=" << this << " set qhead=" 
-		       << *queue.get_head() << " queue=" << queue << std::endl;
-	    else
-		errs() << "ensure_queue_head: QV=" << this
-		       << " set qhead=null queue=" << queue << std::endl;
-*/
-#if PROFILE_QUEUE
-	    pp_time_end( &get_profile_queue().qv_qhead );
-#endif // PROFILE_QUEUE
-	}
-    }
-
 public:
     void push_bookkeeping( size_t npush ) {
 	user.push_bookkeeping( npush );
     }
 
     void pop_bookkeeping( size_t npop ) {
-	// errs() << "QV " << *this << " pop bookkeeping " << npop << "\n";
-	queue.pop_bookkeeping( npop, false );
+	queue.pop_bookkeeping( npop );
     }
 
     template<typename T>
     T & pop() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
-	T & r = queue.pop<T>();
-	// errs() << "pop QV=" << this << " queue="
-	       // << queue << " value=" << r << "\n";
-	return r;
+	return queue.pop<T>();
     }
 
     template<typename T>
     T & peek( size_t off ) {
 	assert( off <= peekoff && "Peek outside requested range" );
-	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
 	return queue.peek<T>( off );
     }
@@ -473,7 +415,6 @@ public:
 
 	// empty() involves count == 0 check.
 	assert( !empty() );
-	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
 	read_slice<MetaData,T> slice
 	    = queue.get_slice_upto<MetaData,T>( npop_max, npeek );
@@ -485,7 +426,6 @@ public:
 	abort(); // deprecated
 	assert( npeek-npop <= peekoff && "Peek outside requested range" );
 	assert( !empty() );
-	ensure_queue_head();
 	read_slice<MetaData,T> slice
 	    = queue.get_slice<MetaData,T>( npop, npeek );
 	slice.set_version( this );
@@ -498,7 +438,6 @@ public:
 
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	ensure_queue_head(); // should be done by empty()
 	assert( queue.get_head() );
 	if( queue.empty() )
 	    return dflt;
@@ -543,7 +482,6 @@ public:
     bool empty() {
 	// Make sure we have a local, usable queue. Busy-wait if necessary
 	// until we have made contact with the task that pushes.
-	ensure_queue_head();
 	// errs() << "QV empty check: QV=" << *this << " queue=" << queue << std::endl;
 	if( !queue.get_head() ) {
 	    // errs() << "QV empty due to non-producing final segment" << std::endl;
