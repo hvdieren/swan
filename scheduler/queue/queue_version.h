@@ -1,42 +1,12 @@
 // -*- c++ -*-
 
 // TODO/NOTES
-// + push - pop - push - pop: advertising
-//   the queue from the second push will not send it to the second pop. 
-//   Instead, it is sent to the 1st pop/right. The reason is that the first
-//   pop is not obliged to consume all elements from the queue, in which case
-//   the second pop must see them. So the second pop is serialized wrt the
-//   first.
-//   CONSEQUENCE: pop has a RIGHT field
-// + pop has a USER field, when initializing the hypermaps, it inherits parent's
-//   USER
 // + !!! check whether all queue segments are properly deleted.
 // + !!! implement pushpopdep
 // + !!! factor queue_version in pushpop, pop, push versions?
 // + !!! microbenchmark with only a pop task that does an empty() check on the queue
 //   this will currently spin forever.
-// + !!! remove logical_head from queue_version
-// + should we have an iterator interface rather than empty/pop?
 //
-// For prefix dependence types
-// + distinguish circular/non-circular usage of queue segment
-// + wait on all prior pops
-// + starting head is always known when prefixdep is ready (arg_ready in tickets)
-// + 
-//
-// BUG
-// + The push/pop/push/pop scenario does not work correctly yet. This would be
-//   useful in dedup (e.g.)
-// 
-// For dedup benchmark:
-// + We don't know in advance how many sub-fragments will be identified, so
-//   we need to provide an upper bound and send less items + an end of stream
-//   token (probably a null pointer). Non-existant entries will not be pushed
-//   neither popped, although they will be "accounted for" by the hyperqueue.
-// + Moreover, the division in large fragments does not seem appropriate for
-//   for the native input. Should we do it differently, eg simply based on data
-//   size? Would recursive decomposition be of any help to emulate to some
-//   extent the application of fine fragmentation to the whole stream?
 
 #ifndef QUEUE_QUEUE_VERSION_H
 #define QUEUE_QUEUE_VERSION_H
@@ -70,25 +40,22 @@ private:
 
 private:
     metadata_t metadata;
-    // queue_version for pop only needs queue
+    // queue_version for pop only needs queue, user, right
     // queue_version for push only needs user, children, right
     // queue_t (and potentially pushpopdep) requires all 4
     segmented_queue children, right;
     segmented_queue_push user;
     segmented_queue_pop queue;
 
-    // New fields
+    // Link in spawn tree
     queue_version<MetaData> * chead, * ctail;
     queue_version<MetaData> * fleft, * fright;
     queue_version<MetaData> * const parent;
     cas_mutex mutex;
     flags_t flags;
 
-    // Index structure: where to find segments at certain logical offsets.
-    // TODO: store this in queue_t and pass pointer to it in here, copy on
-    // nesting. That will make the storage of the index unique per queue.
+    // Information for constructing queue segments.
     size_t max_size;
-
     size_t peekoff;
 
 /*
@@ -101,10 +68,11 @@ private:
     template<typename MD>
     friend std::ostream & operator << ( std::ostream &, queue_version<MD> & );
 
-public:
+private:
     void lock() { mutex.lock(); }
     void unlock() { mutex.unlock(); }
 
+public:
     template<typename T>
     class initializer {
 	typedef T value_type;
@@ -116,9 +84,7 @@ protected:
     queue_version( long max_size_, size_t peekoff_,
 		   initializer<T> init )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
-	  flags( qf_pushpop ),
-	  // logical_head( 0 ),
-	  max_size( max_size_ ), peekoff( peekoff_ ) {
+	  flags( qf_pushpop ), max_size( max_size_ ), peekoff( peekoff_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -127,8 +93,6 @@ protected:
 	// Create an initial segment and share it between queue.head and user.tail
 	user.push_segment<T>( max_size, peekoff, true );
 	queue.take_head( user );
-
-	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
 	
     // Argument passing constructor, called from grab/dgrab interface.
@@ -197,10 +161,8 @@ public:
 	user.reduce_reverse( children );
     }
 
-    // TODO: replace push argument by checking flags
-    // Length only required for prefixdep and suffixdep.
     template<typename T>
-    void reduce_hypermaps( bool is_stack, size_t length=0 ) {
+    void reduce_hypermaps() {
 	// Do conversion of hypermaps when a child finishes:
 	//  * merge children - user - right
 	//  * check ownership and deallocate if owned and empty.
@@ -228,8 +190,6 @@ public:
 	    assert( parent );
 	    parent->children.reduce( children );
 	    last_seg = parent->children.get_tail();
-	    if( is_stack )
-		parent->user.reduce( parent->children );
 	}
 
 	// Clear producing flag
