@@ -47,6 +47,8 @@
 
 #include "swan/queue/segmented_queue.h"
 
+#define DBG_QUEUE_VERSION 1
+
 namespace obj {
 
 template<typename MetaData>
@@ -149,8 +151,10 @@ public:
 
 	if( flags & qf_pop ) {
 	    // Only initialize queue if this is a pop or pushpop dep.
+	    // Sometimes pops are created before they can execute. In that case,
+	    // we don't know what queue.head should be and we may set a NULL
+	    // pointer here.
 	    queue.take( parent->queue );
-	    assert( queue.get_head() && "Queue must have non-null head" );
 	}
 
 	// Link in chain with siblings
@@ -167,10 +171,10 @@ public:
 	}
 	unlock();
 
-/*
+#if DBG_QUEUE_VERSION
 	errs() << "QV nest constructor for: " << *this << std::endl;
 	errs() << "                 parent: " << *parent << std::endl;
-*/
+#endif
 
 	parent->unlock();
     }
@@ -238,19 +242,25 @@ public:
 
 
 	if( flags & qf_pop ) {
-	    // Swap queues between finishing child and parent
-	    parent->queue.take( queue );
-	    assert( parent->queue.get_head() && "Queue head must be non-null" );
+	    // Swap queues between finishing child and parent or right sibling
+	    queue_version<MetaData> * target = parent;
+	    queue_version<MetaData> * rpop = fright;
+	    while( rpop ) {
+		if( rpop->flags & qf_pop ) {
+		    target = rpop;
+		    break;
+		}
+		rpop = rpop->fright;
+	    }
+	    target->queue.take( queue );
+	    assert( target->queue.get_head() && "Queue head must be non-null" );
 
-	    // We do not want to carry the queue segment over through the
-	    // parent. -- should be in take()?
-	    // parent->queue.set_head( 0 );
 	}
 
-/*
+#if DBG_QUEUE_VERSION
   errs() << "Reducing hypermaps DONE on " << *this << std::endl;
   errs() << "                    parent " << *parent << std::endl;
-*/
+#endif
 
 	unlink();
 
