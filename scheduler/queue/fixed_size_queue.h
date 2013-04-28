@@ -200,7 +200,7 @@ public:
     template<typename T>
     T & pop() {
 	assert( elm_size == sizeof(T) );
-	char* value = &buffer[(head*elm_size) % size];
+	char* value = &buffer[head];
 	T & r = *reinterpret_cast<T *>( value );
 	// Queue behavior (no concurrent pops)
 	head = (head+elm_size) % size;

@@ -82,18 +82,6 @@ private:
     cas_mutex mutex;
     flags_t flags;
 
-    // The logical head and tail fields indicate where this procedure is
-    // producing or consuming in the whole queue, if known. These variables
-    // act as temporary variables in case an actual queue_segment has not
-    // been allocated yet.
-    // TODO: strive to remove these variables (they are copied in the 
-    // segmented_queue's (queue and user).
-    // It appears we need to keep logical_head in case we pass to a push,
-    // then we will loose the position of the pop (head).
-    // long logical_head;
-    // Sequence number of push range. Increment for every pop.
-    size_t push_seqno;
-
     // Index structure: where to find segments at certain logical offsets.
     // TODO: store this in queue_t and pass pointer to it in here, copy on
     // nesting. That will make the storage of the index unique per queue.
@@ -115,18 +103,28 @@ public:
     void lock() { mutex.lock(); }
     void unlock() { mutex.unlock(); }
 
+    template<typename T>
+    class initializer {
+	typedef T value_type;
+    };
+
 protected:
     // Normal constructor, called from queue_t constructor
-    queue_version( long max_size_, size_t peekoff_ )
+    template<typename T>
+    queue_version( long max_size_, size_t peekoff_,
+		   initializer<T> init )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
 	  flags( qf_pushpop ),
 	  // logical_head( 0 ),
-	  push_seqno( 0 ),
 	  max_size( max_size_ ), peekoff( peekoff_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
 	assert( peekoff < max_size && "Peek only across one segment boundary" );
+
+	// Create an initial segment and share it between queue.head and user.tail
+	user.push_segment<T>( max_size, peekoff, true );
+	queue.take_head( user );
 
 	// errs() << "QV queue_t constructor for: " << this << "\n";
     }
@@ -134,14 +132,10 @@ protected:
     // Argument passing constructor, called from grab/dgrab interface.
     // Does a shallow copy
 public:
-    // This code is written with pushdep in mind; may need to be specialized
-    // to popdep
     queue_version( queue_version<metadata_t> * qv, qmode_t qmode )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
-	  flags( flags_t( qmode | qv->flags ) ),
-	  push_seqno( parent->push_seqno ),
-	  max_size( qv->max_size ),
-	  peekoff( qv->peekoff ) {
+	  flags( flags_t( qmode & qv->flags ) ),
+	  max_size( qv->max_size ), peekoff( qv->peekoff ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -149,22 +143,14 @@ public:
 	parent->lock();
 
 	user.take( parent->user );
-	if( (flags & qf_push) ) {
-	    if( user.get_tail() ) {
-		user.get_tail()->set_producing();
-		// errs() << "set producing: " << *user.get_tail() << std::endl;
-	    } /*else if( parent->children.get_tail() ) {
-		parent->children.get_tail()->set_producing();
-		errs() << "set producing: " << *parent->children.get_tail() << std::endl;
-		}*/
+	if( (flags & qf_push) && user.get_tail() ) {
+	    user.get_tail()->set_producing();
 	}
 
 	if( flags & qf_pop ) {
-	    if( parent->flags & qf_push ) // qf_pop is implied on parent
-		parent->push_seqno++;
-
-	    // Only initialize queue if this is a pop, pushpop or prefix dep.
+	    // Only initialize queue if this is a pop or pushpop dep.
 	    queue.take( parent->queue );
+	    assert( queue.get_head() && "Queue must have non-null head" );
 	}
 
 	// Link in chain with siblings
@@ -246,42 +232,19 @@ public:
 	if( (flags & qf_push) && (parent->flags & qf_pushpop) == qf_pushpop
 	    && ( !fright || (fright->flags & qf_pop) )
 	    ) {
-	    // errs() << "Should clear producing... is_stack=" << is_stack << " fright=" << fright << " last_seg=" << last_seg << std::endl;
-
 	    if( last_seg )
 		last_seg->clr_producing();
 	}
 
 
-	if( (flags & qf_pop) ) {
+	if( flags & qf_pop ) {
 	    // Swap queues between finishing child and parent
 	    parent->queue.take( queue );
+	    assert( parent->queue.get_head() && "Queue head must be non-null" );
 
-	    // If we are having pops, then erase the queue, get it from the index.
-	    // This makes the assumption that pops and prefixes are not mixed at
-	    // the same level
-	    // if( !(flags & qf_fixed) )
-	    // We generally do not want to carry the queue segment over through the
+	    // We do not want to carry the queue segment over through the
 	    // parent. -- should be in take()?
-		parent->queue.set_head( 0 );
-
-	    // What about prefix executing in parallel?
-	    // Right reduce (move info to right) here: if we have a right sibling
-	    // that is a pop, tell it what the logical position is. Else, tell
-	    // the parent.
-	    if( parent->queue.get_head() >= 0 ) {
-		queue_version<MetaData> * rpop = fright;
-		while( rpop ) {
-		    if( rpop->flags & qf_pop )
-			break;
-		    rpop = rpop->fright;
-		}
-		if( rpop ) {
-		    // rpop->queue.set_logical( parent->queue.get_logical() );
-		    // parent->queue.set_logical( -1 ); // -- fails on prefix which must always have logical >= 0
-		    // errs() << "right reduce pop head to " << *rpop << std::endl;
-		}
-	    }
+	    // parent->queue.set_head( 0 );
 	}
 
 /*
@@ -483,13 +446,13 @@ public:
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
 		std::max(length+peekoff,max_size),
-		peekoff, push_seqno, true ); // review is_head
+		peekoff, false );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	write_slice<MetaData,T> slice
-	    = user.get_write_slice<MetaData,T>( length+peekoff, push_seqno );
+	    = user.get_write_slice<MetaData,T>( length+peekoff );
 	slice.set_version( this );
 	return slice;
     }
@@ -539,14 +502,14 @@ public:
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>( max_size, peekoff, push_seqno, true );
+	    user.push_segment<T>( max_size, peekoff, false );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
 	// errs() << "push QV=" << this << " user="
 	       // << user << " value=" << t << "\n";
-	user.push<T>( &t, max_size, peekoff, push_seqno );
+	user.push<T>( &t, max_size, peekoff );
     }
 
     template<typename T>
@@ -554,7 +517,7 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    user.push_segment<T>(
-		max_size, peekoff, push_seqno, true );
+		max_size, peekoff, false );
 
 	    segmented_queue q = user.split();
 	    push_head( q );
@@ -589,7 +552,6 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " children=" << v.children
        << " user=" << v.user
        << " right=" << v.right
-       << " seqno=" << v.push_seqno
        << " flags=" << v.flags;
     return os;
 }

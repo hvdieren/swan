@@ -19,7 +19,6 @@ class queue_segment
     long hash;
 #endif
     size_t dflag;
-    size_t seqno;
     queue_segment * next;
     queue_segment * child[2];
     short balance;
@@ -49,11 +48,10 @@ class queue_segment
 private:
     queue_segment( typeinfo_array tinfo, char * buffer,
 		   size_t elm_size, size_t max_size, size_t peekoff_,
-		   size_t seqno_, bool is_head )
+		   bool is_head )
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  volume_pop( 0 ), volume_push( peekoff_ ),
 	  dflag( 0 ),
-	  seqno( seqno_ ),
 	  next( 0 ), producing( true ), copied_peek( is_head ) {
 #if DBG_ALLOC
 	hash = 0xbebebebe;
@@ -92,7 +90,7 @@ public:
 public:
     // Allocate control fields and data buffer in one go
     template<typename T>
-    static queue_segment * create( size_t seg_size, size_t peekoff, size_t seqno, bool is_head ) {
+    static queue_segment * create( size_t seg_size, size_t peekoff, bool is_head ) {
 	typeinfo_array tinfo = typeinfo_array::create<T>();
 	size_t buffer_size = fixed_size_queue::get_buffer_space<T>( seg_size );
 	char * memory = new char [sizeof(queue_segment) + buffer_size];
@@ -100,7 +98,7 @@ public:
 	size_t step = fixed_size_queue::get_element_size<T>();
 	tinfo.construct<T>( buffer, &buffer[buffer_size], step );
 	return new (memory) queue_segment( tinfo, buffer, step,
-					   seg_size, peekoff, seqno, is_head );
+					   seg_size, peekoff, is_head );
 	return (queue_segment*)memory;
     }
 
@@ -232,7 +230,6 @@ operator << ( std::ostream & os, const queue_segment & seg ) {
 	      << " next=" << seg.next
 	      << " child=" << seg.child[0] << "," << seg.child[1]
 	      << " B=" << seg.balance
-	      << " seqno=" << seg.seqno
 	      << ' ' << seg.q;
 }
 

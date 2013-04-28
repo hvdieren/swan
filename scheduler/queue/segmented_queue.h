@@ -36,6 +36,8 @@ class segmented_queue {
 protected:
     queue_segment * head, * tail;
 
+    friend class segmented_queue_pop;
+
     // head may be NULL and tail non-NULL. In this case, the list has been
     // reduced but we know that the current segmented_queue is the last such
     // one (the right-most in the reduction) and therefore any addition
@@ -147,9 +149,9 @@ public:
     }
 
     template<typename T>
-    void push_segment( size_t max_size, size_t peekoff, size_t seqno, bool is_head ) {
+    void push_segment( size_t max_size, size_t peekoff, bool is_head ) {
 	queue_segment * seg
-	    = queue_segment::template create<T>( max_size, peekoff, seqno, is_head );
+	    = queue_segment::template create<T>( max_size, peekoff, is_head );
 	if( tail ) {
 	    tail->set_next( seg );
 	    tail->clr_producing();
@@ -163,14 +165,14 @@ public:
     }
 
     template<typename T>
-    void push( const T * value, size_t max_size, size_t peekoff, size_t seqno ) {
+    void push( const T * value, size_t max_size, size_t peekoff ) {
 	assert( tail );
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
 	// a new segment.
 	if( tail->is_full() ) {
 	    // tail->lock();
-	    push_segment<T>( max_size, peekoff, seqno, false );
+	    push_segment<T>( max_size, peekoff, false );
 	    // tail->unlock();
 	}
 	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
@@ -184,14 +186,14 @@ public:
     }
 
     template<typename MetaData, typename T>
-    write_slice<MetaData,T> get_write_slice( size_t length, size_t seqno ) {
+    write_slice<MetaData,T> get_write_slice( size_t length ) {
 	// Push a fresh segment if we don't have enough room on the
 	// current one. Subtract again peek distance from length. Rationale:
 	// we have already reserved this space in the current segment.
 	if( !tail->has_space( length-tail->get_peek_dist() ) ) {
 	    queue_segment * old_tail = tail;
 	    old_tail->lock();
-	    push_segment<T>( length, tail->get_peek_dist(), seqno, false );
+	    push_segment<T>( length, tail->get_peek_dist(), false );
 	    old_tail->unlock();
 	}
 	return tail->get_write_slice<MetaData,T>( length );
@@ -217,13 +219,7 @@ private:
 
 	    // errs() << "head " << head << " runs out, pop segment (empty)\n";
 
-	    // Are we totally done with this segment?
-	    // TODO: this may introduce a data race and not deallocate
-	    // some segments as a result. Or even dealloc more than
-	    // once...
-	    // TODO: situation got worse with peeking
-	    // IDEA: incorporate peeked condition as add one to
-	    // push and pop volume rather than separate boolen condition
+	    // Are we totally done with this segment? -- SHOULD BE ALWAYS YES
 	    if( head->all_done() ) {
 		queue_segment::deallocate( head );
 	    } else {
@@ -289,6 +285,11 @@ public:
 	    head->advance_to_end( length );
     }
 */
+
+    void take_head( segmented_queue & from ) {
+	head = from.head;
+	from.head = 0;
+    }
 
     void take( segmented_queue_pop & from ) {
 	std::swap( *this, from );

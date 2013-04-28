@@ -54,7 +54,8 @@ class hyperqueue : protected queue_version<queue_metadata>
 {
 public:
     explicit hyperqueue( size_t size = 128, size_t peekoff = 0 )
-	: queue_version<queue_metadata>( size, peekoff ) { }
+	: queue_version<queue_metadata>( size, peekoff,
+					 queue_version::initializer<T>() ) { }
 	
     operator pushdep<T>() const { return create_dep_ty< pushdep >(); }
     operator popdep<T>()  const { return create_dep_ty< popdep >(); }
