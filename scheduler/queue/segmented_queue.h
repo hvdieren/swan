@@ -42,9 +42,7 @@ protected:
     // reduced but we know that the current segmented_queue is the last such
     // one (the right-most in the reduction) and therefore any addition
     // in the queue goes to the tail and growing the segment grows the tail.
-    // if head is NULL, the segments should not be deallocated?
-    // NOTE: there may be multiple links to a tail segment. How do we update
-    // them?
+    // if head is NULL, the segments should not be deallocated.
 
 public: 
     segmented_queue() : head( 0 ), tail( 0 ) { }
@@ -53,7 +51,7 @@ public:
 	if( head != 0 && tail != 0 ) {
 	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
 		q_next = q->get_next();
-		queue_segment::deallocate( q );
+		delete q;
 	    }
 	}
     }
@@ -221,7 +219,7 @@ private:
 
 	    // Are we totally done with this segment? -- SHOULD BE ALWAYS YES
 	    if( head->all_done() ) {
-		queue_segment::deallocate( head );
+		delete head;
 	    } else {
 		head->unlock();
 	    }
@@ -233,8 +231,6 @@ private:
 
     void await() {
 	assert( head );
-
-	head->check_hash();
 
 	if( likely( !head->is_empty() ) )
 	    return;
@@ -251,8 +247,6 @@ private:
 	do {
 	    assert( head );
 	    // errs() << "await " << *this << " head=" << *head << std::endl;
-
-	    head->check_hash();
 
 	    while( head->is_empty() && head->is_producing() ) {
 		// busy wait
@@ -360,9 +354,7 @@ public:
 #endif // PROFILE_QUEUE
 
 	queue_segment * seg = head;
-	head->check_hash();
 	while( unlikely( seg->is_empty() ) ) {
-	    seg->check_hash();
 	    if( !seg->is_producing() )
 		seg = head->get_next();
 	    if( !seg->is_empty() )

@@ -7,18 +7,12 @@
 #include <iostream>
 #include "swan/queue/fixed_size_queue.h"
 
-#define DBG_ALLOC 0
-
 namespace obj {
 
 class queue_segment
 {
     fixed_size_queue q;
     size_t volume_pop, volume_push;
-#if DBG_ALLOC
-    long hash;
-#endif
-    size_t dflag;
     queue_segment * next;
     queue_segment * child[2];
     short balance;
@@ -32,10 +26,6 @@ class queue_segment
     pad_multiple<16, sizeof(fixed_size_queue)
 		 + sizeof(long)
 		 + 3*sizeof(size_t)
-#if DBG_ALLOC
-		 + sizeof(long)
-#endif
-		 + sizeof(size_t)
 		 + 3*sizeof(queue_segment *)
 		 + sizeof(short)
 		 + sizeof(bool)
@@ -51,42 +41,14 @@ private:
 		   bool is_head )
 	: q( tinfo, buffer, elm_size, max_size, peekoff_ ),
 	  volume_pop( 0 ), volume_push( peekoff_ ),
-	  dflag( 0 ),
 	  next( 0 ), producing( true ), copied_peek( is_head ) {
-#if DBG_ALLOC
-	hash = 0xbebebebe;
-#endif
 	/// static_assert( sizeof(queue_segment) % 16 == 0, "padding failed" );
 	// errs() << "queue_segment create " << *this << std::endl;
     }
-private:
-    ~queue_segment() { }
 public:
     void lock() { mux.lock(); }
     void unlock() { mux.unlock(); }
 
-    void check_hash() const {
-#if DBG_ALLOC
-	assert( hash == 0xbebebebe );
-#endif
-	assert( !dflag );
-    }
-
-    static void deallocate( queue_segment * seg ) {
-	// errs() << "deallocate " << *seg << " by " << d << std::endl;
-#if DBG_ALLOC
-#endif
-	if( __sync_fetch_and_add( &seg->dflag, 1 ) == 0 ) {
-	    assert( seg->dflag == 1 );
-#if DBG_ALLOC
-	    assert( seg->hash == 0xbebebebe );
-	    seg->hash = 0xdeadbeef;
-#endif
-	    if( 1 ) // set to 0 to avoid memory reuse (debugging)
-		delete seg;
-	}
-    }
-	
 public:
     // Allocate control fields and data buffer in one go
     template<typename T>
@@ -114,7 +76,6 @@ public:
     // size_t get_volume_pop() const { return volume_pop; }
     // size_t get_volume_push() const { return volume_push; }
     bool all_done() const {
-	check_hash();
 	return copied_peek && volume_pop + q.get_peek_dist() == volume_push;
     }
 
@@ -153,13 +114,11 @@ public:
 
     // Queue pop and push methods
     void pop_bookkeeping( size_t npop ) {
-	check_hash();
 	__sync_fetch_and_add( &volume_pop, npop );
 	assert( volume_pop <= volume_push );
     }
 
     void push_bookkeeping( size_t npush ) {
-	check_hash();
 	q.push_bookkeeping( npush );
 	volume_push += npush;
     }
