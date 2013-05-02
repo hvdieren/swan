@@ -100,9 +100,6 @@ public:
     typedef pushdep_tags dep_tags;
     typedef pushdep_type_tag _object_tag;
 	
-	// For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-
     static pushdep<T> create( queue_version<metadata_t> * v ) {
 	pushdep<T> dep;
 	dep.queue_v = v;
@@ -114,7 +111,10 @@ public:
     write_slice<queue_metadata, T> get_write_slice( size_t length ) {
 	return queue_v->get_write_slice<T>( length );
     }
-private:
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 template<typename T>
@@ -131,11 +131,9 @@ public:
 	return newpop;
     }
 
-    read_slice<queue_metadata, T> get_slice_upto( size_t npop_max, size_t npeek ) {
-	return queue_v->get_slice_upto<T>( npop_max, npeek );
-    }
-    read_slice<queue_metadata, T> get_slice( size_t npop, size_t npeek ) {
-	return queue_v->get_slice<T>( npop, npeek );
+    read_slice<queue_metadata, T>
+    get_read_slice_upto( size_t npop_max, size_t npeek ) {
+	return queue_v->get_read_slice_upto<T>( npop_max, npeek );
     }
 	
     const T & pop() {

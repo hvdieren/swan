@@ -14,4 +14,17 @@ profile_queue & get_profile_queue() {
 }
 #endif // PROFILE_QUEUE
 
+std::ostream & operator << ( std::ostream & os, queue_flags_t f ) {
+    char const * sep = "";
+    if( f & qf_push ) {
+	os << sep << "push";
+	sep = "|";
+    }
+    if( f & qf_pop ) {
+	os << sep << "pop";
+	sep = "|";
+    }
+    return os;
+}
+
 } // namespace obj

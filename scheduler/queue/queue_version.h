@@ -21,12 +21,9 @@
 
 namespace obj {
 
-template<typename MetaData>
-class queue_base;
-
 enum queue_flags_t { qf_push=1, qf_pop=2, qf_pushpop=3 };
 
-inline std::ostream & operator << ( std::ostream & os, queue_flags_t f );
+std::ostream & operator << ( std::ostream & os, queue_flags_t f );
 
 template<typename MetaData>
 class queue_version
@@ -88,7 +85,7 @@ protected:
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	assert( peekoff < max_size && "Peek only across one segment boundary" );
+	assert( peekoff < max_size && "Peek should not cross segment boundaries" );
 
 	// Create an initial segment and share it between queue.head and user.tail
 	user.push_segment<T>( max_size, peekoff, true );
@@ -332,12 +329,14 @@ public:
 	queue.pop_bookkeeping( npop );
     }
 
+    // Only for tasks with pop privileges.
     template<typename T>
     T & pop() {
 	assert( queue.get_head() );
 	return queue.pop<T>();
     }
 
+    // Only for tasks with pop privileges.
     template<typename T>
     T & peek( size_t off ) {
 	assert( off <= peekoff && "Peek outside requested range" );
@@ -349,10 +348,7 @@ public:
     write_slice<MetaData,T> get_write_slice( size_t length ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>(
-		std::max(length+peekoff,max_size),
-		peekoff, false );
-
+	    user.push_segment<T>( std::max(length+peekoff,max_size), peekoff, false );
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
@@ -363,40 +359,14 @@ public:
     }
 
     template<typename T>
-    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
+    read_slice<MetaData,T> get_read_slice_upto( size_t npop_max, size_t npeek ) {
 	assert( npeek <= peekoff && "Peek outside requested range" );
-
-	// empty() involves count == 0 check.
 	assert( !empty() );
 	assert( queue.get_head() );
 	read_slice<MetaData,T> slice
-	    = queue.get_slice_upto<MetaData,T>( npop_max, npeek );
+	    = queue.get_read_slice_upto<MetaData,T>( npop_max, npeek );
 	slice.set_version( this );
 	return slice;
-    }
-    template<typename T>
-    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
-	abort(); // deprecated
-	assert( npeek-npop <= peekoff && "Peek outside requested range" );
-	assert( !empty() );
-	read_slice<MetaData,T> slice
-	    = queue.get_slice<MetaData,T>( npop, npeek );
-	slice.set_version( this );
-	return slice;
-    }
-
-    template<typename T>
-    const T & pop_fixed( const T & dflt ) {
-	// errs() << "pop QV=" << this << " queue=" << queue << "\n";
-
-	// Make sure we have a local, usable queue. Busy-wait if necessary
-	// until we have made contact with the task that pushes.
-	assert( queue.get_head() );
-	if( queue.empty() )
-	    return dflt;
-	else
-	    return queue.pop<T>();
-	// errs() << "prefix pop " << this << " count=" << count << "\n";
     }
 
     // Potentially differentiate const T & t versus T && t
@@ -405,44 +375,17 @@ public:
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
 	    user.push_segment<T>( max_size, peekoff, false );
-
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	// errs() << "push QV=" << this << " user="
-	       // << user << " value=" << t << "\n";
 	user.push<T>( &t, max_size, peekoff );
     }
 
-    template<typename T>
-    void push_fixed( const T & t ) {
-	// Make sure we have a local, usable queue
-	if( !user.get_tail() ) {
-	    user.push_segment<T>(
-		max_size, peekoff, false );
-
-	    segmented_queue q = user.split();
-	    push_head( q );
-	}
-	// errs() << "push-fixed QV=" << this << " user="
-	       // << user << " value=" << t << "\n";
-
-	user.push<T>( &t, max_size, peekoff );
-    }
-
-
-    // Only for pop!
+    // Only for tasks with pop privileges.
     bool empty() {
-	// Make sure we have a local, usable queue. Busy-wait if necessary
-	// until we have made contact with the task that pushes.
-	// errs() << "QV empty check: QV=" << *this << " queue=" << queue << std::endl;
-	if( !queue.get_head() ) {
-	    // errs() << "QV empty due to non-producing final segment" << std::endl;
+	if( !queue.get_head() )
 	    return true;
-	}
-	bool r = queue.empty();
-	// errs() << "QV empty? " << r << std::endl;
-	return r;
+	return queue.empty();
     }
 };
 
@@ -456,20 +399,6 @@ std::ostream & operator << ( std::ostream & os, queue_version<MD> & v ) {
        << " flags=" << v.flags;
     return os;
 }
-
-std::ostream & operator << ( std::ostream & os, queue_flags_t f ) {
-    char const * sep = "";
-    if( f & qf_push ) {
-	os << sep << "push";
-	sep = "|";
-    }
-    if( f & qf_pop ) {
-	os << sep << "pop";
-	sep = "|";
-    }
-    return os;
-}
-
 
 } //namespace obj
 
