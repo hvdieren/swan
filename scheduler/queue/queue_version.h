@@ -148,6 +148,7 @@ public:
 	// 1. Queue is head-only (tail is always 0), so cannot own queue
 	// 2. Children must have been reduced into user and un-owned
 	// 3. Right must have been reduced into user, so empty
+	errs() << "QV destruct " << *this << std::endl;
 	assert( !children.get_head()
 		&& "QV::children must be un-owned on destruct" );
 	assert( !right.get_head() && !right.get_tail()
@@ -254,8 +255,25 @@ private:
     // The head is pushed up as far as possible, without affecting the order
     // of elements in the queue.
     void push_head( segmented_queue & q ) {
+	lock();
+
+	if( ctail ) { // and also chead
+	    ctail->lock();
+	    ctail->right.reduce_headonly( q );
+	    ctail->unlock();
+	    unlock();
+	} else {
+	    bool cont = !children.get_tail();
+	    children.reduce_headonly( q );
+	    unlock();
+	    if( cont )
+		push_head_up( children );
+	}
+    }
+    void push_head_up( segmented_queue & q ) {
 	// Note: lock parent even though we don't need the parent
 	// to avoid deletion of fleft between if( fleft ) and fleft->lock()
+	// Note: The parent cannot disappear while the child is executing.
 	// errs() << "push_head: " << *this << "\n";
 	if( parent )
 	    parent->lock();
@@ -283,25 +301,11 @@ private:
 	    unlock();
             parent->unlock();
 
-	    // The parent cannot disappear while the child is executing.
-	    // We need to lock the grandparent while pushing because a
-	    // consumer may be accessing the segmented_queue as we are
-	    // initializing it.
-	    // Do we really need this once we have the queue_index?
-	    // Yes. It helps to pro-actively link as much of the chain
-	    // as possible together without resorting to the index (which
-	    // wouldn't happen as all segments would remain "producing").
 	    if( cont )
-		parent->push_head( parent->children );
+		parent->push_head_up( parent->children );
 	} else { // ! parent
 	    // If we do not have a parent, then the push terminates.
-	    // Do nothing here.
-	    // Evaporate the segment pointer. It is registered in the index
-	    // and will be accessed that way. We do this because there may be
-	    // multiple "heads" of traces of the queue.
-	    assert( children.get_head() );
-	    assert( !children.get_tail() );
-	    children.set_head( 0 ); // Moved to index
+	    abort();
 	}
     }
 

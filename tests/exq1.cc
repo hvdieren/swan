@@ -59,7 +59,15 @@ void producer_rec( int s, int n, int step, int delay, pushdep<int> q ) {
 	   << " in " << nsteps << " steps\n";
     if( nsteps > 1 ) {
 	spawn( producer_rec, s, s+(nsteps/2)*step, step, delay, q );
-	spawn( producer_rec, s+(nsteps/2)*step, n, step, delay, q );
+	{
+	    int ss = s+(nsteps/2)*step;
+	    q.push( ss );
+	    iolock();
+	    errs() << "produce: " << ss << '\n';
+	    iounlock();
+	    usleep( delay );
+	}
+	spawn( producer_rec, s+(nsteps/2)*step+1, n, step, delay, q );
     } else
 	spawn( producer, s, std::min(step,n-s), delay, q );
     ssync();
