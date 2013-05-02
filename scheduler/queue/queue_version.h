@@ -162,11 +162,9 @@ public:
 	user.reduce_reverse( children );
     }
 
-    template<typename T>
     void reduce_hypermaps() {
 	// Do conversion of hypermaps when a child finishes:
 	//  * merge children - user - right
-	//  * check ownership and deallocate if owned and empty.
 	//  * move children (where everything is reduced to) to left->right
 	//    or parent->children
 
