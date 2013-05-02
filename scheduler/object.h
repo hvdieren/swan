@@ -1384,7 +1384,7 @@ struct cleanup_tags_functor {
     typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
     operator() ( DepTy<T> obj_ext, typename DepTy<T>::dep_tags & tags ) {
 	if( !is_released )
-	    tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
+	    tags.get_queue_version()->template reduce_hypermaps<T>();
 
 	typedef typename DepTy<T>::dep_tags tags_t;
 	tags.~tags_t();
@@ -1441,7 +1441,7 @@ struct release_functor {
     typename std::enable_if<is_queue_dep<DepTy<T>>::value, bool>::type
     operator () ( DepTy<T> obj_int, typename DepTy<T>::dep_tags & tags ) {
 	typedef typename DepTy<T>::metadata_t MetaData;
-	tags.get_queue_version()->template reduce_hypermaps<T>( is_stack );
+	tags.get_queue_version()->template reduce_hypermaps<T>();
 	DepTy<T> obj_ext = DepTy<T>::create( obj_int.get_version()->get_parent() );
 	dep_traits<MetaData, Task, DepTy>::arg_release( fr, obj_ext, tags );
 	return true;

@@ -169,6 +169,7 @@ public:
 	//  * move children (where everything is reduced to) to left->right
 	//    or parent->children
 
+	// TODO: Need to randomize lock order! (see Cilk++ hyperobjects paper)
 	if( parent )
 	    parent->lock();
 	if( fleft )
@@ -218,8 +219,8 @@ public:
 	}
 
 #if DBG_QUEUE_VERSION
-  errs() << "Reducing hypermaps DONE on " << *this << std::endl;
-  errs() << "                    parent " << *parent << std::endl;
+	errs() << "Reducing hypermaps DONE on " << *this << std::endl;
+	errs() << "                    parent " << *parent << std::endl;
 #endif
 
 	unlink();
@@ -239,14 +240,6 @@ private:
 	if( !parent )
 	    return;
 
-	// TODO: Need to randomize lock order! (see Cilk++ hyperobjects paper)
-	// parent->lock();
-	// if( fleft )
-	    // fleft->lock();
-	// lock();
-	// if( fright )
-	    // fright->lock();
-
 	if( fleft )
 	    fleft->fright = fright;
 	else
@@ -256,13 +249,6 @@ private:
 	    fright->fleft = fleft;
 	else
 	    parent->ctail = fleft;
-
-	// parent->unlock();
-	// if( fleft )
-	    // fleft->unlock();
-	// unlock();
-	// if( fright )
-	    // fright->unlock();
     }
 
     // The head is pushed up as far as possible, without affecting the order
@@ -339,8 +325,6 @@ public:
 
     template<typename T>
     T & pop() {
-	// Make sure we have a local, usable queue. Busy-wait if necessary
-	// until we have made contact with the task that pushes.
 	assert( queue.get_head() );
 	return queue.pop<T>();
     }
