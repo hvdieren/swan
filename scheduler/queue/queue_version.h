@@ -17,7 +17,7 @@
 
 #include "swan/queue/segmented_queue.h"
 
-#define DBG_QUEUE_VERSION 1
+#define DBG_QUEUE_VERSION 0
 
 namespace obj {
 
@@ -145,7 +145,6 @@ public:
 	// 1. Queue is head-only (tail is always 0), so cannot own queue
 	// 2. Children must have been reduced into user and un-owned
 	// 3. Right must have been reduced into user, so empty
-	errs() << "QV destruct " << *this << std::endl;
 	assert( !children.get_head()
 		&& "QV::children must be un-owned on destruct" );
 	assert( !right.get_head() && !right.get_tail()
