@@ -40,6 +40,12 @@ private:
     }
 
 public:
+    ~queue_segment() {
+#if PROFILE_QUEUE
+	get_profile_queue().num_segment_dealloc++;
+#endif
+    }
+
     // Allocate control fields and data buffer in one go
     template<typename T>
     static queue_segment * create( size_t seg_size, size_t peekoff, bool is_head ) {
@@ -49,9 +55,18 @@ public:
 	char * buffer = &memory[sizeof(queue_segment)];
 	size_t step = fixed_size_queue::get_element_size<T>();
 	tinfo.construct<T>( buffer, &buffer[buffer_size], step );
+#if PROFILE_QUEUE
+	get_profile_queue().num_segment_alloc++;
+#endif
 	return new (memory) queue_segment( tinfo, buffer, step,
 					   seg_size, peekoff, is_head );
-	return (queue_segment*)memory;
+    }
+
+    void erase_all() {
+	for( queue_segment * q=this, * q_next; q; q = q_next ) {
+	    q_next = q->get_next();
+	    delete q;
+	}
     }
 
     // Accessor functions for control (not exposed to user API)

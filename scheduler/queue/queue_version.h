@@ -155,6 +155,13 @@ public:
 		&& "QV::right must be empty on destruct" );
 
 	user.erase();
+
+	// Top-level queue_version stores last queue_segment(s) shared between
+	// queue and children/user.
+	if( !parent ) {
+	    assert( queue.get_head() );
+	    queue.get_head()->erase_all();
+	}
     }
 
     void reduce_sync() {

@@ -48,12 +48,8 @@ public:
     segmented_queue() : head( 0 ), tail( 0 ) { }
     void erase() {
 	// Ownership is determined when both head and tail are non-NULL.
-	if( head != 0 && tail != 0 ) {
-	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
-		q_next = q->get_next();
-		delete q;
-	    }
-	}
+	if( head != 0 && tail != 0 )
+	    head->erase_all();
     }
 
     queue_segment * get_tail() { return tail; }

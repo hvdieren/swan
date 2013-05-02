@@ -24,6 +24,42 @@ struct profile_queue {
     pp_time_t qv_qhead;
     pp_time_t qs_peek;
     pp_time_t qs_pop;
+
+    size_t num_segment_alloc;
+    size_t num_segment_dealloc;
+
+    profile_queue() : num_segment_alloc( 0 ), num_segment_dealloc( 0 ) {
+	memset( &sq_await, 0, sizeof(sq_await) );
+	memset( &sq_peek, 0, sizeof(sq_peek) );
+	memset( &qs_peek, 0, sizeof(qs_peek) );
+	memset( &qs_pop, 0, sizeof(qs_pop) );
+	memset( &qv_qhead, 0, sizeof(qv_qhead) );
+    }
+
+    const profile_queue & operator += ( const profile_queue & r ) {
+	pp_time_add( &sq_await, &r.sq_await );
+	pp_time_add( &sq_peek, &r.sq_peek );
+	pp_time_add( &qs_peek, &r.qs_peek );
+	pp_time_add( &qs_pop, &r.qs_pop );
+	pp_time_add( &qv_qhead, &r.qv_qhead );
+
+	num_segment_alloc += r.num_segment_alloc;
+	num_segment_dealloc += r.num_segment_dealloc;
+
+	return *this;
+    }
+
+    void dump_profile() const {
+#define SHOW(x) pp_time_print( (pp_time_t *)&x, (char *)#x )
+	SHOW( sq_await );
+	SHOW( sq_peek );
+	SHOW( qs_peek );
+	SHOW( qs_pop );
+	SHOW( qv_qhead );
+#undef SHOW
+	std::cerr << " num_alloc=" << num_segment_alloc << "\n";
+	std::cerr << " num_dealloc=" << num_segment_dealloc << "\n";
+    }
 };
 
 profile_queue & get_profile_queue();
