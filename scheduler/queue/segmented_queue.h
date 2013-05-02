@@ -6,6 +6,13 @@
 #include <iostream>
 #include "swan/queue/queue_segment.h"
 
+// Note: pop functionality applies to a segmented_queue where only the head
+// is known. Push may operate on segmented_queues with a head and a tail.
+// Note that there is a slight asymmetry between push and pop as concurrent
+// pushes to the same hyperqueue will push to different segments by
+// construction. Pops may occur concurrently on the same segments, as may
+// pop and push.
+
 namespace obj {
 
 class segmented_queue;
@@ -20,18 +27,6 @@ operator << ( std::ostream & os, const segmented_queue_push & seg );
 inline std::ostream &
 operator << ( std::ostream & os, const segmented_queue_pop & seg );
 
-
-// TODO: create base class with reduce functionality and subclasses
-// with either push or pop functionality. We will never push and pop from
-// the same segmented_queue. Rather, a pushpopdep procedure will push to user
-// and pop from queue (in queue_version). These subclasses are our views on
-// the queue and may limit the number of pushes and pops performed.
-// Note: pop functionality applies to a segmented_queue where only the head
-// is known. Push may operate on segmented_queues with a head and a tail.
-// Note that there is a slight asymmetry between push and pop as concurrent
-// pushes to the same hyperqueue will push to different segments by
-// construction. Pops may occur concurrently on the same segments, as may
-// pop and push.
 class segmented_queue {
 protected:
     queue_segment * head, * tail;
@@ -320,7 +315,7 @@ public:
     // and pop npop, where it is assumed that npeek >= npop, i.e., the peeked
     // elements include the popped ones.
     template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice_upto( size_t npop_max, size_t npeek ) {
+    read_slice<MetaData,T> get_read_slice_upto( size_t npop_max, size_t npeek ) {
 	long npop;
 	await();
 	do { 
@@ -331,22 +326,6 @@ public:
 	    await();
 	} while( true );
 
-	return head->get_slice<MetaData,T>( npop );
-    }
-
-    template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice( size_t npop, size_t npeek ) {
-	assert( npeek >= npop );
-	// If we know that npeek <= peekoff, then we should be fine with npop > 1
-	// except when the pops span segments, i.e., all npeek values in current
-	// segment except that 2nd popped value is here only for peek reasons
-	// and should be popped from the next segment.
-	// assert( npop == 1 );
-
-	// Spin until the desired information appears in the queue.
-	await();
-
-	// Make sure we have all elements available
 	return head->get_slice<MetaData,T>( npop );
     }
 };
