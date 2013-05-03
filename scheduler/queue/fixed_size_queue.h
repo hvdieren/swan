@@ -1,14 +1,12 @@
 // -*- c++ -*-
 
 // TODO before release
-// * use std::copy<T>()
 // * get fixed queue size right and remove % if possible (when elms are not 2**k)
 // * validate slices
 // * validate peeks > 0
 // * validate on ferret, dedup, bzip2 (scrambled)
 // * schedule popdep task only if something ready in queue
 //   -- measure and notice little speedup?
-// * make peek: const T & peek() const ...
 // * array constructor should check for has_default_constructor ... and skip ?
 
 #ifndef QUEUE_FIXED_SIZE_QUEUE_H
@@ -98,9 +96,17 @@ public:
 	version->push_bookkeeping( npush );
     }
 
-    bool push( T & t ) {
+    bool push( T && t ) {
 	assert( npush < length );
-	memcpy( reinterpret_cast<T *>( buffer ), &t, sizeof(T) );
+	*reinterpret_cast<T *>( buffer ) = std::move( t );
+	buffer += sizeof(T);
+	++npush;
+	return npush < length;
+    }
+
+    bool push( const T & t ) {
+	assert( npush < length );
+	*reinterpret_cast<T *>( buffer ) = t;
 	buffer += sizeof(T);
 	++npush;
 	return npush < length;
@@ -128,7 +134,7 @@ public:
 	version->pop_bookkeeping( npop );
     }
 
-    const T & pop() {
+    T pop() {
 	assert( npop < length );
 	const char * e = buffer;
 	buffer += sizeof(T);
@@ -136,7 +142,7 @@ public:
 	return *reinterpret_cast<const T *>( e );
     }
 
-    const T & peek( size_t off ) {
+    const T & peek( size_t off ) const {
 	return *reinterpret_cast<const T *>( &buffer[off * sizeof(T)] );
     }
 };
@@ -239,7 +245,7 @@ public:
     }
 
     template<typename T>
-    T & peek( size_t pos ) const {
+    const T & peek( size_t pos ) const {
 	char* value = &buffer[(pos*elm_size) % size];
 	return *reinterpret_cast<T *>( value );
     }
@@ -293,8 +299,10 @@ public:
 	return read_slice<MetaData,T>( &buffer[pos * sizeof(T)], npop );
     }
 
+    // Problem: don't have T here. Store copy function pointer in array_blahblah?
     void copy_peeked( const char * buff ) {
 	if( peekoff > 0 )
+	    // std::copy<T>( buff, &buff[peekoff * elm_size], &buffer[head] );
 	    memcpy( &buffer[head], buff, peekoff * elm_size );
     }
 
