@@ -108,7 +108,7 @@ public:
     }
 	
     template<typename T>
-    T & pop() {
+    T && pop() {
 #if PROFILE_QUEUE
 	pp_time_start( &get_profile_queue().qs_pop );
 #endif // PROFILE_QUEUE
@@ -135,9 +135,17 @@ public:
     }
 	
     template<typename T>
-    void push( const T * value ) {
-	while( !q.push( value ) )
+    void push( T && value ) {
+	while( q.full() )
 	    sched_yield();
+	q.push( std::move( value ) );
+    }
+
+    template<typename T>
+    void push( const T & value ) {
+	while( q.full() )
+	    sched_yield();
+	q.push( value );
     }
 
     template<typename MetaData, typename T>

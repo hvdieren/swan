@@ -1,11 +1,23 @@
 // -*- c++ -*-
 
+// TODO before release
+// * use std::copy<T>()
+// * get fixed queue size right and remove % if possible (when elms are not 2**k)
+// * validate slices
+// * validate peeks > 0
+// * validate on ferret, dedup, bzip2 (scrambled)
+// * schedule popdep task only if something ready in queue
+//   -- measure and notice little speedup?
+// * make peek: const T & peek() const ...
+// * array constructor should check for has_default_constructor ... and skip ?
+
 #ifndef QUEUE_FIXED_SIZE_QUEUE_H
 #define QUEUE_FIXED_SIZE_QUEUE_H
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
+#include <utility> // std::move, std::forward
 #include "swan/alc_allocator.h"
 #include "swan/alc_mmappol.h"
 #include "swan/alc_flpol.h"
@@ -227,34 +239,37 @@ public:
     }
 
     template<typename T>
-    T & peek( size_t pos ) {
+    T & peek( size_t pos ) const {
 	char* value = &buffer[(pos*elm_size) % size];
 	return *reinterpret_cast<T *>( value );
     }
 
-    // returns NULL if pop fails
+    // Rely on return-value optimization to avoid copy constructors
     template<typename T>
-    T & pop() {
+    T && pop() {
 	assert( elm_size == sizeof(T) );
-	char* value = &buffer[head];
-	T & r = *reinterpret_cast<T *>( value );
-	// Queue behavior (no concurrent pops)
+	char * buffer_pos = &buffer[head];
+	// There is always at least one empty element in between tail and head
 	head = (head+elm_size) % size;
-	return r;
+	return std::move( *reinterpret_cast<T *>( buffer_pos ) );
     }
 	
     // returns true on success false on failure
+    // requires that a place is available by previously checking full()
     template<typename T>
-    bool push( const T * value ) {
+    void push( T && t ) {
 	assert( elm_size == sizeof(T) );
-	if( full() ) {
-	    return false;
-	} else {
-	    // std::copy<T>( *reinterpret_cast<T *>( &buffer[tail] ), *value );
-	    memcpy( reinterpret_cast<T *>( &buffer[tail] ), value, sizeof(T) );
-	    tail = (tail+elm_size) % size;
-	    return true;
-	}
+	assert( !full() );
+	*reinterpret_cast<T *>( &buffer[tail] ) = std::move( t );
+	tail = (tail+elm_size) % size;
+    }
+
+    template<typename T>
+    void push( const T & t ) {
+	assert( elm_size == sizeof(T) );
+	assert( !full() );
+	*reinterpret_cast<T *>( &buffer[tail] ) = t;
+	tail = (tail+elm_size) % size;
     }
 
     void pop_bookkeeping( size_t npop ) {

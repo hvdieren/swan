@@ -330,7 +330,7 @@ public:
 
     // Only for tasks with pop privileges.
     template<typename T>
-    T & pop() {
+    T && pop() {
 	assert( queue.get_head() );
 	return queue.pop<T>();
     }
@@ -370,6 +370,17 @@ public:
 
     // Potentially differentiate const T & t versus T && t
     template<typename T>
+    void push( T && t ) {
+	// Make sure we have a local, usable queue
+	if( !user.get_tail() ) {
+	    user.push_segment<T>( max_size, peekoff, false );
+	    segmented_queue q = user.split();
+	    push_head( q );
+	}
+	user.push<T>( std::move( t ), max_size, peekoff );
+    }
+
+    template<typename T>
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
@@ -377,7 +388,7 @@ public:
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	user.push<T>( &t, max_size, peekoff );
+	user.push<T>( t, max_size, peekoff );
     }
 
     // Only for tasks with pop privileges.

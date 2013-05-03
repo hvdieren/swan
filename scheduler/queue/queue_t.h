@@ -64,13 +64,13 @@ public:
     // The hyperqueue works in push/pop mode and so supports empty, pop and push.
     bool empty() { return queue_version<queue_metadata>::empty(); }
 
-    const T & pop() {
-	return queue_version<queue_metadata>::pop<T>();
-    }
+    // This pop function does not return an rvalue because the rvalue returned
+    // by queue_version will be overwritten. Hence, we make sure here that the
+    // value is copied-over definitely.
+    T pop() { return queue_version<queue_metadata>::pop<T>(); }
 
-    void push( const T & t ) {
-	queue_version<queue_metadata>::push<T>( t );
-    }
+    void push( T && t ) { queue_version<queue_metadata>::push<T>( std::move( t ) ); }
+    void push( const T & t ) { queue_version<queue_metadata>::push<T>( t ); }
 	
 private:
     template<template<typename U> class DepTy>
@@ -106,6 +106,7 @@ public:
 	return dep;
     }
 
+    void push( T && value ) { queue_v->push<T>( std::move( value ) ); }
     void push( const T & value ) { queue_v->push<T>( value ); }
 
     write_slice<queue_metadata, T> get_write_slice( size_t length ) {
@@ -136,9 +137,10 @@ public:
 	return queue_v->get_read_slice_upto<T>( npop_max, npeek );
     }
 	
-    const T & pop() {
-	return queue_v->pop<T>();
-    }
+    // This pop function does not return an rvalue because the rvalue returned
+    // by queue_version will be overwritten. Hence, we make sure here that the
+    // value is copied-over definitely.
+    T pop() { return queue_v->pop<T>(); }
 	
     const T & peek( size_t off ) {
 	return queue_v->peek<T>( off );

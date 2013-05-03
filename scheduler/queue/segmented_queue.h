@@ -154,7 +154,19 @@ public:
     }
 
     template<typename T>
-    void push( const T * value, size_t max_size, size_t peekoff ) {
+    void push( T && value, size_t max_size, size_t peekoff ) {
+	assert( tail );
+	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
+	// then just wait a bit for the pop to catch up and avoid inserting
+	// a new segment.
+	if( tail->is_full() )
+	    push_segment<T>( max_size, peekoff, false );
+	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
+	tail->push<T>( std::move( value ) );
+    }
+
+    template<typename T>
+    void push( const T & value, size_t max_size, size_t peekoff ) {
 	assert( tail );
 	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
 	// then just wait a bit for the pop to catch up and avoid inserting
@@ -264,7 +276,7 @@ public:
     }
 
     template<typename T>
-    T & pop() {
+    T && pop() {
 	// Spin until the desired information appears in the queue.
 	await();
 
