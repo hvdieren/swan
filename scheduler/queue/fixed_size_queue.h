@@ -38,6 +38,7 @@ struct profile_queue {
 
     size_t num_segment_alloc;
     size_t num_segment_dealloc;
+    size_t num_tail_wrap;
 
     profile_queue() : num_segment_alloc( 0 ), num_segment_dealloc( 0 ) {
 	memset( &sq_await, 0, sizeof(sq_await) );
@@ -56,6 +57,7 @@ struct profile_queue {
 
 	num_segment_alloc += r.num_segment_alloc;
 	num_segment_dealloc += r.num_segment_dealloc;
+	num_tail_wrap += r.num_tail_wrap;
 
 	return *this;
     }
@@ -70,6 +72,7 @@ struct profile_queue {
 #undef SHOW
 	std::cerr << " num_alloc=" << num_segment_alloc << "\n";
 	std::cerr << " num_dealloc=" << num_segment_dealloc << "\n";
+	std::cerr << " num_tail_wrap=" << num_tail_wrap << "\n";
     }
 };
 
@@ -265,10 +268,17 @@ public:
     // requires that a place is available by previously checking full()
     template<typename T>
     void push( T && t ) {
+#if PROFILE_QUEUE
+	size_t old_tail = tail;
+#endif
 	assert( elm_size == sizeof(T) );
 	assert( !full() );
 	*reinterpret_cast<T *>( &buffer[tail] ) = std::move( t );
 	tail = (tail+elm_size) % size;
+#if PROFILE_QUEUE
+	if( tail < head && old_tail >= head )
+	    get_profile_queue().num_tail_wrap++;
+#endif
     }
 
     template<typename T>
