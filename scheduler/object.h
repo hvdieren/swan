@@ -420,7 +420,10 @@ public:
     }
 
     template<typename T>
-    static typename std::enable_if<!std::is_void<T>::value && !std::is_scalar<T>::value>::type
+    static typename std::enable_if<!std::is_void<T>::value
+                                   && !std::is_scalar<T>::value
+                                   && !std::has_trivial_default_constructor<T>::value
+				>::type
     construct( void * start, void * end, size_t step ) {
 	for( char * ptr=reinterpret_cast<char *>( start );
 	     ptr < reinterpret_cast<char *>( end ); ptr += step ) {
@@ -429,7 +432,9 @@ public:
     }
 
     template<typename T>
-    static typename std::enable_if<std::is_void<T>::value || std::is_scalar<T>::value>::type
+    static typename std::enable_if<std::is_void<T>::value
+				   || std::is_scalar<T>::value
+                                   || std::has_trivial_default_constructor<T>::value>::type
     construct( void *, void *, size_t ) { }
 
     void destruct( void * start, void * end, size_t step ) const {

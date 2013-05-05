@@ -89,9 +89,28 @@ void test_A( void ) {
     errs() << "A p1=" << p1.a << "\n";
 }
 
+// This test is devised to check that if a class type has a trivial
+// default constructor, then the array will not be initialized at
+// construction time. Check the assembly code to see if it happens
+// or not.
+struct B {
+    int x;
+};
+
+void test_B( void ) {
+    hyperqueue<B> queue;
+    errs() << "B has trivial default constructor? "
+	   << ( std::has_trivial_default_constructor<B>::value ? "yes" : "no" )
+	   << "\n";
+    B b;
+    b.x = 0;
+    queue.push( b );
+}
+
 void test( void ) {
     test_int();
     test_A();
+    test_B();
 }
 
 int main( int argc, char * argv[] ) {

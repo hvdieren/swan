@@ -7,7 +7,8 @@
 // * validate on ferret, dedup, bzip2 (scrambled)
 // * schedule popdep task only if something ready in queue
 //   -- measure and notice little speedup?
-// * array constructor should check for has_default_constructor ... and skip ?
+// * create queue_metadata and taskgraph structures specific for queues,
+//   reusable across all taskgraphs
 
 #ifndef QUEUE_FIXED_SIZE_QUEUE_H
 #define QUEUE_FIXED_SIZE_QUEUE_H
