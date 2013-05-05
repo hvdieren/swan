@@ -237,17 +237,6 @@ public:
 	}
     }
 	
-    // peek first element
-    char* front() const { return &buffer[head]; }
-
-    bool is_produced( size_t pos ) const {
-	pos = (pos * elm_size) % size;
-	if( head <= tail )
-	    return head <= pos && pos < tail;
-	else
-	    return head <= pos || pos < tail;
-    }
-
     template<typename T>
     const T & peek( size_t pos ) const {
 	char* value = &buffer[(pos*elm_size) % size];
@@ -264,29 +253,32 @@ public:
 	return std::move( *reinterpret_cast<T *>( buffer_pos ) );
     }
 	
-    // returns true on success false on failure
-    // requires that a place is available by previously checking full()
-    template<typename T>
-    void push( T && t ) {
-#if PROFILE_QUEUE
+private:
+    size_t push_common() {
 	size_t old_tail = tail;
-#endif
-	assert( elm_size == sizeof(T) );
 	assert( !full() );
-	*reinterpret_cast<T *>( &buffer[tail] ) = std::move( t );
 	tail = (tail+elm_size) % size;
 #if PROFILE_QUEUE
 	if( tail < head && old_tail >= head )
 	    get_profile_queue().num_tail_wrap++;
 #endif
+	return old_tail;
+    }
+
+public:
+    // requires that a place is available by previously checking full()
+    template<typename T>
+    void push( T && t ) {
+	assert( elm_size == sizeof(T) );
+	size_t where = push_common();
+	*reinterpret_cast<T *>( &buffer[where] ) = std::move( t );
     }
 
     template<typename T>
     void push( const T & t ) {
 	assert( elm_size == sizeof(T) );
-	assert( !full() );
-	*reinterpret_cast<T *>( &buffer[tail] ) = t;
-	tail = (tail+elm_size) % size;
+	size_t where = push_common();
+	*reinterpret_cast<T *>( &buffer[where] ) = t;
     }
 
     void pop_bookkeeping( size_t npop ) {
@@ -306,8 +298,8 @@ public:
     }
 
     template<typename MetaData, typename T>
-    read_slice<MetaData,T> get_slice( size_t pos, size_t npop ) {
-	return read_slice<MetaData,T>( &buffer[pos * sizeof(T)], npop );
+    read_slice<MetaData,T> get_read_slice( size_t npop ) {
+	return read_slice<MetaData,T>( &buffer[head], npop );
     }
 
     // Problem: don't have T here. Store copy function pointer in array_blahblah?

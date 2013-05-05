@@ -154,8 +154,8 @@ public:
     }
 
     template<typename MetaData,typename T>
-    read_slice<MetaData,T> get_slice( size_t npop ) {
-	return q.get_slice<MetaData,T>( npop );
+    read_slice<MetaData,T> get_read_slice( size_t npop ) {
+	return q.get_read_slice<MetaData,T>( npop );
     }
 
 private:

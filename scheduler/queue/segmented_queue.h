@@ -338,7 +338,7 @@ public:
 	    await();
 	} while( true );
 
-	return head->get_slice<MetaData,T>( npop );
+	return head->get_read_slice<MetaData,T>( npop );
     }
 };
 
