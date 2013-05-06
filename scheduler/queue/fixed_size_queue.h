@@ -216,6 +216,7 @@ private:
 
 public:
     ~fixed_size_queue() {
+	// Note: the destructor could be made to use sizeof(T) as elm_size
 	tinfo.destruct( buffer, &buffer[size], elm_size );
     }
 
@@ -239,7 +240,7 @@ public:
 	
     template<typename T>
     const T & peek( size_t pos ) const {
-	char* value = &buffer[(pos*elm_size) % size];
+	char* value = &buffer[(head+pos*elm_size) % size];
 	return *reinterpret_cast<T *>( value );
     }
 
@@ -249,15 +250,15 @@ public:
 	assert( elm_size == sizeof(T) );
 	char * buffer_pos = &buffer[head];
 	// There is always at least one empty element in between tail and head
-	head = (head+elm_size) % size;
+	head = (head+sizeof(T)) % size;
 	return std::move( *reinterpret_cast<T *>( buffer_pos ) );
     }
 	
 private:
-    size_t push_common() {
+    size_t push_common( size_t elm_size_ ) {
 	size_t old_tail = tail;
 	assert( !full() );
-	tail = (tail+elm_size) % size;
+	tail = (tail+elm_size_) % size;
 #if PROFILE_QUEUE
 	if( tail < head && old_tail >= head )
 	    get_profile_queue().num_tail_wrap++;
@@ -270,14 +271,14 @@ public:
     template<typename T>
     void push( T && t ) {
 	assert( elm_size == sizeof(T) );
-	size_t where = push_common();
+	size_t where = push_common( sizeof(T) );
 	*reinterpret_cast<T *>( &buffer[where] ) = std::move( t );
     }
 
     template<typename T>
     void push( const T & t ) {
 	assert( elm_size == sizeof(T) );
-	size_t where = push_common();
+	size_t where = push_common( sizeof(T) );
 	*reinterpret_cast<T *>( &buffer[where] ) = t;
     }
 
@@ -302,11 +303,9 @@ public:
 	return read_slice<MetaData,T>( &buffer[head], npop );
     }
 
-    // Problem: don't have T here. Store copy function pointer in array_blahblah?
     void copy_peeked( const char * buff ) {
 	if( peekoff > 0 )
-	    // std::copy<T>( buff, &buff[peekoff * elm_size], &buffer[head] );
-	    memcpy( &buffer[head], buff, peekoff * elm_size );
+	    tinfo.copy( buff, &buff[peekoff * elm_size], &buffer[head] );
     }
 
     const char * get_peek_suffix() const {

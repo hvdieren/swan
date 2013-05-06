@@ -40,6 +40,7 @@
 #include <cstring>
 #include <cassert>
 #include <vector>
+#include <algorithm>
 
 #include "platform.h"
 #include "wf_task.h"
@@ -350,12 +351,16 @@ template<typename T, bool is_class=std::is_class<T>::value>
 struct destructor_get {
     typedef void (*destructor_fn_ty)( void * );
     typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
+    typedef void (*array_copy_fn_ty)( const void *, const void *, void * );
 
     static destructor_fn_ty get_destructor() {
 	return &call_destructor;
     }
     static array_destructor_fn_ty get_array_destructor() {
 	return &call_array_destructor;
+    }
+    static array_copy_fn_ty get_array_copy() {
+	return &call_array_copy;
     }
 private:
     static void call_destructor( void * ptr ) {
@@ -367,15 +372,31 @@ private:
 	    reinterpret_cast<T *>( ptr )->T::~T();
 	}
     }
+    static void call_array_copy( const void * start_, const void * end_, void * tgt_ ) {
+	const T * start = reinterpret_cast<const T *>( start_ );
+	const T * end = reinterpret_cast<const T *>( end_ );
+	T * tgt = reinterpret_cast<T *>( tgt_ );
+	std::copy( start, end, tgt );
+    }
 };
 
 template<typename T>
 struct destructor_get<T, false> {
     typedef void (*destructor_fn_ty)( void * );
     typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
+    typedef void (*array_copy_fn_ty)( const void *, const void *, void * );
 
     static destructor_fn_ty get_destructor() { return 0; }
     static array_destructor_fn_ty get_array_destructor() { return 0; }
+    static array_copy_fn_ty get_array_copy() { return &call_array_copy; }
+
+private:
+    static void call_array_copy( const void * start_, const void * end_, void * tgt_ ) {
+	const T * start = reinterpret_cast<const T *>( start_ );
+	const T * end = reinterpret_cast<const T *>( end_ );
+	T * tgt = reinterpret_cast<T *>( tgt_ );
+	std::copy( start, end, tgt );
+    }
 };
 
 class typeinfo {
@@ -409,14 +430,18 @@ public:
 
 class typeinfo_array {
     typedef void (*array_destructor_fn_ty)( void *, void *, size_t );
+    typedef void (*array_copy_fn_ty)( const void *, const void *, void * );
     array_destructor_fn_ty dfn;
+    array_copy_fn_ty cfn;
 
-    typeinfo_array( array_destructor_fn_ty dfn_ ) : dfn( dfn_ ) { }
+    typeinfo_array( array_destructor_fn_ty dfn_, array_copy_fn_ty cfn_ )
+	: dfn( dfn_ ), cfn( cfn_ ) { }
 
 public:
     template<typename T>
     static typeinfo_array create() {
-	return typeinfo_array( destructor_get<T>::get_array_destructor() );
+	return typeinfo_array( destructor_get<T>::get_array_destructor(),
+			       destructor_get<T>::get_array_copy() );
     }
 
     template<typename T>
@@ -440,6 +465,11 @@ public:
     void destruct( void * start, void * end, size_t step ) const {
 	if( dfn )
 	    (*dfn)( start, end, step );
+    }
+
+    void copy( const void * start, const void * end, void * tgt ) const {
+	if( cfn )
+	    (*cfn)( start, end, tgt );
     }
 };
 
