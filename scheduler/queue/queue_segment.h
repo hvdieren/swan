@@ -71,7 +71,7 @@ public:
 
     // Accessor functions for control (not exposed to user API)
     bool is_full()  const volatile { return q.full(); }
-    // bool is_empty() const volatile { return q.empty(); }
+    bool is_empty( size_t off ) const { return q.empty( off ); }
     bool is_producing()  const volatile { return !copied_peek || ( producing && !next ); } // !!!
     void set_producing( bool p = true ) volatile { producing = p; }
     void clr_producing() volatile { producing = false; }
@@ -90,8 +90,6 @@ public:
 	next = next_;
     }
 
-    bool is_empty() const { return q.empty(); }
-
     void rewind() { q.rewind(); }
 
     // Queue pop and push methods
@@ -106,13 +104,16 @@ public:
     bool has_space( size_t length ) const {
 	return q.has_space( length );
     }
+    size_t get_available() const {
+	return q.get_available();
+    }
 	
     template<typename T>
     T && pop() {
 #if PROFILE_QUEUE
 	pp_time_start( &get_profile_queue().qs_pop );
 #endif // PROFILE_QUEUE
-	while( q.empty() )
+	while( q.empty( 0 ) )
 	    sched_yield();
 #if PROFILE_QUEUE
 	pp_time_end( &get_profile_queue().qs_pop );
@@ -121,11 +122,11 @@ public:
     }
 
     template<typename T>
-    T & peek( size_t off ) {
+    const T & peek( size_t off ) {
 #if PROFILE_QUEUE
 	pp_time_start( &get_profile_queue().qs_peek );
 #endif // PROFILE_QUEUE
-	while( q.empty() )
+	while( q.empty( off ) )
 	    sched_yield();
 #if PROFILE_QUEUE
 	pp_time_end( &get_profile_queue().qs_peek );

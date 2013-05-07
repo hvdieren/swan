@@ -120,19 +120,19 @@ public:
 
 template<typename MetaData, typename T>
 class read_slice {
-    const char * buffer;
+    char * buffer;
     size_t length;
     size_t npop;
     queue_version<MetaData> * version;
 
 public:
-    read_slice( const char * buffer_, size_t length_ )
+    read_slice( char * buffer_, size_t length_ )
 	: buffer( buffer_ ), length( length_ ), npop( 0 ), version( 0 ) { }
     void set_version( queue_version<MetaData> * version_ ) {
 	version = version_;
     }
 
-    size_t get_npops() const { return length; }
+    size_t get_length() const { return length; }
 
     void commit() {
 	version->pop_bookkeeping( npop );
@@ -140,10 +140,10 @@ public:
 
     T pop() {
 	assert( npop < length );
-	const char * e = buffer;
+	char * e = buffer;
 	buffer += sizeof(T);
 	++npop;
-	return *reinterpret_cast<const T *>( e );
+	return std::forward<T>( *reinterpret_cast<T *>( e ) );
     }
 
     const T & peek( size_t off ) const {
@@ -223,7 +223,15 @@ public:
     size_t get_peek_dist() const { return peekoff; }
     void rewind() { tail = 0; } // very first segment has no copied-in peek area
 	
-    bool empty() const volatile { return head == tail; }
+    bool empty( size_t off ) const {
+	assert( off <= peekoff );
+	if( peekoff > 0 ) {
+	    // No wrap-around in this situation
+	    assert( tail >= head );
+	    return head+off*elm_size >= tail;
+	} else
+	    return head == tail;
+    }
     bool full() const volatile {
 	// Freeze tail at end of buffer to avoid wrap-around in case of peeking
 	size_t full_marker = peekoff > 0 ? 0 : head;
@@ -235,6 +243,13 @@ public:
 	    return ( size - tail - (head == 0 ? 1 : 0) ) >= elm_size*length;
 	} else {
 	    return ( head - tail - 1 ) >= elm_size*length;
+	}
+    }
+    size_t get_available() const {
+	if( head <= tail ) {
+	    return ( tail - head ) / elm_size;
+	} else {
+	    return ( size - head ) / elm_size;
 	}
     }
 	

@@ -337,7 +337,7 @@ public:
 
     // Only for tasks with pop privileges.
     template<typename T>
-    T & peek( size_t off ) {
+    const T & peek( size_t off ) {
 	assert( off <= peekoff && "Peek outside requested range" );
 	assert( queue.get_head() );
 	return queue.peek<T>( off );

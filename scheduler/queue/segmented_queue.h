@@ -199,10 +199,10 @@ public:
     segmented_queue_pop() { }
 
 private:
-    void await() {
+    void await( size_t off ) {
 	assert( head );
 
-	if( likely( !head->is_empty() ) )
+	if( likely( !head->is_empty( off ) ) )
 	    return;
 
 #if PROFILE_QUEUE
@@ -218,11 +218,7 @@ private:
 	    assert( head );
 	    // errs() << "await " << *this << " head=" << *head << std::endl;
 
-	    while( head->is_empty() && head->is_producing() ) {
-		// busy wait
-		sched_yield();
-	    }
-	    if( !head->is_empty() )
+	    if( !head->is_empty( off ) )
 		break;
 	    if( !head->is_producing() ) {
 		if( queue_segment * seg = head->get_next() ) {
@@ -236,6 +232,8 @@ private:
 		    break;
 		}
 	    }
+	    // busy wait
+	    sched_yield();
 	} while( true );
 
 #if PROFILE_QUEUE
@@ -264,26 +262,29 @@ public:
 	assert( head );
 
 	// Is there anything in the queue? If so, return not empty
-	if( likely( !head->is_empty() ) )
+	if( likely( !head->is_empty( head->get_peek_dist() ) ) )
 	    return false;
 
-	// Spin until we are sure about emptiness (nothing more to be produced
-	// for sure).
-	await();
+	// Spin until we are sure about emptiness (nothing more to be
+	// produced for sure).
+	await( head->get_peek_dist() );
 
 	// Now check again. This result is for sure.
-	return head->is_empty();
+	return head->is_empty( head->get_peek_dist() );
     }
 
     template<typename T>
     T && pop() {
 	// Spin until the desired information appears in the queue.
-	await();
+        // Require that peek-distance number of elements are available
+        // in the segment. If not, we switch to the next segment because
+        // we know they have been copied, if that segment exists.
+	await( head->get_peek_dist() );
 
 	// errs() << "pop from queue " << head << ": " << *head
 	// << " SQ=" << *this << std::endl;
 
-	assert( !head->is_empty() );
+	assert( !head->is_empty( 0 ) );
 
 	return head->pop<T>();
     }
@@ -293,9 +294,19 @@ public:
     }
 
     template<typename T>
-    T & peek( size_t off ) {
+    const T & peek( size_t off ) {
+	// pop should terminate segment when all but <peekoff>
+	// last elements popped.
+	// ? take care not to block until all peek data available...?
+
 	// Spin until the desired information appears in the queue.
-	await();
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
+	await( off );
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
 
 	// errs() << "peek from queue " << head << ": value="
 	       // << std::dec << t << ' ' << *head
@@ -303,24 +314,8 @@ public:
 	       // << " offset=" << off
 	       // << " position=" << pos << "\n";
 
-#if PROFILE_QUEUE
-	pp_time_start( &get_profile_queue().sq_peek );
-#endif // PROFILE_QUEUE
-
-	queue_segment * seg = head;
-	while( unlikely( seg->is_empty() ) ) {
-	    if( !seg->is_producing() )
-		seg = head->get_next();
-	    if( !seg->is_empty() )
-		break;
-	    sched_yield();
-	}
-#if PROFILE_QUEUE
-	pp_time_end( &get_profile_queue().sq_peek );
-#endif // PROFILE_QUEUE
-
-	assert( !seg->is_empty() );
-	return seg->peek<T>();
+	assert( !head->is_empty( off ) );
+	return head->peek<T>( off );
     }
 
     // Get access to a part of the buffer that allow to peek npeek elements
@@ -329,13 +324,13 @@ public:
     template<typename MetaData, typename T>
     read_slice<MetaData,T> get_read_slice_upto( size_t npop_max, size_t npeek ) {
 	long npop;
-	await();
+	await( 0 );
 	do { 
-	    long available = 0; // head->???();
+	    long available = head->get_available();
 	    npop = std::min( (long)npop_max, available );
 	    if( npop > 0 )
 		break;
-	    await();
+	    await( 0 );
 	} while( true );
 
 	return head->get_read_slice<MetaData,T>( npop );
