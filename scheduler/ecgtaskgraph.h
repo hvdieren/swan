@@ -63,7 +63,6 @@ enum group_t {
 #if OBJECT_REDUCTION
     g_reduct,
 #endif
-    g_pop,
     g_NUM
 };
 
@@ -231,13 +230,13 @@ static inline bool arg_acquire_fn( task_data_t & td ) {
 #endif
 
 // ----------------------------------------------------------------------
-// gentags: tag storage for all dependency usage types
+// gen_tags: tag storage for all dependency usage types
 // ----------------------------------------------------------------------
 class task_metadata;
 class generation;
 
 // gen_tags stores the accessed generation and links the task on the task list.
-// Required for all types
+// Required for all types expect for queues
 class gen_tags {
 #if EMBED_LISTS
     gen_tags * it_prev, * it_next;
@@ -246,7 +245,6 @@ class gen_tags {
     generation * gen;
 
     friend class serial_dep_traits;
-    friend class queue_dep_traits;
     template<typename MetaData, typename Task,
 	     template<typename U> class DepTy>
     friend class dep_traits;
@@ -277,6 +275,22 @@ struct dl_list_traits<obj::gen_tags> {
 #endif
 
 namespace obj { // reopen
+
+// ----------------------------------------------------------------------
+// queue_tags: tag storage for queue dependency usage types
+// ----------------------------------------------------------------------
+class task_metadata;
+class generation;
+
+// queue_tags stores the accessed generation and links the task on the task list.
+// Required for queue types 
+class queue_tags {
+    task_metadata * st_task;
+    queue_tags * qt_next;
+
+    friend class queue_metadata;
+};
+
 
 // ----------------------------------------------------------------------
 // generation: represent a single generation in an object's taskgraph
@@ -479,7 +493,7 @@ public:
 
     // Register users of this object.
     bool new_group( group_t g ) const {
-	return g == g_write || g == g_pop || gen->group != g;
+	return g == g_write || gen->group != g;
     }
     void open_group( group_t g ) {
 	if( new_group( g ) && gen->has_tasks() ) {
@@ -533,6 +547,36 @@ operator << ( std::ostream & os, const ecgtg_metadata & md_const ) {
     os << '}';
     return os;
 }
+
+// ----------------------------------------------------------------------
+// queue_metadata: dependency-tracking metadata for queues
+// ----------------------------------------------------------------------
+class queue_metadata {
+    typedef cas_mutex_v<uint8_t> mutex_t;
+
+    queue_tags * youngest;
+    mutex_t mutex;
+
+private:
+    void lock() { mutex.lock(); }
+    void unlock() { mutex.unlock(); }
+
+public:
+    queue_metadata() : youngest( 0 ) { }
+    ~queue_metadata() {
+	assert( !youngest && "Must have finished all tasks when "
+		"destructing queue_metadata" );
+    }
+
+    // Register users of this queue.
+    inline void add_task( task_metadata * t, queue_tags * tags );
+
+    // Erase links if we are about to destroy a task
+    inline void del_task( task_metadata * fr, taskgraph * graph,
+			  queue_tags * tags );
+
+    bool has_tasks() const { return youngest != 0; }
+};
 
 // ----------------------------------------------------------------------
 // task_metadata: dependency-tracking metadata for tasks (pending and stack)
@@ -768,6 +812,35 @@ task_metadata::add_to_graph() {
     graph->add_ready_task( pending_metadata::get_from_task( this ) );
 }
 
+void queue_metadata::add_task( task_metadata * t, queue_tags * tags ) {
+    lock();
+    tags->st_task = t;
+    tags->qt_next = 0;
+    if( youngest ) {
+	t->add_incoming( 1 );
+	youngest->qt_next = tags;
+    }
+    youngest = tags;
+    unlock();
+}
+
+void queue_metadata::del_task( task_metadata * fr, taskgraph * graph,
+			       queue_tags * tags ) {
+    lock();
+    if( youngest == tags )
+	youngest = 0;
+    unlock();
+    if( queue_tags * nt = tags->qt_next ) {
+	// By constructing, nt->st_task is a pending frame. When selecting
+	// the task, erase it from the tags because it will changed from
+	// a pending frame to a stack frame, which invalidates the pointer.
+	task_metadata * t = nt->st_task;
+	if( t->del_incoming() )
+	    graph->add_ready_task( pending_metadata::get_from_task(t) );
+	nt->st_task = 0;
+    }
+}
+
 // ----------------------------------------------------------------------
 // Dependency handling traits
 // ----------------------------------------------------------------------
@@ -874,35 +947,18 @@ struct serial_dep_traits {
 // that applies to all taskgraph schemes.
 struct queue_dep_traits {
     static
-    void arg_issue( task_metadata * fr, ecgtg_metadata * md,
-		    gen_tags * sa, group_t g ) {
-	md->open_group( g );
-	generation * gen = md->get_generation();
-	if( generation * prv = md->get_prev_generation() ) {
-	    prv->lock(); // lock order: prev before gen
-	    gen->lock();
-	    prv->link_tasks( fr );
-	    gen->add_task( fr, sa, prv->has_tasks() );
-	    gen->unlock();
-	    prv->unlock();
-	} else {
-	    gen->lock();
-	    gen->add_task( fr, sa, false );
-	    gen->unlock();
-	}
-	sa->gen = gen;
+    void arg_issue( task_metadata * fr, queue_metadata * md,
+		    queue_tags * tags ) {
+	md->add_task( fr, tags );
     }
     static
-    bool arg_ini_ready( const ecgtg_metadata * md, group_t g ) {
-	return md->match_group( g );
+    bool arg_ini_ready( const queue_metadata * md ) {
+	return !md->has_tasks();
     }
     static
-    void arg_release( task_metadata * fr, ecgtg_metadata * md,
-		      gen_tags * tags, group_t g ) {
-	tags->gen->lock();
-	tags->gen->del_task( fr, fr->get_graph(), tags );
-	if( !tags->gen->consider_delete() )
-	    tags->gen->unlock();
+    void arg_release( task_metadata * fr, queue_metadata * md,
+		      queue_tags * tags ) {
+	md->del_task( fr, fr->get_graph(), tags );
     }
 };
 
@@ -931,28 +987,29 @@ class reduction_tags : public reduction_tags_base<ecgtg_metadata>,
 #endif
 
 // Popdep (input) dependency tags - fully serialized with other pop and pushpop
-class popdep_tags : public popdep_tags_base<ecgtg_metadata>,
-		    public gen_tags,
+class popdep_tags : public popdep_tags_base<queue_metadata>,
+		    public queue_tags,
 		    public serial_dep_tags {
 public:
-    popdep_tags( queue_version<ecgtg_metadata> * parent )
+    popdep_tags( queue_version<queue_metadata> * parent )
 	: popdep_tags_base( parent ) { }
 };
 
 // Pushpopdep (input/output) dependency tags - fully serialized with other
 // pop and pushpop
-class pushpopdep_tags : public pushpopdep_tags_base<ecgtg_metadata>,
+class pushpopdep_tags : public pushpopdep_tags_base<queue_metadata>,
+			public queue_tags,
 			public serial_dep_tags {
 public:
-    pushpopdep_tags( queue_version<ecgtg_metadata> * parent )
+    pushpopdep_tags( queue_version<queue_metadata> * parent )
 	: pushpopdep_tags_base( parent ) { }
 };
 
 // Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base<ecgtg_metadata>,
+class pushdep_tags : public pushdep_tags_base<queue_metadata>,
 		     public serial_dep_tags {
 public:
-    pushdep_tags( queue_version<ecgtg_metadata> * parent )
+    pushdep_tags( queue_version<queue_metadata> * parent )
 	: pushdep_tags_base( parent ) { }
 };
 
@@ -1092,32 +1149,32 @@ struct dep_traits<ecgtg_metadata, task_metadata, reduction> {
 
 // queue pop dependency traits
 template<>
-struct dep_traits<ecgtg_metadata, task_metadata, popdep> {
+struct dep_traits<queue_metadata, task_metadata, popdep> {
     template<typename T>
     static void
     arg_issue( task_metadata * fr, popdep<T> & obj,
-	       typename popdep<T>::dep_tags * sa ) {
-	ecgtg_metadata * md = obj.get_version()->get_metadata();
-	queue_dep_traits::arg_issue( fr, md, sa, g_pop );
+	       typename popdep<T>::dep_tags * tags ) {
+	queue_metadata * md = obj.get_version()->get_metadata();
+	queue_dep_traits::arg_issue( fr, md, tags );
     }
     template<typename T>
     static bool
     arg_ini_ready( const popdep<T> & obj ) {
-	const ecgtg_metadata * md = obj.get_version()->get_metadata();
-	return queue_dep_traits::arg_ini_ready( md, g_pop );
+	const queue_metadata * md = obj.get_version()->get_metadata();
+	return queue_dep_traits::arg_ini_ready( md );
     }
     template<typename T>
     static void
     arg_release( task_metadata * fr, popdep<T> & obj,
-		 typename popdep<T>::dep_tags & sa  ) {
-	ecgtg_metadata * md = obj.get_version()->get_metadata();
-	queue_dep_traits::arg_release( fr, md, &sa, g_pop );
+		 typename popdep<T>::dep_tags & tags  ) {
+	queue_metadata * md = obj.get_version()->get_metadata();
+	queue_dep_traits::arg_release( fr, md, &tags );
     }
 };
 
 // queue push dependency traits
 template<>
-struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
+struct dep_traits<queue_metadata, task_metadata, pushdep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, pushdep<T> & obj,
 			   typename pushdep<T>::dep_tags * sa ) {
@@ -1134,7 +1191,6 @@ struct dep_traits<ecgtg_metadata, task_metadata, pushdep> {
 
 typedef ecgtg_metadata obj_metadata;
 typedef ecgtg_metadata token_metadata;
-typedef ecgtg_metadata queue_metadata;
 
 
 } // end of namespace obj

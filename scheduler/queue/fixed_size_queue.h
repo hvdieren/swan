@@ -2,8 +2,6 @@
 
 // TODO before release
 // * get fixed queue size right and remove % if possible (when elms are not 2**k)
-// * validate slices
-// * validate peeks > 0
 // * validate on ferret, dedup, bzip2 (scrambled)
 // * schedule popdep task only if something ready in queue
 //   -- measure and notice little speedup?

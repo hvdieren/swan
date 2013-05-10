@@ -1682,7 +1682,7 @@ struct dgrab_functor {
 	typedef typename DepTy<T>::metadata_t MetaData;
 	// Most of the work done at moment of initialization of tags, and
 	// creation of child queue_version.
-	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_int, &tags );
+	dep_traits<MetaData, Task, DepTy>::template arg_issue( fr, obj_ext, &tags );
 	return true;
     }
 	
