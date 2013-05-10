@@ -1015,18 +1015,15 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, popdep<T> & obj_int,
 			   typename popdep<T>::dep_tags * tags ) {
-	popdep<T> obj_ext
-	    = popdep<T>::create( obj_int.get_version()->get_parent() );
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tkt_metadata * md = obj_int.get_version()->get_metadata();
 	tags->rd_tag  = md->get_reader_tag();
 	md->add_reader();
     }
     template<typename T>
     static
     bool arg_ready( popdep<T> & obj_int, typename popdep<T>::dep_tags & tags ) {
-	popdep<T> obj_ext
-	    = popdep<T>::create( obj_int.get_version()->get_parent() );
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tkt_metadata * md = obj_int.get_version()->
+	    get_parent()->get_metadata();
 	return md->chk_reader_tag( tags.rd_tag );
     }
     template<typename T>
@@ -1039,8 +1036,6 @@ struct dep_traits<tkt_metadata, task_metadata, popdep> {
     static
     void arg_release( task_metadata * fr, popdep<T> & obj_int,
 		      typename popdep<T>::dep_tags & tags ) {
-	// popdep<T> obj_ext
-	    // = popdep<T>::create( obj_int.get_version()->get_parent() );
 	obj_int.get_version()->get_metadata()->del_reader();
     }
 };
@@ -1052,12 +1047,6 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     static
     void arg_issue( task_metadata * fr, pushdep<T> & obj_int,
 		    typename pushdep<T>::dep_tags * tags ) {
-/*
-	pushdep<T> obj_ext
-	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	md->add_writer();
-*/
     }
     template<typename T>
     static
@@ -1074,12 +1063,6 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     static
     void arg_release( task_metadata * fr, pushdep<T> & obj_int,
 		      typename pushdep<T>::dep_tags & tags ) {
-/*
-	pushdep<T> obj_ext
-	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	md->del_writer();
-*/
     }
 };
 

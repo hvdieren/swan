@@ -34,6 +34,9 @@
  *   to avoid those counter increments.
  *   Furthermore, we propose to remove the increment of the readers counter
  *   for an in/out dep because it is redundant.
+ *
+ * Note: this file has not been updated with support for queues. The
+ *       scheme currently fails to compile.
  */
 #ifndef VTICKETS_H
 #define VTICKETS_H
@@ -780,6 +783,7 @@ struct dep_traits<vtkt_metadata, task_metadata, reduction> {
 #endif
 
 typedef vtkt_metadata obj_metadata;
+typedef vtkt_metadata queue_metadata;
 
 } // end of namespace obj
 

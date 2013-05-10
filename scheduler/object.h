@@ -2182,6 +2182,10 @@ struct reduction_tags_base : public all_tags_base {
 #else
 #if OBJECT_TASKGRAPH == 12
 #include "gtickets.h"
+#else
+#if OBJECT_TASKGRAPH == 13 || OBJECT_TASKGRAPH == 14
+#include "ecltaskgraph.h"
+#endif
 #endif
 #endif
 #endif

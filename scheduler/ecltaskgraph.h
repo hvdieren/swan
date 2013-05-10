@@ -47,6 +47,7 @@
 #include "alc_allocator.h"
 #include "alc_mmappol.h"
 #include "alc_flpol.h"
+#include "queue/taskgraph.h"
 
 namespace obj {
 
