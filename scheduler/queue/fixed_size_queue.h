@@ -3,10 +3,6 @@
 // TODO before release
 // * get fixed queue size right and remove % if possible (when elms are not 2**k)
 // * validate on ferret, dedup, bzip2 (scrambled)
-// * schedule popdep task only if something ready in queue
-//   -- measure and notice little speedup?
-// * create queue_metadata and taskgraph structures specific for queues,
-//   reusable across all taskgraphs
 
 #ifndef QUEUE_FIXED_SIZE_QUEUE_H
 #define QUEUE_FIXED_SIZE_QUEUE_H
@@ -141,7 +137,7 @@ public:
 	char * e = buffer;
 	buffer += sizeof(T);
 	++npop;
-	return std::forward<T>( *reinterpret_cast<T *>( e ) );
+	return std::move( *reinterpret_cast<T *>( e ) );
     }
 
     const T & peek( size_t off ) const {
