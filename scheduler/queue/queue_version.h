@@ -52,7 +52,7 @@ private:
     flags_t flags;
 
     // Information for constructing queue segments.
-    size_t max_size;
+    size_t segment_size;
     size_t peekoff;
 
 /*
@@ -78,17 +78,19 @@ public:
 protected:
     // Normal constructor, called from queue_t constructor
     template<typename T>
-    queue_version( long max_size_, size_t peekoff_,
+    queue_version( long segment_size_, size_t peekoff_,
 		   initializer<T> init )
 	: chead( 0 ), ctail( 0 ), fleft( 0 ), fright( 0 ), parent( 0 ),
-	  flags( qf_pushpop ), max_size( max_size_ ), peekoff( peekoff_ ) {
+	  flags( qf_pushpop ), segment_size( segment_size_ ),
+	  peekoff( peekoff_ ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
-	assert( peekoff < max_size && "Peek should not cross segment boundaries" );
+	assert( peekoff < segment_size
+		&& "Peek should not cross segment boundaries" );
 
 	// Create an initial segment and share it between queue.head and user.tail
-	user.push_segment<T>( max_size, peekoff, true );
+	user.push_segment<T>( segment_size, peekoff, true );
 	queue.take_head( user );
     }
 	
@@ -98,7 +100,7 @@ public:
     queue_version( queue_version<metadata_t> * qv, qmode_t qmode )
 	: chead( 0 ), ctail( 0 ), fright( 0 ), parent( qv ),
 	  flags( flags_t( qmode & qv->flags ) ),
-	  max_size( qv->max_size ), peekoff( qv->peekoff ) {
+	  segment_size( qv->segment_size ), peekoff( qv->peekoff ) {
 	// static_assert( sizeof(queue_version) % CACHE_ALIGNMENT == 0,
 		       // "padding failed" );
 
@@ -347,7 +349,8 @@ public:
     write_slice<MetaData,T> get_write_slice( size_t length ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>( std::max(length+peekoff,max_size), peekoff, false );
+	    user.push_segment<T>( std::max(length+peekoff,segment_size),
+				  peekoff, false );
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
@@ -373,22 +376,22 @@ public:
     void push( T && t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>( max_size, peekoff, false );
+	    user.push_segment<T>( segment_size, peekoff, false );
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	user.push<T>( std::move( t ), max_size, peekoff );
+	user.push<T>( std::move( t ), segment_size, peekoff );
     }
 
     template<typename T>
     void push( const T & t ) {
 	// Make sure we have a local, usable queue
 	if( !user.get_tail() ) {
-	    user.push_segment<T>( max_size, peekoff, false );
+	    user.push_segment<T>( segment_size, peekoff, false );
 	    segmented_queue q = user.split();
 	    push_head( q );
 	}
-	user.push<T>( t, max_size, peekoff );
+	user.push<T>( t, segment_size, peekoff );
     }
 
     // Only for tasks with pop privileges.
