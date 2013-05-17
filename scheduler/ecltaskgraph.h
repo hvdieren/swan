@@ -654,10 +654,11 @@ taskgraph::add_ready_task( link_metadata * fr ) {
 
 void
 ecltg_metadata::wakeup( taskgraph * graph ) {
+    // Are we holding a lock on youngest?
     bool has_youngest = false;
 
     // Decrement the number of tasks in the oldest generation and avoid locks
-    // if they are no required.
+    // if they are not required.
     // NOTE: performance optimization: atomic-- is more expensive than atomic++
     // while only one of the two directions must be a hardware atomic. Hence,
     // change the counter to count negative number of tasks.
