@@ -510,15 +510,6 @@ public:
     void stop_deregistration() { }
 };
 
-#if 0
-void
-generation::link_tasks( task_metadata * fr ) {
-    // errs() << "link task " << fr << " " << get_num_tasks() << " inc\n";
-    if( has_tasks() )
-	fr->add_incoming( 1 );
-}
-#endif
-
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
 // ----------------------------------------------------------------------
@@ -630,18 +621,20 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // Are we holding a lock on youngest?
     bool has_youngest = false;
 
-    // Decrement the number of tasks in the oldest generation and avoid locks
-    // if they are not required.
+    oldest.lock();
+
+    // Decrement the number of tasks in the oldest generation.
     // NOTE: performance optimization: atomic-- is more expensive than atomic++
     // while only one of the two directions must be a hardware atomic. Hence,
     // change the counter to count negative number of tasks.
-    if( __sync_fetch_and_add( &oldest.num_tasks, -1 ) > 1 )
+    if( --oldest.num_tasks > 0 ) {
+	oldest.unlock();
 	return;
+    }
 
     // Lock only the wakeup end of the list if free of interference, or
     // lock both ends of the list if there may be interference between
     // the issue thread and wakeup threads.
-    oldest.lock();
     if( may_interfere() ) {
 	has_youngest = true;
 	youngest.lock();
@@ -672,7 +665,7 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // then a task issue may occur between the decrement of oldest.num_tasks
     // to 0 and obtaining both young and old locks. When this happens, we will
     // not see that oldest.num_tasks is still zero.
-    __sync_fetch_and_add( &oldest.num_tasks, new_tasks );
+    oldest.num_tasks += new_tasks;
 
     // --num_gens; protected by lock on both sides?
     // errs() << "flush..." << std::endl;
@@ -723,7 +716,7 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
     if( num_gens == 0 ) { // Empty, tasks fly straight through
 	assert( has_oldest && "empty and not locked from both sides" );
 	// Update oldest
-	__sync_fetch_and_add( &oldest.num_tasks, 1 );
+	oldest.num_tasks++;
 
 	// Update youngest
 	youngest.open_group( g );
@@ -749,7 +742,7 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	    tasks.push_back( tags );
 	} else {
 	    // Update oldest
-	    __sync_fetch_and_add( &oldest.num_tasks, 1 );
+	    oldest.num_tasks++;
 	}
     } else if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
 	youngest.open_group( g );
