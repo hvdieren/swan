@@ -313,7 +313,7 @@ private:
 	    // This condition is markedly simpler than in other task graphs
 	    // because we reset the group type to undefined (g_NUM) whenever
 	    // the youngest generation runs empty.
-	    return !new_group( grp );
+	    return !new_group( grp ) || !has_tasks();
 	}
 	void open_group( group_t grp ) { g = grp; }
 
@@ -392,10 +392,9 @@ public:
     bool has_writers() const { return num_gens > 0; } // youngest.has_tasks(); }
 
     // This is really a ready check: can we launch with the previous gang?
-    // If has_one_generation(), need to check has_tasks() as well,
-    // else just check youngest.
     bool match_group( group_t grp ) const {
-	return num_gens == 0 || youngest.match_group(grp);
+	return ( num_gens == 1 && youngest.match_group( grp ) )
+	    || num_gens == 0;
     }
 
     // Dependency queries on readers
@@ -418,7 +417,6 @@ public:
 
 private:
     bool may_interfere() const volatile { return num_gens <= 2; }
-    bool has_one_generation() const volatile { return num_gens <= 1; }
     size_t pop_generation() volatile {
 	assert( num_gens > 0 && "pop when no generations exist" );
 	return __sync_fetch_and_add( &num_gens, -1 );
@@ -626,6 +624,7 @@ taskgraph::get_ready_task() {
 #else // !EMBED_LISTS
 	    pending_metadata * t = *I;
 #endif
+	    // errs() << "get_ready_task from TG " << this << ": consider: " << t << "\n";
 	    if( t->acquire() ) {
 		ready_list.erase( I );
 		task = t;
@@ -850,7 +849,7 @@ struct serial_dep_traits {
 		    obj_instance<ecltg_metadata> & obj,
 		    gen_tags * sa, group_t g ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	// errs() << "0 issue serial " << *md << " g=" << g << "\n";
+	// errs() << "0 issue serial " << *md << " g=" << g << " task=" << fr << "\n";
 	md->add_task( fr, sa, g );
 	// errs() << "1 issue serial " << *md << "\n";
     }
@@ -866,9 +865,9 @@ struct serial_dep_traits {
     void arg_release( task_metadata * fr, obj_instance<ecltg_metadata> & obj,
 		      gen_tags * tags, group_t g ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	// errs() << "0 wakeup serial " << *md << "\n";
+	// errs() << "0 wakeup serial " << *md << " task=" << fr << "\n";
 	md->wakeup( fr->get_graph() );
-	// errs() << "1 wakeup serial " << *md << "\n";
+	// errs() << "1 wakeup serial " << *md << " task=" << fr << "\n";
     }
 };
 
