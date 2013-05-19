@@ -243,7 +243,7 @@ class gen_tags {
     task_metadata * st_task;
 #endif
     // ecltg_metadata * obj_md; -- implied, this is the argument!
-    bool last_in_gen;
+    size_t last_in_gen; // OPT: bool, size_t for alignment
 
     void clr_last_in_generation() { last_in_gen = false; }
     void set_last_in_generation() { last_in_gen = true; }
@@ -360,32 +360,6 @@ public:
 	// return oldest.has_tasks() || youngest.has_tasks();
 	return num_gens > 0;
     }
-
-    // Register users of this object.
-/*
-    bool new_group( group_t g ) const { return g == g_write || gen->group != g;}
-    void open_group( group_t g ) {
-	if( new_group( g ) && gen->has_tasks() ) {
-	    if( prev ) prev->del_ref();
-	    prev = gen;
-	    gen = new generation( g );
-	    prev->set_next_generation( gen );
-	} else // if( gen->group != g )
-	    gen->group = g;
-    }
-    void force_group() { // only intended for outdep, so g == g_write
-	assert( !gen->has_tasks() );
-	gen->group = g_write;
-    }
-    bool match_group( group_t g ) const {
-	// An empty gen implies always an empty prev
-	// Thus, applying distribution allows us to simplify
-	// the last term
-	// return ( !new_group( g ) || !gen->has_tasks() )
-	    // && ( !prev || !prev->has_tasks() );
-	return ( !new_group( g ) && ( !prev || !prev->has_tasks() ) ) || !gen->has_tasks();
-    }
-*/
 
     // Dependency queries on current generation
     bool has_readers() const { return num_gens > 0; } // youngest.has_tasks(); }
@@ -770,11 +744,9 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	    youngest.open_group( g );
 	    youngest.add_task();
 	    // Update num_gens
-	    // if( oldest.has_tasks() ) {
-		push_generation();
-		t->add_incoming();
-		tasks.push_back( tags );
-	    // }
+	    push_generation();
+	    t->add_incoming();
+	    tasks.push_back( tags );
 	} else {
 	    // Update oldest
 	    __sync_fetch_and_add( &oldest.num_tasks, 1 );
