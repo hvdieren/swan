@@ -933,11 +933,25 @@ private:
 
 public:
     template<typename T>
-    static obj_version<metadata_t> *
+    static
+    typename std::enable_if<!std::is_array<T>::value,obj_version<metadata_t> *>::type
     create( size_t n, obj_instance<metadata_t> * obj_ ) {
+	size_t nbytes = n * size_struct<T>::value;
 	obj_version<metadata_t> * v
-	    = new obj_version<metadata_t>( n, obj_, typeinfo::create<T>() );
+	    = new obj_version<metadata_t>( nbytes, obj_, typeinfo::create<T>() );
 	typeinfo::construct<T>( v->get_ptr() );
+	return v;
+    }
+    template<typename T>
+    static
+    typename std::enable_if<std::is_array<T>::value,obj_version<metadata_t> *>::type
+    create( size_t n, obj_instance<metadata_t> * obj_ ) {
+	// NOTE: destructor not called properly!
+	size_t nbytes = n * size_struct<T>::value;
+	obj_version<metadata_t> * v
+	    = new obj_version<metadata_t>( nbytes, obj_, typeinfo::create<T>() );
+	typeinfo_array::construct<T>( v->get_ptr(), v->get_ptr()+n,
+				      size_struct<typename std::remove_all_extents<T>::type>::value );
 	return v;
     }
     static obj_version<metadata_t> *
@@ -2226,7 +2240,7 @@ private:
 public:
     explicit object_t(size_t n = 1) {
 	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
-	this->version = obj_version<obj_metadata>::create<T>(n*size_struct<T>::value, this);
+	this->version = obj_version<obj_metadata>::create<T>(n, this);
     }
 #if 0 // needed?
     object_t( const object_t<T, OMod> &o ) {
