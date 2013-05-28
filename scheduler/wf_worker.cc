@@ -79,7 +79,8 @@ worker_state::profile_worker::profile_worker() :
      memset( &time_since_longjmp, 0, sizeof(time_since_longjmp) );
      memset( &time_longjmp, 0, sizeof(time_longjmp) );
      memset( &time_clueless, 0, sizeof(time_clueless) );
-     memset( &time_release_ready, 0, sizeof(time_release_ready) );
+     memset( &time_release_ready_success, 0, sizeof(time_release_ready_success) );
+     memset( &time_release_ready_fail, 0, sizeof(time_release_ready_fail) );
 }
 
 worker_state::profile_worker::~profile_worker() {
@@ -113,7 +114,8 @@ worker_state::profile_worker::summarize( const worker_state::profile_worker & w 
     pp_time_max( &time_since_longjmp, &w.time_since_longjmp );
     pp_time_add( &time_longjmp, &w.time_longjmp );
     pp_time_add( &time_clueless, &w.time_clueless );
-    pp_time_add( &time_release_ready, &w.time_release_ready );
+    pp_time_add( &time_release_ready_success, &w.time_release_ready_success );
+    pp_time_add( &time_release_ready_fail, &w.time_release_ready_fail );
 #if PROFILE_QUEUE
     queue += w.queue;
 #endif // PROFILE_QUEUE
@@ -169,7 +171,8 @@ worker_state::profile_worker::dump_profile( size_t id ) const {
     SHOW( time_since_longjmp );
     SHOW( time_longjmp );
     SHOW( time_clueless );
-    SHOW( time_release_ready );
+    SHOW( time_release_ready_success );
+    SHOW( time_release_ready_fail );
 #undef SHOW
 #if PROFILE_QUEUE
     queue.dump_profile();
@@ -481,12 +484,18 @@ worker_state::worker_fn() {
 	assert( child->get_frame()->get_owner() == &sd
 		&& "child initiating longjmp to us must belong to our deque" );
 #if PROFILE_WORKER
-	pp_time_start( &tls_worker_state->wprofile.time_release_ready );
+	pp_time_t timer;
+	memset( &timer, 0, sizeof(timer) );
+	pp_time_start( &timer );
 #endif
 	pending_frame * next
 	    = the_task_graph_traits::release_task_and_get_ready( child );
 #if PROFILE_WORKER
-	pp_time_end( &tls_worker_state->wprofile.time_release_ready );
+	pp_time_end( &timer );
+	if( next )
+	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_success, &timer );
+	else
+	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_fail, &timer );
 #endif
 	parent->lock( &sd );
 #if !PACT11_VERSION && 0

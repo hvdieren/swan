@@ -950,7 +950,8 @@ public:
 	size_t nbytes = n * size_struct<T>::value;
 	obj_version<metadata_t> * v
 	    = new obj_version<metadata_t>( nbytes, obj_, typeinfo::create<T>() );
-	typeinfo_array::construct<T>( v->get_ptr(), v->get_ptr()+n,
+	typeinfo_array::construct<T>( v->get_ptr(),
+				      reinterpret_cast<char *>(v->get_ptr())+n,
 				      size_struct<typename std::remove_all_extents<T>::type>::value );
 	return v;
     }
@@ -1442,13 +1443,16 @@ struct cleanup_tags_functor {
 };
 
 // Release functor
-template<typename MetaData_, typename Task>
+template<typename MetaData_, typename Task, typename FullTask>
 struct release_functor {
     Task * fr;
+    FullTask * parent;
     bool is_stack;
-    release_functor( Task * fr_, bool is_stack_ )
-	: fr( fr_ ), is_stack( is_stack_ ) { fr->start_deregistration(); }
-    ~release_functor() { fr->stop_deregistration(); }
+    release_functor( Task * fr_, FullTask * parent_, bool is_stack_ )
+	: fr( fr_ ), parent( parent_ ), is_stack( is_stack_ ) {
+	fr->start_deregistration();
+    }
+    ~release_functor() { fr->stop_deregistration( parent ); }
 
     // In the default case, the internal obj_instance equals the external
     // obj_instance.
@@ -1592,9 +1596,9 @@ static inline void arg_hypermap_reduce_fn( Task * fr ) {
 }
 
 // A "release function" to store inside the dep_traits.
-template<typename MetaData, typename Task>
-static inline void arg_release_fn( Task * fr, bool is_stack ) {
-    release_functor<MetaData, Task> fn( fr, is_stack );
+template<typename MetaData, typename Task, typename FullTask>
+static inline void arg_release_fn( Task * fr, Full * parent, bool is_stack ) {
+    release_functor<MetaData, Task, FullTask> fn( fr, parent, is_stack );
     arg_apply_stored_fn( fn, fr->get_task_data() );
     cleanup_tags_functor fn( is_stack, true );
     arg_apply_stored_fn( fn, fr->get_task_data() );
@@ -1637,13 +1641,14 @@ static inline void arg_hypermap_reduce_fn( Task * fr ) {
 }
 
 // A "release function" to store inside the dep_traits.
-template<typename MetaData, typename Task, typename... Tn>
-static inline void arg_release_fn( Task * fr, bool is_stack ) {
-    release_functor<MetaData, Task> fn( fr, is_stack );
+template<typename MetaData, typename Task, typename FullTask, typename... Tn>
+static inline void arg_release_fn( Task * fr, FullTask * parent,
+				   bool is_stack ) {
+    release_functor<MetaData, Task, FullTask> fn( fr, parent, is_stack );
     cleanup_tags_functor cf( is_stack, true );
     char * args = fr->get_task_data().get_args_ptr();
     char * tags = fr->get_task_data().get_tags_ptr();
-    arg_apply_fn<release_functor<MetaData, Task>,Tn...>( fn, args, tags );
+    arg_apply_fn<release_functor<MetaData, Task, FullTask>,Tn...>( fn, args, tags );
     arg_apply_fn<cleanup_tags_functor,Tn...>( cf, args, tags );
 }
 
@@ -2110,7 +2115,7 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
 	    ofr->enable_deps( true
 #if !STORED_ANNOTATIONS
 			      , (void(*)(Task *, obj_dep_traits *))0
-			      , &arg_release_fn<MetaData,Task,Tn...>
+			      , &arg_release_fn<MetaData,Task,FullTask,Tn...>
 			      , &arg_cleanup_tags_fn<Task,Tn...>
 			      , &arg_hypermap_reduce_fn<Task,Tn...>
 #endif
@@ -2125,7 +2130,7 @@ inline void arg_issue( Frame * fr, StackFrame * parent, Tn & ... an ) {
 	    ofr->enable_deps( false
 #if !STORED_ANNOTATIONS
 			      , &arg_issue_fn<MetaData,Task,Tn...>
-			      , &arg_release_fn<MetaData,Task,Tn...>
+			      , &arg_release_fn<MetaData,Task,FullTask,Tn...>
 			      , &arg_cleanup_tags_fn<Task,Tn...>
 			      , &arg_hypermap_reduce_fn<Task,Tn...>
 #endif
@@ -2697,7 +2702,7 @@ public:
 // ------------------------------------------------------------------------
 class obj_dep_traits {
     typedef void (*issue_fn_t)( task_metadata *, obj_dep_traits * );
-    typedef void (*release_fn_t)( task_metadata *, bool );
+    typedef void (*release_fn_t)( task_metadata *, full_metadata *, bool );
     typedef void (*cleanup_fn_t)( task_metadata *, bool );
     typedef void (*reduce_fn_t)( task_metadata * );
 
@@ -2736,12 +2741,13 @@ protected:
     }
 
 public:
-    void release_deps( task_metadata * fr, bool is_stack ) {
+    void release_deps( task_metadata * fr, full_metadata * parent,
+		       bool is_stack ) {
 	if( enabled() ) {
 #if STORED_ANNOTATIONS
-	    arg_release_fn<obj_metadata,task_metadata>( fr, is_stack );
+	    arg_release_fn<obj_metadata,task_metadata>( fr, parent, is_stack );
 #else
-	    (*release_fn)( fr, is_stack );
+	    (*release_fn)( fr, parent, is_stack );
 #endif
 	} else if( state != s_nodep ) {
 #if STORED_ANNOTATIONS
@@ -2888,10 +2894,13 @@ struct task_graph_traits {
     // Actions on a stack_frame
     static void
     release_task( StackFrame * fr ) {
+	typename stack_frame_traits<FullFrame>::metadata_ty * opf
+	    = stack_frame_traits<FullFrame>::get_metadata(
+		fr->get_parent()->get_full() );
 	typename stack_frame_traits<StackFrame>::metadata_ty * ofr
 	    = stack_frame_traits<StackFrame>::get_metadata( fr );
 	assert( !ofr->enabled() || fr->get_parent()->is_full() );
-	ofr->release_deps( ofr, true );
+	ofr->release_deps( ofr, opf, true );
     }
     static void
     release_task( PendingFrame * fr ) {
@@ -2908,7 +2917,7 @@ struct task_graph_traits {
 	typename stack_frame_traits<FullFrame>::metadata_ty * opf
 	    = stack_frame_traits<FullFrame>::get_metadata( fr->get_parent() );
 	// assert( !ofr->enabled() || fr->get_parent()->is_full() );
-	ofr->release_deps( ofr, false );
+	ofr->release_deps( ofr, opf, false );
 	return (QueuedFrame *)opf->get_ready_task_after( ofr );
     }
     static void

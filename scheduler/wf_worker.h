@@ -130,7 +130,8 @@ public:
 	pp_time_t time_since_longjmp;
 	pp_time_t time_longjmp;
 	pp_time_t time_clueless;
-	pp_time_t time_release_ready;
+	pp_time_t time_release_ready_success;
+	pp_time_t time_release_ready_fail;
 
 #if PROFILE_QUEUE
 	obj::profile_queue queue;
