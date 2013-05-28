@@ -159,6 +159,9 @@ public:
 	size_t num_random_steals;
 	size_t num_focussed_steals;
 
+	size_t num_tkt_evals_release_ready;
+	size_t num_tkt_evals_release_ready_fail;
+
 	profile_worker();
 	~profile_worker();
 	void summarize( const profile_worker & w );

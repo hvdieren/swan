@@ -428,6 +428,8 @@ static inline bool arg_ready_fn( const task_data_t & task_data ) {
     ready_functor<MetaData, Task> fn;
     char * args = task_data.get_args_ptr();
     char * tags = task_data.get_tags_ptr();
+    extern __thread size_t num_tkt_evals;
+    ++num_tkt_evals;
     if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
 	// The finalization is not performed if task_data indicates that none
 	// of the arguments are the result of a non-finalized reduction.

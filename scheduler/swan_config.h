@@ -42,13 +42,13 @@
 #define DBG_LOGGER 0
 #define DBG_SF_LOCKER 0
 #define DBG_MCS_MUTEX 0 // with is faster due to assembly code sequence generated
-#define PROFILE_WORKER 0
-#define PROFILE_WORKER_SUMMARY 0
+#define PROFILE_WORKER 1
+#define PROFILE_WORKER_SUMMARY 1
 #define PROFILE_QUEUE 0
-#define PROFILE_SPAWN_DEQUE 0
+#define PROFILE_SPAWN_DEQUE 1
 #define PROFILE_OBJECT 0
 #define OBJECT_INOUT_RENAME 0
-#define TIME_STEALING 0
+#define TIME_STEALING 1
 #define PREFERRED_MUTEX cas_mutex
 #define FF_MCS_MUTEX 1
 #define NDEBUG
@@ -225,7 +225,7 @@
 
 /* Using HWLOC to schedule OS threads and analyze cache hierarchy
  */
-#define USE_HWLOC 0
+#define HAVE_HWLOC
 
 /* Disable techniques not present in the PACT11_VERSION of the scheduler.
  * This concerns only techniques added in the March 2011 - August 2011

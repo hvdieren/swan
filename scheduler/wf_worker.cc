@@ -44,6 +44,9 @@
 #include "logger.h"
 
 extern worker_state * ws;
+namespace obj {
+__thread size_t num_tkt_evals;
+}
 
 worker_state *
 worker_state::get_thread_worker_state() {
@@ -73,7 +76,9 @@ worker_state::profile_worker::profile_worker() :
     INIT(provgd_steals),
     INIT(provgd_steals_fr),
     INIT(random_steals),
-    INIT(focussed_steals)
+    INIT(focussed_steals),
+    INIT(tkt_evals_release_ready),
+    INIT(tkt_evals_release_ready_fail)
 #undef INIT
 {
      memset( &time_since_longjmp, 0, sizeof(time_since_longjmp) );
@@ -109,6 +114,8 @@ worker_state::profile_worker::summarize( const worker_state::profile_worker & w 
     SUM(provgd_steals_fr);
     SUM(random_steals);
     SUM(focussed_steals);
+    SUM(tkt_evals_release_ready);
+    SUM(tkt_evals_release_ready_fail);
 #undef SUM
 
     pp_time_max( &time_since_longjmp, &w.time_since_longjmp );
@@ -165,6 +172,8 @@ worker_state::profile_worker::dump_profile( size_t id ) const {
     DUMP(provgd_steals_fr);
     DUMP(random_steals);
     DUMP(focussed_steals);
+    DUMP(tkt_evals_release_ready);
+    DUMP(tkt_evals_release_ready_fail);
     std::cerr << '\n';
 #undef DUMP
 #define SHOW(x) pp_time_print( (pp_time_t *)&x, (char *)#x )
@@ -487,15 +496,19 @@ worker_state::worker_fn() {
 	pp_time_t timer;
 	memset( &timer, 0, sizeof(timer) );
 	pp_time_start( &timer );
+	obj::num_tkt_evals = 0;
 #endif
 	pending_frame * next
 	    = the_task_graph_traits::release_task_and_get_ready( child );
 #if PROFILE_WORKER
 	pp_time_end( &timer );
-	if( next )
+	if( next ) {
+	    tls_worker_state->wprofile.num_tkt_evals_release_ready += obj::num_tkt_evals;
 	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_success, &timer );
-	else
+	} else {
+	    tls_worker_state->wprofile.num_tkt_evals_release_ready_fail += obj::num_tkt_evals;
 	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_fail, &timer );
+	}
 #endif
 	parent->lock( &sd );
 #if !PACT11_VERSION && 0
