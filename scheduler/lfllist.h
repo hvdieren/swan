@@ -560,19 +560,30 @@ public:
 	if( !prev_depth ) // For some reason, this helps performance...
 	    return scan();
 
-	size_t h0, h1;
-	if( T * ret = probe( table[h0 = hash(prev_depth)] ) ) {
+	size_t h0 = hash( prev_depth );
+	if( h0 >= min_occ && h0 < max_occ ) {
+	    if( T * ret = probe( h0 ) ) {
+		extern __thread size_t num_h0_hits;
+		num_h0_hits++;
+		update_bounds_found( h0 );
 #if TRACING
-	    errs() << "h0: find ready " << ret << " depth " << prev_depth << " in " << this << '\n';
+		errs() << "h0: find ready " << ret << " depth " << prev_depth << " in " << this << '\n';
 #endif
-	    return ret;
+		return ret;
+	    }
 	}
-	if( T * ret = probe( table[h1 = hash(prev_depth+1)] ) ) {
+	size_t h1 = hash( prev_depth+1 );
+	if( h1 >= min_occ && h1 < max_occ ) {
+	    if( T * ret = probe( h1 ) ) {
+		extern __thread size_t num_h1_hits;
+		num_h1_hits++;
+		update_bounds_found( h1 );
 #if TRACING
-	    errs() << "h1: find ready " << ret << " depth "
-		   << (prev_depth+1) << " in " << this << '\n';
+		errs() << "h1: find ready " << ret << " depth "
+		       << (prev_depth+1) << " in " << this << '\n';
 #endif
-	    return ret;
+		return ret;
+	    }
 	}
 	if( T * ret = scan( h0, h1 ) )
 	    return ret;
@@ -592,9 +603,14 @@ private:
 	return d % SIZE;
     }
 
-    T * probe( list_t & list ) {
-	if( list.empty() )
+    T * probe( size_t h ) {
+	list_t & list = table[h];
+	if( list.empty() ) {
+	    extern __thread size_t num_hash_empty;
+	    num_hash_empty++;
+	    // errs() << "empty hash at " << h << std::endl;
 	    return 0;
+	}
 
 	list.lock();
 	T * ret = list.get_ready();
@@ -625,12 +641,28 @@ private:
     }
 #else
     void update_bounds( size_t h ) {
-	if( h < min_occ || h > max_occ ) {
-	    occ_mutex.lock();
-	    min_occ = h < min_occ ? h : min_occ;
-	    max_occ = h > max_occ ? h : max_occ;
-	    occ_mutex.unlock();
+	occ_mutex.lock();
+	if( min_occ == max_occ ) {
+	    min_occ = h;
+	    max_occ = h+1;
+	} else {
+	    if( min_occ > h )
+		min_occ = h;
+	    if( max_occ < h+1 && h+1 <= SIZE )
+		max_occ = h+1;
 	}
+	// errs() << "update_bounds/insert " << h << " " << min_occ << "-" << max_occ << std::endl;
+	occ_mutex.unlock();
+    }
+    void update_bounds_found( size_t h ) {
+	occ_mutex.lock();
+	size_t i;
+	for( i=min_occ; i < max_occ; ++i )
+	    if( !table[i].empty() )
+		break;
+	min_occ = i;
+	// errs() << "update_bounds_found " << h << " " << min_occ << "-" << max_occ << std::endl;
+	occ_mutex.unlock();
     }
     void update_bounds() {
 	if( table[min_occ].empty() ) {
@@ -643,23 +675,24 @@ private:
 	    min_occ = i;
 	    occ_mutex.unlock();
 	}
-	if( table[max_occ].empty() ) {
+	if( max_occ > min_occ && table[max_occ-1].empty() ) {
 	    occ_mutex.lock();
 	    size_t i;
 	    // not i=max_occ-1 because of race with late lock
 	    for( i=max_occ; i > min_occ; --i )
-		if( !table[i].empty() )
+		if( !table[i-1].empty() )
 		    break;
 	    max_occ = i;
 	    occ_mutex.unlock();
 	}
+	// errs() << "update_bounds " << min_occ << "-" << max_occ << std::endl;
     }
 #endif
 
     T * scan() {
 	// errs() << "scan from " << min_occ << " to " << max_occ << "\n";
-	for( size_t i=min_occ; i <= max_occ; ++i ) {
-	    if( T * ret = probe( table[i] ) ) {
+	for( size_t i=min_occ; i < max_occ; ++i ) {
+	    if( T * ret = probe( i ) ) {
 		// printf( "A0 %ld-%ld @%ld\n", min_occ, max_occ, i );
 		update_bounds();
 		// printf( "A1 %ld-%ld @%ld\n", min_occ, max_occ, i );
@@ -679,10 +712,10 @@ private:
 	return 0;
     }
     T * scan( size_t h0, size_t h1 ) {
-	for( size_t i=min_occ; i <= max_occ; ++i ) {
+	for( size_t i=min_occ; i < max_occ; ++i ) {
 	    if( i == h0 || i == h1 )
 		continue;
-	    if( T * ret = probe( table[i] ) ) {
+	    if( T * ret = probe( i ) ) {
 		// printf( "F%ld %ld-%ld @%ld\n", h0, min_occ, max_occ, i );
 #if TRACING
 		errs() << "bscan: find ready " << ret << " depth " << i << " in " << this << '\n';

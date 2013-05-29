@@ -47,6 +47,9 @@ extern worker_state * ws;
 namespace obj {
 __thread size_t num_tkt_evals;
 }
+__thread size_t num_h0_hits;
+__thread size_t num_h1_hits;
+__thread size_t num_hash_empty;
 
 worker_state *
 worker_state::get_thread_worker_state() {
@@ -78,7 +81,10 @@ worker_state::profile_worker::profile_worker() :
     INIT(random_steals),
     INIT(focussed_steals),
     INIT(tkt_evals_release_ready),
-    INIT(tkt_evals_release_ready_fail)
+    INIT(tkt_evals_release_ready_fail),
+    INIT(h0_hits),
+    INIT(h1_hits),
+    INIT(hash_empty)
 #undef INIT
 {
      memset( &time_since_longjmp, 0, sizeof(time_since_longjmp) );
@@ -116,6 +122,9 @@ worker_state::profile_worker::summarize( const worker_state::profile_worker & w 
     SUM(focussed_steals);
     SUM(tkt_evals_release_ready);
     SUM(tkt_evals_release_ready_fail);
+    SUM(h0_hits);
+    SUM(h1_hits);
+    SUM(hash_empty);
 #undef SUM
 
     pp_time_max( &time_since_longjmp, &w.time_since_longjmp );
@@ -174,6 +183,9 @@ worker_state::profile_worker::dump_profile( size_t id ) const {
     DUMP(focussed_steals);
     DUMP(tkt_evals_release_ready);
     DUMP(tkt_evals_release_ready_fail);
+    DUMP(h0_hits);
+    DUMP(h1_hits);
+    DUMP(hash_empty);
     std::cerr << '\n';
 #undef DUMP
 #define SHOW(x) pp_time_print( (pp_time_t *)&x, (char *)#x )
@@ -497,6 +509,9 @@ worker_state::worker_fn() {
 	memset( &timer, 0, sizeof(timer) );
 	pp_time_start( &timer );
 	obj::num_tkt_evals = 0;
+	num_h0_hits = 0;
+	num_h1_hits = 0;
+	num_hash_empty = 0;
 #endif
 	pending_frame * next
 	    = the_task_graph_traits::release_task_and_get_ready( child );
@@ -509,6 +524,9 @@ worker_state::worker_fn() {
 	    tls_worker_state->wprofile.num_tkt_evals_release_ready_fail += obj::num_tkt_evals;
 	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_fail, &timer );
 	}
+	tls_worker_state->wprofile.num_h0_hits += num_h0_hits;
+	tls_worker_state->wprofile.num_h1_hits += num_h1_hits;
+	tls_worker_state->wprofile.num_hash_empty += num_hash_empty;
 #endif
 	parent->lock( &sd );
 #if !PACT11_VERSION && 0

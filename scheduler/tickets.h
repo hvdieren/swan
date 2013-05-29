@@ -963,7 +963,7 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
 #endif
 	md->add_commutative();
 	// TODO: Parallel cinoutdeps have different depths!
-	// md->update_depth( fr->get_depth() );
+	md->update_depth( fr->get_depth() );
     }
     template<typename T>
     static
@@ -1025,7 +1025,7 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
 	tags->wr_tag = md->get_writer_tag();
 	md->add_reduction();
 	// TODO: Parallel reductions have different depths!
-	// md->update_depth( fr->get_depth() );
+	md->update_depth( fr->get_depth() );
     }
     template<typename T>
     static

@@ -162,6 +162,10 @@ public:
 	size_t num_tkt_evals_release_ready;
 	size_t num_tkt_evals_release_ready_fail;
 
+	size_t num_h0_hits;
+	size_t num_h1_hits;
+	size_t num_hash_empty;
+
 	profile_worker();
 	~profile_worker();
 	void summarize( const profile_worker & w );
