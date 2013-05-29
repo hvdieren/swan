@@ -500,14 +500,15 @@ public:
 template<typename T>
 class locked_dl_list {
     dl_list<T> list;
-    cas_mutex mutex;
+    // cas_mutex mutex;
+    mcs_mutex mutex;
 
 public:
     locked_dl_list() { }
 
-    void lock() { mutex.lock(); }
-    bool try_lock() { return mutex.try_lock(); }
-    void unlock() { mutex.unlock(); }
+    void lock( mcs_mutex::node * node ) { mutex.lock( node ); }
+    bool try_lock( mcs_mutex::node * node ) { return mutex.try_lock( node ); }
+    void unlock( mcs_mutex::node * node ) { mutex.unlock( node ); }
 
     bool empty() const { return list.empty(); }
 
@@ -532,6 +533,17 @@ class hashed_list {
 public:
     hashed_list() : min_occ( 0 ), max_occ( 0 ) { }
 
+    // Possible areas of improvements
+    // * lock contention: multiple threads waiting on same list
+    //   - delays
+    //   - may result in large number of empty list accessess
+    // * 2.5 evals/ready task retrieved - why?
+    // * less than 1/2 ready tasks retrieved from h0 and h1 - why?
+    //   - this may be a side effect of the lock contention
+    // Possible solutions to lock contention:
+    //   - try_lock and move on if contended
+    //   - measure contention and transfer to ready list if contended
+
 #ifdef UBENCH_HOOKS
     void reset() {
 	min_occ = 0;
@@ -543,9 +555,10 @@ public:
 	size_t d = dl_list_traits<T>::get_depth( elm );
 	size_t h = hash(d);
 	list_t & list = table[h];
-	list.lock();
+	mcs_mutex::node node;
+	list.lock( &node );
 	list.prepend( elm );
-	list.unlock();
+	list.unlock( &node );
 
 	update_bounds( h );
 	// atomic_min( &min_occ, h );
@@ -612,9 +625,10 @@ private:
 	    return 0;
 	}
 
-	list.lock();
+	mcs_mutex::node node;
+	list.lock( &node );
 	T * ret = list.get_ready();
-	list.unlock();
+	list.unlock( &node );
 	return ret;
     }
 
