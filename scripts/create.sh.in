@@ -14,7 +14,8 @@ taskgraph_name()
 	10) echo h ;; # hypergraph
 	11) echo eh ;; # embedded hypergraph
 	12) echo gtkt ;;
-	13) echo otkt ;;
+	13) echo l ;; # embedded lists
+	14) echo el ;; # embedded lists
     esac
 }
 
