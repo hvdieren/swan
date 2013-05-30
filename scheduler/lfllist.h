@@ -320,19 +320,16 @@ public:
 	traits::set_prev( traits::get_next(elm), traits::get_prev(elm) );
     }
 
-    // void push( T * elm ) { prepend( elm ); }
-    // void push_back( T * elm ) { push( elm ); }
-
     void push_back( const_iterator * elm ) { push_back( elm.cur ); }
 
-    void push_front( T * elm ) { // is an append operation but allow subst of class
+    void push_front( T * elm ) {
 	traits::set_prev( traits::get_next( &head ), elm );
 	traits::set_next( elm, traits::get_next( &head ) );
 	traits::set_prev( elm, &head );
 	traits::set_next( &head, elm );
     }
 
-    void push_back( T * elm ) { // is an append operation but allow subst of class
+    void push_back( T * elm ) {
 	traits::set_next( traits::get_prev( &head ), elm );
 	traits::set_prev( elm, traits::get_prev( &head ) );
 	traits::set_next( elm, &head );
