@@ -577,8 +577,10 @@ public:
 	size_t h0 = hash( prev_depth );
 	if( h0 >= min_occ && h0 < max_occ ) {
 	    if( T * ret = probe( h0 ) ) {
+#if PROFILE_WORKER
 		extern __thread size_t num_h0_hits;
 		num_h0_hits++;
+#endif // PROFILE_WORKER
 		update_bounds_found( h0 );
 #if TRACING
 		errs() << "h0: find ready " << ret << " depth " << prev_depth << " in " << this << '\n';
@@ -589,8 +591,10 @@ public:
 	size_t h1 = hash( prev_depth+1 );
 	if( h1 >= min_occ && h1 < max_occ ) {
 	    if( T * ret = probe( h1 ) ) {
+#if PROFILE_WORKER
 		extern __thread size_t num_h1_hits;
 		num_h1_hits++;
+#endif // PROFILE_WORKER
 		update_bounds_found( h1 );
 #if TRACING
 		errs() << "h1: find ready " << ret << " depth "
@@ -620,8 +624,10 @@ private:
     T * probe( size_t h ) {
 	list_t & list = table[h];
 	if( list.empty() ) {
+#if PROFILE_WORKER
 	    extern __thread size_t num_hash_empty;
 	    num_hash_empty++;
+#endif // PROFILE_WORKER
 	    // errs() << "empty hash at " << h << std::endl;
 	    return 0;
 	}
@@ -664,45 +670,47 @@ private:
 	} else {
 	    if( min_occ > h )
 		min_occ = h;
-	    if( max_occ < h+1 && h+1 <= SIZE )
+	    if( max_occ < h+1 )
 		max_occ = h+1;
 	}
 	// errs() << "update_bounds/insert " << h << " " << min_occ << "-" << max_occ << std::endl;
 	occ_mutex.unlock( &node );
     }
     void update_bounds_found( size_t h ) {
+	if( h != min_occ )
+	    return;
+
 	mcs_mutex::node node;
-	occ_mutex.lock( &node );
-	size_t i;
-	for( i=min_occ; i < max_occ; ++i )
-	    if( !table[i].empty() )
-		break;
-	min_occ = i;
-	// errs() << "update_bounds_found " << h << " " << min_occ << "-" << max_occ << std::endl;
-	occ_mutex.unlock( &node );
-    }
-    void update_bounds() {
-	mcs_mutex::node node;
-	if( table[min_occ].empty() ) {
-	    occ_mutex.lock( &node );
+	if( occ_mutex.try_lock( &node ) ) {
 	    size_t i;
-	    // not i=min_occ+1 because of race with late lock
 	    for( i=min_occ; i < max_occ; ++i )
 		if( !table[i].empty() )
 		    break;
 	    min_occ = i;
 	    occ_mutex.unlock( &node );
 	}
+    }
+    void update_bounds() {
+	mcs_mutex::node node;
+	if( !occ_mutex.try_lock( &node ) )
+	    return;
+	if( table[min_occ].empty() ) {
+	    size_t i;
+	    // not i=min_occ+1 because of race with late lock
+	    for( i=min_occ; i < max_occ; ++i )
+		if( !table[i].empty() )
+		    break;
+	    min_occ = i;
+	}
 	if( max_occ > min_occ && table[max_occ-1].empty() ) {
-	    occ_mutex.lock( &node );
 	    size_t i;
 	    // not i=max_occ-1 because of race with late lock
 	    for( i=max_occ; i > min_occ; --i )
 		if( !table[i-1].empty() )
 		    break;
 	    max_occ = i;
-	    occ_mutex.unlock( &node );
 	}
+	occ_mutex.unlock( &node );
 	// errs() << "update_bounds " << min_occ << "-" << max_occ << std::endl;
     }
 #endif

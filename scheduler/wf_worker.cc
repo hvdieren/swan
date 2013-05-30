@@ -44,12 +44,15 @@
 #include "logger.h"
 
 extern worker_state * ws;
+
+#if PROFILE_WORKER
 namespace obj {
 __thread size_t num_tkt_evals;
 }
 __thread size_t num_h0_hits;
 __thread size_t num_h1_hits;
 __thread size_t num_hash_empty;
+#endif PROFILE_WORKER
 
 worker_state *
 worker_state::get_thread_worker_state() {

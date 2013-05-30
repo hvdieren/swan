@@ -360,8 +360,10 @@ static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
     ready_functor<MetaData, Task> fn;
     char * args = task_data_p.get_args_ptr();
     char * tags = task_data_p.get_tags_ptr();
+#if PROFILE_WORKER
     extern __thread size_t num_tkt_evals;
     ++num_tkt_evals;
+#endif // PROFILE_WORKER
     if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
 	privatize_functor<MetaData> pfn;
 	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
