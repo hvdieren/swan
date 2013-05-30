@@ -32,11 +32,13 @@
 #include <iostream>
 #include <list>
 
-#include "wf_frames.h"
-#include "lock.h"
+#include "swan/wf_frames.h"
+#include "swan/lock.h"
+#include "swan/queue/taskgraph.h"
+#include "swan/functor/acquire.h"
 
 #if OBJECT_TASKGRAPH == 9
-#include "lfllist.h"
+#include "swan/lfllist.h"
 #endif
 
 // ERASE_NULL: When erasing a reader from the readers list, don't unlink,
@@ -236,70 +238,6 @@ static inline void arg_replace_fn( Task * from, Task * to, task_data_t & td ) {
     arg_apply_fn<replace_frame_functor<MetaData, Task>,Tn...>( fn, args, tags );
 }
 #endif
-
-// ----------------------------------------------------------------------
-// Functor for acquiring locks (commutativity) and privatization (reductions)
-// when selecting an otherwise ready task.
-// ----------------------------------------------------------------------
-template<typename MetaData>
-struct acquire_functor {
-    // Default case is do nothing
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return true;
-    }
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-
-    // Commutativity
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    bool operator () ( cinoutdep<T> & obj,
-		       typename cinoutdep<T>::dep_tags & sa ) {
-	MetaData * md = obj.get_version()->get_metadata();
-	return md->commutative_try_acquire();
-    }
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-// An acquire and privatize function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
-#else
-template<typename MetaData, typename... Tn>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
-#endif
-
 
 // ----------------------------------------------------------------------
 // ctg_metadata: dependency-tracking metadata (not versioning)
@@ -611,6 +549,8 @@ public:
 	deps.push_back( to );
     }
 
+    taskgraph * get_graph() { return graph; }
+
     // Locking
     void lock() { mutex.lock(); }
     void unlock() { mutex.unlock(); }
@@ -660,7 +600,9 @@ public:
     }
 
     void start_deregistration() { }
-    void stop_deregistration() { lock(); wakeup_deps(); unlock(); }
+    void stop_deregistration( full_metadata * parent ) {
+	lock(); wakeup_deps(); unlock();
+    }
 };
 
 void
