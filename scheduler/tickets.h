@@ -545,6 +545,13 @@ public:
     void push_pending( pending_metadata * frame ) {
 	allocate_pending();
 	pending->prepend( frame );
+	// TODO: It is not ideal to place the enable_scan() call here.
+	// But for some reason, a call during release gets missed and
+	// this is a very safe place to re-enable the scan.
+	// This may also be a race, as there is no synchronization between
+	// release and get_ready_task() - release may set the flag but it
+	// may be unobserved, or the ready task may not be found yet?
+	enable_scan();
     }
 
     pending_metadata *
@@ -582,7 +589,7 @@ private:
 	if( !pending ) {
 	    // errs() << "ALLOC PENDING\n";
 	    pending = new hashed_list<pending_metadata>;
-	    }
+	}
     }
 
     bool gate_scan() {
