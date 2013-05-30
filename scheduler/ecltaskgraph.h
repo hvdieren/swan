@@ -50,14 +50,15 @@
 #include <vector>
 #endif
 
-#include "wf_frames.h"
-#include "lock.h"
-#include "padding.h"
-#include "alc_allocator.h"
-#include "alc_mmappol.h"
-#include "alc_flpol.h"
-#include "queue/taskgraph.h"
-#include "taskgraph/ready_list_tg.h"
+#include "swan/wf_frames.h"
+#include "swan/lock.h"
+#include "swan/padding.h"
+#include "swan/alc_allocator.h"
+#include "swan/alc_mmappol.h"
+#include "swan/alc_flpol.h"
+#include "swan/queue/taskgraph.h"
+#include "swan/taskgraph/ready_list_tg.h"
+#include "swan/functor/acquire.h"
 
 namespace obj {
 
@@ -147,73 +148,11 @@ namespace obj { // reopen
 class pending_metadata;
 
 #if EMBED_LISTS
-typedef ::taskgraph<pending_metadata, link_metadata, dl_head_list<link_metadata> > taskgraph;
+typedef ::taskgraph<pending_metadata, link_metadata,
+		    dl_head_list<link_metadata> > taskgraph;
 #else
 typedef ::taskgraph<pending_metadata, pending_metadata,
 		    std::list<obj::pending_metadata *> > taskgraph;
-#endif
-
-// ----------------------------------------------------------------------
-// Functor for acquiring locks (commutativity) and privatization (reductions)
-// when selecting an otherwise ready task.
-// ----------------------------------------------------------------------
-template<typename MetaData>
-struct acquire_functor {
-    // Default case is do nothing
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return true;
-    }
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-
-    // Commutativity
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    bool operator () ( cinoutdep<T> & obj,
-		       typename cinoutdep<T>::dep_tags & sa ) {
-	MetaData * md = obj.get_version()->get_metadata();
-	return md->commutative_try_acquire();
-    }
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-// An acquire and privatize function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
-#else
-template<typename MetaData, typename... Tn>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
 #endif
 
 // ----------------------------------------------------------------------
