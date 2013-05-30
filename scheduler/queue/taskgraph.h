@@ -35,7 +35,6 @@ namespace obj {
 // queue_tags: tag storage for queue dependency usage types
 // ----------------------------------------------------------------------
 class task_metadata;
-class taskgraph;
 
 // queue_tags stores the accessed generation and links the task on the task list.
 // Required for queue types 

@@ -38,8 +38,13 @@
 
 #define EMBED_LISTS  ( OBJECT_TASKGRAPH == 14 )
 
-#if EMBED_LISTS
+// Per-object users list through gen_tags is currently only supported
+// as an embedded list.
+#define EMBED_USER_LIST 1
+
+#if EMBED_LISTS || EMBED_USER_LIST
 #include "lfllist.h"
+#include <list>
 #else // !EMBED_LISTS
 #include <list>
 #include <vector>
@@ -52,6 +57,7 @@
 #include "alc_mmappol.h"
 #include "alc_flpol.h"
 #include "queue/taskgraph.h"
+#include "taskgraph/ready_list_tg.h"
 
 namespace obj {
 
@@ -134,44 +140,18 @@ struct dl_list_traits<obj::link_metadata> {
 #endif
 
 namespace obj { // reopen
+
 // ----------------------------------------------------------------------
 // taskgraph: task graph roots in ready_list
 // ----------------------------------------------------------------------
 class pending_metadata;
 
-class taskgraph {
-    // typedef cas_mutex mutex_t;
-    typedef mcs_mutex mutex_t;
-
-private:
 #if EMBED_LISTS
-    dl_head_list<link_metadata> ready_list;
-#else // !EMBED_LISTS
-    std::list<pending_metadata *> ready_list;
+typedef ::taskgraph<pending_metadata, link_metadata, dl_head_list<link_metadata> > taskgraph;
+#else
+typedef ::taskgraph<pending_metadata, pending_metadata,
+		    std::list<obj::pending_metadata *> > taskgraph;
 #endif
-    mutable mutex_t mutex;
-
-public:
-    ~taskgraph() {
-	assert( ready_list.empty() && "Pending tasks at destruction time" );
-    }
-
-    inline pending_metadata * get_ready_task();
-    inline void add_ready_task( link_metadata * fr );
-
-    // Don't need a lock in this check because it is based on polling a
-    // single variable
-    bool empty() const {
-	// lock();
-	bool ret = ready_list.empty();
-	// unlock();
-	return ret;
-    }
-
-private:
-    void lock( mcs_mutex::node * node ) const { mutex.lock( node ); }
-    void unlock( mcs_mutex::node * node ) const { mutex.unlock( node ); }
-};
 
 // ----------------------------------------------------------------------
 // Functor for acquiring locks (commutativity) and privatization (reductions)
@@ -245,11 +225,10 @@ class ecltg_metadata;
 // gen_tags stores the accessed generation and links the task on the task list.
 // Required for all types
 class gen_tags {
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     gen_tags * it_next;
     task_metadata * st_task;
 #endif
-    // ecltg_metadata * obj_md; -- implied, this is the argument!
     size_t last_in_gen; // OPT: bool, size_t for alignment
 
     void clr_last_in_generation() { last_in_gen = false; }
@@ -260,14 +239,14 @@ class gen_tags {
     template<typename MetaData, typename Task, template<typename U> class DepTy>
     friend class dep_traits;
     friend class ecltg_metadata;
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     friend class sl_list_traits<gen_tags>;
 #endif
 };
 
 } // end namespace obj because the traits class must be in global namespace
 
-#if EMBED_LISTS
+#if EMBED_USER_LIST
 template<>
 struct sl_list_traits<obj::gen_tags> {
     typedef obj::gen_tags T;
@@ -340,11 +319,12 @@ private:
     Youngest youngest;
     size_t num_gens;
 
-#if EMBED_LISTS
-    sl_list<gen_tags> tasks; // set of readers after the writer
-#else // !EMBED_LISTS
-    std::vector<task_metadata *> tasks; // set of readers after the writer
+#if EMBED_USER_LIST
+    typedef sl_list<gen_tags> task_list_type;
+#else // !EMBED_USER_LIST
+    typedef std::vector<task_metadata *> task_list_type;
 #endif
+    task_list_type tasks; // set of readers after the writer
 
     // To implement commutativity
     mutex_t cmutex;
@@ -383,9 +363,9 @@ public:
     }
 
     // Dependency queries on readers
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     typedef sl_list<gen_tags>::const_iterator task_iterator;
-#else // !EMBED_LISTS
+#else // !EMBED_USER_LIST
     typedef std::vector<task_metadata *>::const_iterator task_iterator;
 #endif
     task_iterator task_begin() const { return tasks.begin(); }
@@ -537,6 +517,44 @@ public:
 };
 
 // ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+} // end namespace obj
+
+#if EMBED_LISTS
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::link_metadata, dl_head_list<obj::link_metadata> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::link_metadata * lnk ) {
+	return obj::pending_metadata::get_from_link( lnk );
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#else
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::pending_metadata,
+			std::list<obj::pending_metadata *> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::pending_metadata * lnk ) {
+	return lnk;
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#endif
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
 // full_metadata: task graph metadata per full frame
 // ----------------------------------------------------------------------
 class full_metadata {
@@ -557,9 +575,6 @@ public:
     }
 
     taskgraph * get_graph() { return &graph; }
-
-    // void lock() { graph.lock(); }
-    // void unlock() { graph.unlock(); }
 };
 
 // ----------------------------------------------------------------------
@@ -587,46 +602,6 @@ task_metadata::create( full_metadata * ff ) {
     acquire_fn = &arg_acquire_fn<ecltg_metadata,Tn...>;
     // errs() << "set graph in " << this << " to " << graph << "\n";
 #endif
-}
-
-pending_metadata *
-taskgraph::get_ready_task() {
-    mcs_mutex::node node;
-    lock( &node );
-    pending_metadata * task = 0;
-    if( !ready_list.empty() ) {
-	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
-#if EMBED_LISTS
-	    pending_metadata * t = pending_metadata::get_from_link( *I );
-#else // !EMBED_LISTS
-	    pending_metadata * t = *I;
-#endif
-	    // errs() << "get_ready_task from TG " << this << ": consider: " << t << "\n";
-	    if( t->acquire() ) {
-		ready_list.erase( I );
-		task = t;
-		break;
-	    }
-	}
-    }
-    unlock( &node );
-    // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
-    return task;
-}
-
-void
-taskgraph::add_ready_task( link_metadata * fr ) {
-    // Translate from task_metadata to link_metadata
-    // Can only be successfully done in case of queued_frame!
-    // errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-    mcs_mutex::node node;
-    lock( &node );
-#if EMBED_LISTS
-    ready_list.push_back( fr );
-#else // !EMBED_LISTS
-    ready_list.push_back( pending_metadata::get_from_link( fr ) );
-#endif
-    unlock( &node );
 }
 
 void
@@ -672,8 +647,6 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	has_youngest = true;
 	youngest.lock();
     }
-
-    // errs() << "wakeup: " << * this << " has_y=" << has_youngest << std::endl;
 
     gen_tags * head = tasks.front();
     assert( (head || has_youngest) && "youngest not locked but list empty" );
@@ -825,28 +798,6 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	oldest.unlock();
     youngest.unlock();
 }
-
-#if 0
-{
-    // Lock the generation because we may be waking up tasks in the same
-    // generation as the one we are adding to.
-    lock();
-    for( task_iterator I=task_begin(), E=task_end(); I != E; ++I ) {
-	task_metadata * t = *I;
-	// TODO: probably don't need to lock here because del_incoming is atomic
-	// t->lock();
-	// errs() << "task " << t << " dec_incoming " << t->get_incoming() << '\n';
-	if( t->del_incoming() ) {
-	    graph->add_ready_task( pending_metadata::get_from_task( t ) );
-	    // errs() << "task " << this << " wakes up " << t << '\n';
-	}
-	// t->unlock();
-    }
-    if( clear )
-	tasks.clear();
-    unlock();
-}
-#endif
 
 void
 task_metadata::add_to_graph() {
