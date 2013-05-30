@@ -384,10 +384,10 @@ stack_frame::create_pending( TR (*func)( Tn... ),
 	= new pending_frame( args_size, tags_size, fn_tags_size, num_args, fut,
 			     reinterpret_cast<void (*)(void)>(func),
 			     &stack_frame::split_stub<fc_waiting, TR, Tn...> );
+#endif
 
     // Push arguments (potentially modified for renaming) on the stack
     pnd->push_args( args... );
-#endif
 
     wf_trace( pnd, cur, (void*)func, true, false );
 
