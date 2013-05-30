@@ -76,7 +76,7 @@ public:
     }
     bool try_lock() {
 	value_type old = m;
-	if( m & 1 )
+	if( old & 1 )
 	    return false;
 	// set locked bit, add 1 to counter.
 	if( !__sync_bool_compare_and_swap( &m, old, old+3 ) )

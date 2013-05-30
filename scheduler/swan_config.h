@@ -225,7 +225,7 @@
 
 /* Using HWLOC to schedule OS threads and analyze cache hierarchy
  */
-#define USE_HWLOC 0
+#define HAVE_HWLOC
 
 /* Disable techniques not present in the PACT11_VERSION of the scheduler.
  * This concerns only techniques added in the March 2011 - August 2011

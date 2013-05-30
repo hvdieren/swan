@@ -175,6 +175,10 @@ public:
 	depth = d;
     }
 
+#ifdef UBENCH_HOOKS
+    void update_depth_ubench( depth_t d ) { depth = d; }
+#endif
+
     friend std::ostream & operator << ( std::ostream & os, const tkt_metadata & md );
 };
 
@@ -361,7 +365,7 @@ public:
     void stop_registration( bool wakeup = false ) { }
 
     void start_deregistration() { }
-    void stop_deregistration() { }
+    inline void stop_deregistration( full_metadata * parent );
 };
 
 // ----------------------------------------------------------------------
@@ -424,6 +428,10 @@ static inline bool arg_ready_fn( const task_data_t & task_data ) {
     ready_functor<MetaData, Task> fn;
     char * args = task_data.get_args_ptr();
     char * tags = task_data.get_tags_ptr();
+#if PROFILE_WORKER
+    extern __thread size_t num_tkt_evals;
+    ++num_tkt_evals;
+#endif // PROFILE_WORKER
     if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
 	// The finalization is not performed if task_data indicates that none
 	// of the arguments are the result of a non-finalized reduction.
@@ -527,26 +535,46 @@ namespace obj { // reopen
 class full_metadata {
 protected:
     hashed_list<pending_metadata> * pending;
+    size_t maybe_ready;
 
 protected:
-    full_metadata() : pending( 0 ) { }
+    full_metadata() : pending( 0 ), maybe_ready( 0 ) { }
     ~full_metadata() { delete pending; }
 
 public:
     void push_pending( pending_metadata * frame ) {
 	allocate_pending();
 	pending->prepend( frame );
+	// TODO: It is not ideal to place the enable_scan() call here.
+	// But for some reason, a call during release gets missed and
+	// this is a very safe place to re-enable the scan.
+	// This may also be a race, as there is no synchronization between
+	// release and get_ready_task() - release may set the flag but it
+	// may be unobserved, or the ready task may not be found yet?
+	enable_scan();
     }
 
     pending_metadata *
     get_ready_task() {
-	return pending ? pending->get_ready() : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    rdy = pending->get_ready();
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
     pending_metadata *
     get_ready_task_after( task_metadata * prev ) {
-	depth_t prev_depth = prev->get_depth();
-	return pending ? pending->get_ready( prev_depth ) : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    depth_t prev_depth = prev->get_depth();
+	    rdy = pending->get_ready( prev_depth );
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
 #ifdef UBENCH_HOOKS
@@ -561,10 +589,23 @@ private:
 	if( !pending ) {
 	    // errs() << "ALLOC PENDING\n";
 	    pending = new hashed_list<pending_metadata>;
-	    }
+	}
     }
 
+    bool gate_scan() {
+	if( !maybe_ready )
+	    return false;
+	return __sync_bool_compare_and_swap( &maybe_ready, true, false );
+    }
+public:
+    void enable_scan() {
+	maybe_ready = true;
+    }
 };
+
+void task_metadata::stop_deregistration( full_metadata * parent ) {
+    parent->enable_scan();
+}
 
 // ----------------------------------------------------------------------
 // Generic fully-serial dependency handling traits
@@ -746,7 +787,7 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     static
     bool arg_ready( indep<T> & obj_int, typename indep<T>::dep_tags & tags ) {
 	tkt_metadata * md = obj_int.get_version()->get_metadata();
-	return md->chk_writer_tag( tags.wr_tag )
+	bool r = md->chk_writer_tag( tags.wr_tag )
 #if OBJECT_COMMUTATIVITY
 	    & md->chk_commutative_tag( tags.c_tag )
 #endif
@@ -754,6 +795,8 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
 	    & md->chk_reduction_tag( tags.r_tag )
 #endif
 	    ;
+	// errs() << "ready indep " << &tags << "? " << r << "\n";
+	return r;
     }
     template<typename T>
     static
@@ -773,6 +816,7 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     void arg_release( task_metadata * fr, indep<T> & obj,
 		      typename indep<T>::dep_tags & tags ) {
 	obj.get_version()->get_metadata()->del_reader();
+	// errs() << "release indep\n";
     }
 };
 
@@ -819,8 +863,10 @@ struct dep_traits<tkt_metadata, task_metadata, outdep> {
     }
     template<typename T>
     static
-    bool arg_ready( outdep<T> & obj, typename outdep<T>::dep_tags & tags ) {
-	assert( obj.get_version()->is_versionable() ); // enforced by applicators
+    bool arg_ready( outdep<T> & obj_ext, typename outdep<T>::dep_tags & tags ) {
+	assert( obj_ext.get_version()->is_versionable() ); // enforced by applicators
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	// errs() << "ready outdep " << &tags << "? " << true << "\n";
 	return true;
     }
     template<typename T>
@@ -850,7 +896,10 @@ struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     static
     bool arg_ready( inoutdep<T> & obj_ext,
 		    typename inoutdep<T>::dep_tags & tags ) {
-	return serial_dep_traits::arg_ready( obj_ext, tags );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	bool r = serial_dep_traits::arg_ready( obj_ext, tags );
+	// errs() << "ready inoutdep " << &tags << "? " << r << "\n";
+	return r;
     }
     template<typename T>
     static
@@ -916,6 +965,7 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
 	tags->r_tag  = md->get_reduction_tag();
 #endif
 	md->add_commutative();
+	// TODO: Parallel cinoutdeps have different depths!
 	md->update_depth( fr->get_depth() );
     }
     template<typename T>
@@ -923,14 +973,16 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
     bool arg_ready( cinoutdep<T> & obj,
 		    typename cinoutdep<T>::dep_tags & tags ) {
 	tkt_metadata * md = obj.get_version()->get_metadata();
+	bool r = false;
 	if( md->chk_reader_tag( tags.rd_tag )
 	    & md->chk_writer_tag( tags.wr_tag )
 #if OBJECT_REDUCTION
 	    & md->chk_reduction_tag( tags.r_tag )
 #endif
 	    )
-	    return md->commutative_try_acquire();
-	return false;
+	    r = md->commutative_try_acquire();
+	// errs() << "ready cinoutdep " << &tags << "? " << r << "\n";
+	return r;
     }
     template<typename T>
     static
@@ -975,6 +1027,7 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
 #endif
 	tags->wr_tag = md->get_writer_tag();
 	md->add_reduction();
+	// TODO: Parallel reductions have different depths!
 	md->update_depth( fr->get_depth() );
     }
     template<typename T>
@@ -982,12 +1035,14 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
     bool arg_ready( reduction<T> & obj_int,
 		    typename reduction<T>::dep_tags & tags ) {
 	tkt_metadata * md = tags.ext_version->get_metadata();
-	return md->chk_reader_tag( tags.rd_tag )
+	bool r = md->chk_reader_tag( tags.rd_tag )
 	    & md->chk_writer_tag( tags.wr_tag )
 #if OBJECT_COMMUTATIVITY
 	    & md->chk_commutative_tag( tags.c_tag )
 #endif
 	    ;
+	// errs() << "ready reduction " << &tags << "? " << r << "\n";
+	return r;
     }
     template<typename T>
     static

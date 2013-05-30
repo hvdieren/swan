@@ -622,7 +622,7 @@ public:
     }
 
     void start_deregistration() { }
-    void stop_deregistration() { }
+    void stop_deregistration( full_metadata * parent ) { }
 };
 
 void

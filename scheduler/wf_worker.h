@@ -130,7 +130,8 @@ public:
 	pp_time_t time_since_longjmp;
 	pp_time_t time_longjmp;
 	pp_time_t time_clueless;
-	pp_time_t time_release_ready;
+	pp_time_t time_release_ready_success;
+	pp_time_t time_release_ready_fail;
 
 #if PROFILE_QUEUE
 	obj::profile_queue queue;
@@ -157,6 +158,13 @@ public:
 	size_t num_provgd_steals_fr;
 	size_t num_random_steals;
 	size_t num_focussed_steals;
+
+	size_t num_tkt_evals_release_ready;
+	size_t num_tkt_evals_release_ready_fail;
+
+	size_t num_h0_hits;
+	size_t num_h1_hits;
+	size_t num_hash_empty;
 
 	profile_worker();
 	~profile_worker();

@@ -35,8 +35,9 @@
  *   Furthermore, we propose to remove the increment of the readers counter
  *   for an in/out dep because it is redundant.
  *
- * Note: this file has not been updated with support for queues. The
- *       scheme currently fails to compile.
+ * Note: this file has been updated with support for queues, but this has
+ *       not been thoroughly tested. Support for tokens is there but not
+ *       optimized.
  */
 #ifndef VTICKETS_H
 #define VTICKETS_H
@@ -173,6 +174,10 @@ public:
 	depth = d;
     }
 
+#ifdef UBENCH_HOOKS
+    void update_depth_ubench( depth_t d ) { depth = d; }
+#endif
+
     friend std::ostream & operator << ( std::ostream & os, const vtkt_metadata & md );
 };
 
@@ -295,7 +300,7 @@ public:
     void stop_registration( bool wakeup = false ) { }
 
     void start_deregistration() { }
-    void stop_deregistration() { }
+    inline void stop_deregistration( full_metadata * parent );
 };
 
 // ----------------------------------------------------------------------
@@ -355,6 +360,10 @@ static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
     ready_functor<MetaData, Task> fn;
     char * args = task_data_p.get_args_ptr();
     char * tags = task_data_p.get_tags_ptr();
+#if PROFILE_WORKER
+    extern __thread size_t num_tkt_evals;
+    ++num_tkt_evals;
+#endif // PROFILE_WORKER
     if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
 	privatize_functor<MetaData> pfn;
 	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
@@ -440,9 +449,10 @@ namespace obj { // reopen
 class full_metadata {
 protected:
     hashed_list<pending_metadata> * pending;
+    size_t maybe_ready;
 
 protected:
-    full_metadata() : pending( 0 ) { }
+full_metadata() : pending( 0 ), maybe_ready( 0 ) { }
     ~full_metadata() { delete pending; }
 
 public:
@@ -453,13 +463,25 @@ public:
 
     pending_metadata *
     get_ready_task() {
-	return pending ? pending->get_ready() : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    rdy = pending->get_ready();
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
     pending_metadata *
     get_ready_task_after( task_metadata * prev ) {
-	depth_t prev_depth = prev->get_depth();
-	return pending ? pending->get_ready( prev_depth ) : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    depth_t prev_depth = prev->get_depth();
+	    rdy = pending->get_ready( prev_depth );
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
 #ifdef UBENCH_HOOKS
@@ -475,7 +497,20 @@ private:
 	    pending = new hashed_list<pending_metadata>;
     }
 
+    bool gate_scan() {
+	if( !maybe_ready )
+	    return false;
+	return __sync_bool_compare_and_swap( &maybe_ready, true, false );
+    }
+public:
+    void enable_scan() {
+	maybe_ready = true;
+    }
 };
+
+void task_metadata::stop_deregistration( full_metadata * parent ) {
+    parent->enable_scan();
+}
 
 // ----------------------------------------------------------------------
 // Generic fully-serial dependency handling traits
@@ -573,6 +608,40 @@ class reduction_tags : public reduction_tags_base<vtkt_metadata> {
     vtkt_metadata::tag_t tag;
 };
 #endif
+
+// Popdep (input) dependency tags - fully serialized with other pop and pushpop
+class popdep_tags : public popdep_tags_base<vtkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    vtkt_metadata::tag_t tag;
+
+public:
+    popdep_tags( queue_version<vtkt_metadata> * parent )
+	: popdep_tags_base( parent ) { }
+};
+
+// Pushpopdep (input/output) dependency tags - fully serialized with other
+// pop and pushpop
+class pushpopdep_tags : public pushpopdep_tags_base<vtkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+    vtkt_metadata::tag_t tag;
+
+public:
+    pushpopdep_tags( queue_version<vtkt_metadata> * parent )
+	: pushpopdep_tags_base( parent ) { }
+};
+
+// Pushdep (output) dependency tags
+class pushdep_tags : public pushdep_tags_base<vtkt_metadata> {
+    template<typename MetaData, typename Task, template<typename T> class DepTy>
+    friend class dep_traits;
+
+public:
+    pushdep_tags( queue_version<vtkt_metadata> * parent )
+	: pushdep_tags_base( parent ) { }
+};
+
 
 //----------------------------------------------------------------------
 // Dependency handling traits to track task-object dependencies
@@ -782,8 +851,67 @@ struct dep_traits<vtkt_metadata, task_metadata, reduction> {
 };
 #endif
 
+// popdep traits for queues
+template<>
+struct dep_traits<vtkt_metadata, task_metadata, popdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, popdep<T> & obj_int,
+			   typename popdep<T>::dep_tags * tags ) {
+	vtkt_metadata * md = obj_int.get_version()->get_metadata();
+	tags->tag  = md->get_tag();
+	md->add_reader();
+    }
+    template<typename T>
+    static
+    bool arg_ready( popdep<T> & obj_int, typename popdep<T>::dep_tags & tags ) {
+	vtkt_metadata * md = obj_int.get_version()->
+	    get_parent()->get_metadata();
+	return md->chk_tag<vtkt_metadata::v_readers>( tags.tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const popdep<T> & obj_ext ) {
+	const vtkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return md->has_none<vtkt_metadata::v_readers>();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, popdep<T> & obj_int,
+		      typename popdep<T>::dep_tags & tags ) {
+	obj_int.get_version()->get_metadata()->del_reader();
+    }
+};
+
+// pushdep dependency traits for queues
+template<>
+struct dep_traits<vtkt_metadata, task_metadata, pushdep> {
+    template<typename T>
+    static
+    void arg_issue( task_metadata * fr, pushdep<T> & obj_int,
+		    typename pushdep<T>::dep_tags * tags ) {
+    }
+    template<typename T>
+    static
+    bool arg_ready( pushdep<T> & obj_int,
+		    typename pushdep<T>::dep_tags & tags ) {
+	return true;
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const pushdep<T> & obj_ext ) {
+	return true;
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, pushdep<T> & obj_int,
+		      typename pushdep<T>::dep_tags & tags ) {
+    }
+};
+
+
 typedef vtkt_metadata obj_metadata;
 typedef vtkt_metadata queue_metadata;
+typedef vtkt_metadata token_metadata;
 
 } // end of namespace obj
 

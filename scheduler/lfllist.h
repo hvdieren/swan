@@ -497,14 +497,15 @@ public:
 template<typename T>
 class locked_dl_list {
     dl_list<T> list;
-    cas_mutex mutex;
+    // cas_mutex mutex;
+    mcs_mutex mutex;
 
 public:
     locked_dl_list() { }
 
-    void lock() { mutex.lock(); }
-    bool try_lock() { return mutex.try_lock(); }
-    void unlock() { mutex.unlock(); }
+    void lock( mcs_mutex::node * node ) { mutex.lock( node ); }
+    bool try_lock( mcs_mutex::node * node ) { return mutex.try_lock( node ); }
+    void unlock( mcs_mutex::node * node ) { mutex.unlock( node ); }
 
     bool empty() const { return list.empty(); }
 
@@ -524,10 +525,22 @@ class hashed_list {
     static const size_t SIZE = 2048;
     list_t table[SIZE];
     size_t min_occ, max_occ;
-    cas_mutex occ_mutex;
+    // cas_mutex occ_mutex;
+    mcs_mutex occ_mutex;
 
 public:
     hashed_list() : min_occ( 0 ), max_occ( 0 ) { }
+
+    // Possible areas of improvements
+    // * lock contention: multiple threads waiting on same list
+    //   - delays
+    //   - may result in large number of empty list accessess
+    // * 2.5 evals/ready task retrieved - why?
+    // * less than 1/2 ready tasks retrieved from h0 and h1 - why?
+    //   - this may be a side effect of the lock contention
+    // Possible solutions to lock contention:
+    //   - try_lock and move on if contended
+    //   - measure contention and transfer to ready list if contended
 
 #ifdef UBENCH_HOOKS
     void reset() {
@@ -540,9 +553,10 @@ public:
 	size_t d = dl_list_traits<T>::get_depth( elm );
 	size_t h = hash(d);
 	list_t & list = table[h];
-	list.lock();
+	mcs_mutex::node node;
+	list.lock( &node );
 	list.prepend( elm );
-	list.unlock();
+	list.unlock( &node );
 
 	update_bounds( h );
 	// atomic_min( &min_occ, h );
@@ -557,19 +571,34 @@ public:
 	if( !prev_depth ) // For some reason, this helps performance...
 	    return scan();
 
-	size_t h0, h1;
-	if( T * ret = probe( table[h0 = hash(prev_depth)] ) ) {
+	size_t h0 = hash( prev_depth );
+	if( h0 >= min_occ && h0 < max_occ ) {
+	    if( T * ret = probe( h0 ) ) {
+#if PROFILE_WORKER
+		extern __thread size_t num_h0_hits;
+		num_h0_hits++;
+#endif // PROFILE_WORKER
+		update_bounds_found( h0 );
 #if TRACING
-	    errs() << "h0: find ready " << ret << " depth " << prev_depth << " in " << this << '\n';
+		errs() << "h0: find ready " << ret << " depth " << prev_depth << " in " << this << '\n';
 #endif
-	    return ret;
+		return ret;
+	    }
 	}
-	if( T * ret = probe( table[h1 = hash(prev_depth+1)] ) ) {
+	size_t h1 = hash( prev_depth+1 );
+	if( h1 >= min_occ && h1 < max_occ ) {
+	    if( T * ret = probe( h1 ) ) {
+#if PROFILE_WORKER
+		extern __thread size_t num_h1_hits;
+		num_h1_hits++;
+#endif // PROFILE_WORKER
+		update_bounds_found( h1 );
 #if TRACING
-	    errs() << "h1: find ready " << ret << " depth "
-		   << (prev_depth+1) << " in " << this << '\n';
+		errs() << "h1: find ready " << ret << " depth "
+		       << (prev_depth+1) << " in " << this << '\n';
 #endif
-	    return ret;
+		return ret;
+	    }
 	}
 	if( T * ret = scan( h0, h1 ) )
 	    return ret;
@@ -589,13 +618,21 @@ private:
 	return d % SIZE;
     }
 
-    T * probe( list_t & list ) {
-	if( list.empty() )
+    T * probe( size_t h ) {
+	list_t & list = table[h];
+	if( list.empty() ) {
+#if PROFILE_WORKER
+	    extern __thread size_t num_hash_empty;
+	    num_hash_empty++;
+#endif // PROFILE_WORKER
+	    // errs() << "empty hash at " << h << std::endl;
 	    return 0;
+	}
 
-	list.lock();
+	mcs_mutex::node node;
+	list.lock( &node );
 	T * ret = list.get_ready();
-	list.unlock();
+	list.unlock( &node );
 	return ret;
     }
 
@@ -622,41 +659,63 @@ private:
     }
 #else
     void update_bounds( size_t h ) {
-	if( h < min_occ || h > max_occ ) {
-	    occ_mutex.lock();
-	    min_occ = h < min_occ ? h : min_occ;
-	    max_occ = h > max_occ ? h : max_occ;
-	    occ_mutex.unlock();
+	mcs_mutex::node node;
+	occ_mutex.lock( &node );
+	if( min_occ == max_occ ) {
+	    min_occ = h;
+	    max_occ = h+1;
+	} else {
+	    if( min_occ > h )
+		min_occ = h;
+	    if( max_occ < h+1 )
+		max_occ = h+1;
+	}
+	// errs() << "update_bounds/insert " << h << " " << min_occ << "-" << max_occ << std::endl;
+	occ_mutex.unlock( &node );
+    }
+    void update_bounds_found( size_t h ) {
+	if( h != min_occ )
+	    return;
+
+	mcs_mutex::node node;
+	if( occ_mutex.try_lock( &node ) ) {
+	    size_t i;
+	    for( i=min_occ; i < max_occ; ++i )
+		if( !table[i].empty() )
+		    break;
+	    min_occ = i;
+	    occ_mutex.unlock( &node );
 	}
     }
     void update_bounds() {
+	mcs_mutex::node node;
+	if( !occ_mutex.try_lock( &node ) )
+	    return;
 	if( table[min_occ].empty() ) {
-	    occ_mutex.lock();
 	    size_t i;
 	    // not i=min_occ+1 because of race with late lock
 	    for( i=min_occ; i < max_occ; ++i )
 		if( !table[i].empty() )
 		    break;
 	    min_occ = i;
-	    occ_mutex.unlock();
 	}
-	if( table[max_occ].empty() ) {
-	    occ_mutex.lock();
+	if( max_occ > min_occ && table[max_occ-1].empty() ) {
 	    size_t i;
 	    // not i=max_occ-1 because of race with late lock
 	    for( i=max_occ; i > min_occ; --i )
-		if( !table[i].empty() )
+		if( !table[i-1].empty() )
 		    break;
 	    max_occ = i;
-	    occ_mutex.unlock();
 	}
+	occ_mutex.unlock( &node );
+	// errs() << "update_bounds " << min_occ << "-" << max_occ << std::endl;
     }
 #endif
 
     T * scan() {
 	// errs() << "scan from " << min_occ << " to " << max_occ << "\n";
-	for( size_t i=min_occ; i <= max_occ; ++i ) {
-	    if( T * ret = probe( table[i] ) ) {
+	for( size_t i=min_occ; i < max_occ; ++i ) {
+	    if( T * ret = probe( i ) ) {
 		// printf( "A0 %ld-%ld @%ld\n", min_occ, max_occ, i );
 		update_bounds();
 		// printf( "A1 %ld-%ld @%ld\n", min_occ, max_occ, i );
@@ -676,10 +735,10 @@ private:
 	return 0;
     }
     T * scan( size_t h0, size_t h1 ) {
-	for( size_t i=min_occ; i <= max_occ; ++i ) {
+	for( size_t i=min_occ; i < max_occ; ++i ) {
 	    if( i == h0 || i == h1 )
 		continue;
-	    if( T * ret = probe( table[i] ) ) {
+	    if( T * ret = probe( i ) ) {
 		// printf( "F%ld %ld-%ld @%ld\n", h0, min_occ, max_occ, i );
 #if TRACING
 		errs() << "bscan: find ready " << ret << " depth " << i << " in " << this << '\n';

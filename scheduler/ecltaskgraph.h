@@ -32,7 +32,11 @@
 #include <cstdint>
 #include <iostream>
 
-#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 13 || OBJECT_TASKGRAPH == 14 )
+#if ( OBJECT_TASKGRAPH != 13 && OBJECT_TASKGRAPH != 14 )
+#error This file should only be sourced for OBJECT_TASKGRAPH in {13,14}
+#endif
+
+#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 14 )
 
 #if EMBED_LISTS
 #include "lfllist.h"
@@ -55,6 +59,7 @@ namespace obj {
 // Auxiliary type
 // ----------------------------------------------------------------------
 enum group_t {
+    g_empty = 0,
     g_read,
     g_write,
 #if OBJECT_COMMUTATIVITY
@@ -70,6 +75,7 @@ inline
 std::ostream &
 operator << ( std::ostream & os, group_t g ) {
     switch( g ) {
+    case g_empty: return os << "empty";
     case g_read: return os << "read";
     case g_write: return os << "write";
 #if OBJECT_COMMUTATIVITY
@@ -134,7 +140,8 @@ namespace obj { // reopen
 class pending_metadata;
 
 class taskgraph {
-    typedef cas_mutex mutex_t;
+    // typedef cas_mutex mutex_t;
+    typedef mcs_mutex mutex_t;
 
 private:
 #if EMBED_LISTS
@@ -162,8 +169,8 @@ public:
     }
 
 private:
-    void lock() const { mutex.lock(); }
-    void unlock() const { mutex.unlock(); }
+    void lock( mcs_mutex::node * node ) const { mutex.lock( node ); }
+    void unlock( mcs_mutex::node * node ) const { mutex.unlock( node ); }
 };
 
 // ----------------------------------------------------------------------
@@ -300,22 +307,23 @@ private:
     };
     struct Youngest {
 	group_t g;
-	bool some_tasks;
+	// bool some_tasks;
 	mutex_t mutex;
 
-	Youngest() : g( g_NUM ), some_tasks( 0 ) { }
+	// Youngest() : g( g_NUM ), some_tasks( 0 ) { }
+	Youngest() : g( g_empty ) { }
 
-    private:
-	bool new_group( group_t grp ) const {
+	// bool new_group( group_t grp ) const {
 	    // TODO: Optimize by representing group_t as bit_mask?
-	    return ( grp == g_write || g != grp ) && g != g_NUM;
-	}
-    public:
+	    // return ( grp == g_write || g != grp ) && g != g_NUM;
+	// }
 	bool match_group( group_t grp ) const {
 	    // This condition is markedly simpler than in other task graphs
-	    // because we reset the group type to undefined (g_NUM) whenever
+	    // because we reset the group type to empty (g_empty) whenever
 	    // the youngest generation runs empty.
-	    return !new_group( grp ) || !has_tasks();
+	    return ( grp != g_write && g == grp ) || g == g_empty;
+	    // return ( g != g_write ) & ( (g == grp) | (g == g_empty) );
+	    // return !new_group( grp ) || !has_tasks();
 	}
 	void open_group( group_t grp ) { g = grp; }
 
@@ -323,9 +331,9 @@ private:
 	// If g == g_NUM -> no tasks, else at least one task
 	// And also introduce g_empty to cover this, makes has_tasks()
 	// faster by comparing against 0
-	void add_task() { some_tasks = true; }
-	void clr_tasks() { some_tasks = false; }
-	bool has_tasks() const { return some_tasks; }
+	void add_task() { } // some_tasks = true; }
+	void clr_tasks() { g = g_empty; } // some_tasks = false; }
+	bool has_tasks() const { return g != g_empty; } // return some_tasks; }
 
 	void lock() { mutex.lock(); }
 	void unlock() { mutex.unlock(); }
@@ -333,6 +341,7 @@ private:
 
     // TODO: two lock variables on the same cache line...
     Oldest oldest;
+    // pad_multiple<CACHE_ALIGNMENT, sizeof(Oldest)> padding;
     Youngest youngest;
     size_t num_gens;
 
@@ -421,7 +430,7 @@ operator << ( std::ostream & os, const ecltg_metadata & md_const ) {
     os << "taskgraph_md={this=" << &md_const
        << " o.num_tasks=" << md.oldest.num_tasks
        << " y.g=" << md.youngest.g
-       << " y.some=" << md.youngest.some_tasks
+       << " y.has=" << md.youngest.has_tasks()
        << " num_gens=" << md.num_gens
        << " front=" << md.tasks.front()
        << " back=" << md.tasks.back()
@@ -518,7 +527,7 @@ public:
     }
 
     void start_deregistration() { }
-    void stop_deregistration() { }
+    void stop_deregistration( full_metadata * parent ) { }
 };
 
 // ----------------------------------------------------------------------
@@ -591,7 +600,8 @@ task_metadata::create( full_metadata * ff ) {
 
 pending_metadata *
 taskgraph::get_ready_task() {
-    lock();
+    mcs_mutex::node node;
+    lock( &node );
     pending_metadata * task = 0;
     if( !ready_list.empty() ) {
 	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
@@ -608,7 +618,7 @@ taskgraph::get_ready_task() {
 	    }
 	}
     }
-    unlock();
+    unlock( &node );
     // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
     return task;
 }
@@ -618,13 +628,14 @@ taskgraph::add_ready_task( link_metadata * fr ) {
     // Translate from task_metadata to link_metadata
     // Can only be successfully done in case of queued_frame!
     // errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-    lock();
+    mcs_mutex::node node;
+    lock( &node );
 #if EMBED_LISTS
     ready_list.push_back( fr );
 #else // !EMBED_LISTS
     ready_list.push_back( pending_metadata::get_from_link( fr ) );
 #endif
-    unlock();
+    unlock( &node );
 }
 
 void
@@ -652,13 +663,30 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	return;
     }
 
-    // TODO: specialize to case where num_gens == 1 -> no need to do
-    // anything special; assert task list is empty and return immediately.
+    // Specialized case. Race on num_gens as we don't have a lock
+    // on youngest yet, but num_gens can go up only.
+    if( num_gens == 1 ) {
+	has_youngest = true;
+	youngest.lock();
+	if( num_gens == 1 ) {
+	    assert( !tasks.front() && "tasks should be empty if 1 generation" );
+	    pop_generation();
+	    youngest.clr_tasks();
+
+	    youngest.unlock();
+	    oldest.unlock();
+	    return;
+	}
+    }
 
     // Lock only the wakeup end of the list if free of interference, or
     // lock both ends of the list if there may be interference between
-    // the issue thread and wakeup threads.
-    if( may_interfere() ) {
+    // the issue thread and wakeup threads. There is a race on the num_gens
+    // variable, but as we are holding the oldest lock, the num_gens
+    // can only go up between the call to may_interfere() and taking the
+    // lock, so we are safe, perhaps taking the lock when not striclty
+    // necessary.
+    else if( may_interfere() ) {
 	has_youngest = true;
 	youngest.lock();
     }
@@ -726,19 +754,30 @@ void
 ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
     bool has_oldest = false;
 
+    // Set pointer to task in argument's tags storage
+    tags->st_task = t;
+
+    // Note: potential race: (1) may_interfere() says no, (2) any number
+    // of wakeups and pop_generation's to make may_interfere() true,
+    // (3) error due to lack of synchronization.
+    // may_interfere() returns true for num_gens == 2, so if this were
+    // to happen, the last (detrimental) wakeup() would block on the
+    // lock on youngest that it is required to take. Put differently,
+    // num_gens <= 1 is the pure condition for interference, except we
+    // take num_gens <= 2 to block out wakeup()'s and avoid races.
     if( may_interfere() ) {
 	has_oldest = true;
 	oldest.lock();
     }
     youngest.lock();
 
-    // errs() << "add_task: " << *this << " has_o=" << has_oldest << std::endl;
-
-    tags->st_task = t; // TODO: duplicate store?
-
     if( num_gens == 0 ) { // Empty, tasks fly straight through
-	// TODO: there cannot be a wakeup, so no need to have locks
-	assert( has_oldest && "empty and not locked from both sides" );
+	// NOTE: There cannot be a concurrent wakeup, and there cannot be
+	// concurrent add_task()'s, so no need to have locks, except we
+	// need the lock on oldest to wait until the latest wakeup() has
+	// finished.
+	assert( has_oldest && "Must have lock on oldest when num_gens==0" );
+
 	// Update oldest
 	oldest.num_tasks++;
 
@@ -748,49 +787,57 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 
 	// Count generations
 	push_generation();
-    } else if( num_gens == 1 ) { // One generation, tasks fly straight through
-	// TODO: no need to lock if youngest.match_group()
-	// errs() << std::endl;
-	assert( has_oldest && "one generation and not locked from both sides" );
-	assert( youngest.has_tasks() && "youngest not empty if 1 generation" );
-	// oldest.num_tasks will be decremented before entering the critical
-	// section. Therefore, we cannot trust on its value.
-	// assert( oldest.has_tasks() && "oldest not empty if 1 generation" );
+    } else if( num_gens == 1 ) {
+	// NOTE: Taking a lock on oldest suffices to enforce the
+	// synchronization between add_task() (issue, serially) and wakeup()
+	// (concurrent), provided we have num_gens right.
+	assert( has_oldest && "Must have lock on oldest when num_gens==1" );
 
-	// Update youngest
-	if( !youngest.match_group( g ) ) {
+	if( !youngest.match_group( g ) ) {	// Update youngest
+	    assert( may_interfere() && "condition inlined and specialized" );
+
+	    assert( youngest.has_tasks()
+		    && "youngest not empty if 1 generation" );
+
 	    youngest.open_group( g );
 	    youngest.add_task();
-	    // Update num_gens
 	    push_generation();
 	    t->add_incoming();
 	    tasks.push_back( tags );
+
+	    assert( (oldest.has_tasks() || num_gens != 1)
+		    && "tasks require gens" );
+	    assert( (youngest.has_tasks() == (num_gens > 0))
+		    && "tasks require gens" );
 	} else {
-	    // Update oldest
+	    // One generation, tasks fly straight through.
+	    // Update only oldest.
 	    oldest.num_tasks++;
 	}
-    } else if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
-	youngest.open_group( g );
-	youngest.add_task();
-	if( tasks.back() ) // should use iterators?
-	    tasks.back()->set_last_in_generation();
-	push_generation();
-	// In this case, we are assured that a wakeup will happen on the
-	// new task.
-	t->add_incoming();
-	tasks.push_back( tags );
-    } else {
-	// In this case, we are assured that a wakeup will happen on the
-	// new task.
-	t->add_incoming();
-	tasks.push_back( tags );
-    }
+    } else { // Two or more generations (at start)
+	if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
+	    youngest.open_group( g );
+	    youngest.add_task();
+	    if( tasks.back() ) // should use iterators?
+		tasks.back()->set_last_in_generation();
+	    push_generation();
+	    // In this case, we are assured that a wakeup will happen on the
+	    // new task.
+	    t->add_incoming();
+	    tasks.push_back( tags );
+	} else {
+	    // In this case, we are assured that a wakeup will happen on the
+	    // new task.
+	    t->add_incoming();
+	    tasks.push_back( tags );
+	}
 
-    // assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
-	    // && "Either no generations or oldest and youngest diff has_tasks" );
-    assert( (has_oldest || !may_interfere()) && "interference invariant" );
-    assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
-    assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
+	// assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
+	// && "Either no generations or oldest and youngest diff has_tasks" );
+	assert( (has_oldest || !may_interfere()) && "interference invariant" );
+	assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
+	assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
+    }
 
     if( has_oldest )
 	oldest.unlock();
