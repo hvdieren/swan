@@ -39,10 +39,11 @@
 #include <cstdint>
 #include <iostream>
 
-#include "swan_config.h"
-#include "wf_frames.h"
-#include "lfllist.h"
-#include "lock.h"
+#include "swan/swan_config.h"
+#include "swan/wf_frames.h"
+#include "swan/lfllist.h"
+#include "swan/lock.h"
+#include "swan/functor/tkt_ready.h"
 
 namespace obj {
 
@@ -379,74 +380,6 @@ class link_metadata {
 };
 
 // ----------------------------------------------------------------------
-// Checking readiness of pending_metadata
-// ----------------------------------------------------------------------
-// Ready? functor
-template<typename MetaData_, typename Task>
-struct ready_functor {
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	typedef typename DepTy<T>::metadata_t MetaData;
-	return dep_traits<MetaData, Task, DepTy>::arg_ready( obj, sa );
-    }
-    template<typename T>
-    bool operator () ( truedep<T> & obj, typename truedep<T>::dep_tags & sa ) {
-	return true;
-    }
-
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-
-// A "ready function" to check readiness with the dep_traits.
-#if STORED_ANNOTATIONS
-template<typename MetaData, typename Task>
-static inline bool arg_ready_fn( const task_data_t & task_data ) {
-    ready_functor<MetaData, Task> fn;
-    char * args = task_data.get_args_ptr();
-    char * tags = task_data.get_tags_ptr();
-    size_t nargs = task_data.get_num_args();
-    if( arg_apply_stored_ufn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn;
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
-#else
-template<typename MetaData, typename Task, typename... Tn>
-static inline bool arg_ready_fn( const task_data_t & task_data ) {
-    ready_functor<MetaData, Task> fn;
-    char * args = task_data.get_args_ptr();
-    char * tags = task_data.get_tags_ptr();
-#if PROFILE_WORKER
-    extern __thread size_t num_tkt_evals;
-    ++num_tkt_evals;
-#endif // PROFILE_WORKER
-    if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
-	// The finalization is not performed if task_data indicates that none
-	// of the arguments are the result of a non-finalized reduction.
-	finalize_functor<MetaData> ffn( task_data );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	// The privatization code optimizes to a no-op if it is not required
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
-#endif
-
-// ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
 // ----------------------------------------------------------------------
 class pending_metadata : public task_metadata, private link_metadata {
@@ -473,6 +406,10 @@ public:
     }
 
     bool is_ready() const {
+#if PROFILE_WORKER
+	extern __thread size_t num_tkt_evals;
+	++num_tkt_evals;
+#endif // PROFILE_WORKER
 #if STORED_ANNOTATIONS
 	return arg_ready_fn<tkt_metadata, task_metadata>( get_task_data() );
 #else
@@ -865,8 +802,6 @@ struct dep_traits<tkt_metadata, task_metadata, outdep> {
     static
     bool arg_ready( outdep<T> & obj_ext, typename outdep<T>::dep_tags & tags ) {
 	assert( obj_ext.get_version()->is_versionable() ); // enforced by applicators
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	// errs() << "ready outdep " << &tags << "? " << true << "\n";
 	return true;
     }
     template<typename T>
@@ -896,10 +831,7 @@ struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     static
     bool arg_ready( inoutdep<T> & obj_ext,
 		    typename inoutdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	bool r = serial_dep_traits::arg_ready( obj_ext, tags );
-	// errs() << "ready inoutdep " << &tags << "? " << r << "\n";
-	return r;
+	return serial_dep_traits::arg_ready( obj_ext, tags );
     }
     template<typename T>
     static

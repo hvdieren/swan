@@ -45,10 +45,11 @@
 #include <cstdint>
 #include <iostream>
 
-#include "swan_config.h"
-#include "wf_frames.h"
-#include "lfllist.h"
-#include "lock.h"
+#include "swan/swan_config.h"
+#include "swan/wf_frames.h"
+#include "swan/lfllist.h"
+#include "swan/lock.h"
+#include "swan/functor/tkt_ready.h"
 
 namespace obj {
 
@@ -312,65 +313,6 @@ class link_metadata {
     pending_metadata * prev, * next; // no need to initialize
     friend class dl_list_traits<pending_metadata>;
 };
-
-// ----------------------------------------------------------------------
-// Checking readiness of pending_metadata
-// ----------------------------------------------------------------------
-// Ready? functor
-template<typename MetaData, typename Task>
-struct ready_functor {
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	if( dep_traits<MetaData, Task, DepTy>::arg_ready( obj, sa ) ) {
-	    obj.get_version()->finalize();
-	    return true;
-	}
-	return false;
-    }
-    template<typename T>
-    bool operator () ( outdep<T> & obj, typename outdep<T>::dep_tags & sa ) {
-	return dep_traits<MetaData, Task, outdep>::arg_ready( obj, sa );
-    }
-    template<typename T>
-    bool operator () ( truedep<T> & obj, typename truedep<T>::dep_tags & sa ) {
-	return true;
-    }
-#if OBJECT_REDUCTION
-    template<typename M>
-    bool operator () ( reduction<M> & obj,
-		       typename reduction<M>::dep_tags & sa ) {
-	return dep_traits<MetaData, Task, reduction>::arg_ready( obj, sa );
-    }
-#endif
-
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-
-// A "ready function" to check readiness with the dep_traits.
-template<typename MetaData, typename Task, typename... Tn>
-static inline bool arg_ready_fn( const task_data_t & task_data_p ) {
-    ready_functor<MetaData, Task> fn;
-    char * args = task_data_p.get_args_ptr();
-    char * tags = task_data_p.get_tags_ptr();
-#if PROFILE_WORKER
-    extern __thread size_t num_tkt_evals;
-    ++num_tkt_evals;
-#endif // PROFILE_WORKER
-    if( arg_apply_ufn<ready_functor<MetaData, Task>,Tn...>( fn, args, tags ) ) {
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
 
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
