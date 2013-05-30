@@ -549,11 +549,9 @@ public:
     get_ready_task() {
 	pending_metadata * rdy = 0;
 	if( pending && gate_scan() ) { // no scan if nothing's there for sure
-	    // errs() << "initiate scan flag=" << maybe_ready << "...\n";
 	    rdy = pending->get_ready();
 	    if( rdy ) // maybe there's more
 		enable_scan();
-	    // errs() << "finish scan with " << rdy << "\n";
 	}
 	return rdy;
     }
@@ -563,11 +561,9 @@ public:
 	pending_metadata * rdy = 0;
 	if( pending && gate_scan() ) { // no scan if nothing's there for sure
 	    depth_t prev_depth = prev->get_depth();
-	    // errs() << "initiate scan at " << prev_depth << " flag=" << maybe_ready << "...\n";
 	    rdy = pending->get_ready( prev_depth );
 	    if( rdy ) // maybe there's more
 		enable_scan();
-	    // errs() << "finish scan with " << rdy << "\n";
 	}
 	return rdy;
     }
@@ -591,11 +587,9 @@ private:
 	if( !maybe_ready )
 	    return false;
 	return __sync_bool_compare_and_swap( &maybe_ready, true, false );
-	// return true;
     }
 public:
     void enable_scan() {
-	// errs() << "enable scan... was " << maybe_ready << "\n";
 	maybe_ready = true;
     }
 };

@@ -528,7 +528,8 @@ class hashed_list {
     static const size_t SIZE = 2048;
     list_t table[SIZE];
     size_t min_occ, max_occ;
-    cas_mutex occ_mutex;
+    // cas_mutex occ_mutex;
+    mcs_mutex occ_mutex;
 
 public:
     hashed_list() : min_occ( 0 ), max_occ( 0 ) { }
@@ -655,7 +656,8 @@ private:
     }
 #else
     void update_bounds( size_t h ) {
-	occ_mutex.lock();
+	mcs_mutex::node node;
+	occ_mutex.lock( &node );
 	if( min_occ == max_occ ) {
 	    min_occ = h;
 	    max_occ = h+1;
@@ -666,38 +668,40 @@ private:
 		max_occ = h+1;
 	}
 	// errs() << "update_bounds/insert " << h << " " << min_occ << "-" << max_occ << std::endl;
-	occ_mutex.unlock();
+	occ_mutex.unlock( &node );
     }
     void update_bounds_found( size_t h ) {
-	occ_mutex.lock();
+	mcs_mutex::node node;
+	occ_mutex.lock( &node );
 	size_t i;
 	for( i=min_occ; i < max_occ; ++i )
 	    if( !table[i].empty() )
 		break;
 	min_occ = i;
 	// errs() << "update_bounds_found " << h << " " << min_occ << "-" << max_occ << std::endl;
-	occ_mutex.unlock();
+	occ_mutex.unlock( &node );
     }
     void update_bounds() {
+	mcs_mutex::node node;
 	if( table[min_occ].empty() ) {
-	    occ_mutex.lock();
+	    occ_mutex.lock( &node );
 	    size_t i;
 	    // not i=min_occ+1 because of race with late lock
 	    for( i=min_occ; i < max_occ; ++i )
 		if( !table[i].empty() )
 		    break;
 	    min_occ = i;
-	    occ_mutex.unlock();
+	    occ_mutex.unlock( &node );
 	}
 	if( max_occ > min_occ && table[max_occ-1].empty() ) {
-	    occ_mutex.lock();
+	    occ_mutex.lock( &node );
 	    size_t i;
 	    // not i=max_occ-1 because of race with late lock
 	    for( i=max_occ; i > min_occ; --i )
 		if( !table[i-1].empty() )
 		    break;
 	    max_occ = i;
-	    occ_mutex.unlock();
+	    occ_mutex.unlock( &node );
 	}
 	// errs() << "update_bounds " << min_occ << "-" << max_occ << std::endl;
     }

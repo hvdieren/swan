@@ -140,7 +140,8 @@ namespace obj { // reopen
 class pending_metadata;
 
 class taskgraph {
-    typedef cas_mutex mutex_t;
+    // typedef cas_mutex mutex_t;
+    typedef mcs_mutex mutex_t;
 
 private:
 #if EMBED_LISTS
@@ -168,8 +169,8 @@ public:
     }
 
 private:
-    void lock() const { mutex.lock(); }
-    void unlock() const { mutex.unlock(); }
+    void lock( mcs_mutex::node * node ) const { mutex.lock( node ); }
+    void unlock( mcs_mutex::node * node ) const { mutex.unlock( node ); }
 };
 
 // ----------------------------------------------------------------------
@@ -590,7 +591,8 @@ task_metadata::create( full_metadata * ff ) {
 
 pending_metadata *
 taskgraph::get_ready_task() {
-    lock();
+    mcs_mutex::node node;
+    lock( &node );
     pending_metadata * task = 0;
     if( !ready_list.empty() ) {
 	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
@@ -607,7 +609,7 @@ taskgraph::get_ready_task() {
 	    }
 	}
     }
-    unlock();
+    unlock( &node );
     // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
     return task;
 }
@@ -617,13 +619,14 @@ taskgraph::add_ready_task( link_metadata * fr ) {
     // Translate from task_metadata to link_metadata
     // Can only be successfully done in case of queued_frame!
     // errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-    lock();
+    mcs_mutex::node node;
+    lock( &node );
 #if EMBED_LISTS
     ready_list.push_back( fr );
 #else // !EMBED_LISTS
     ready_list.push_back( pending_metadata::get_from_link( fr ) );
 #endif
-    unlock();
+    unlock( &node );
 }
 
 void

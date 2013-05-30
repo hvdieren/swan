@@ -42,13 +42,13 @@
 #define DBG_LOGGER 0
 #define DBG_SF_LOCKER 0
 #define DBG_MCS_MUTEX 0 // with is faster due to assembly code sequence generated
-#define PROFILE_WORKER 1
-#define PROFILE_WORKER_SUMMARY 1
+#define PROFILE_WORKER 0
+#define PROFILE_WORKER_SUMMARY 0
 #define PROFILE_QUEUE 0
-#define PROFILE_SPAWN_DEQUE 1
+#define PROFILE_SPAWN_DEQUE 0
 #define PROFILE_OBJECT 0
 #define OBJECT_INOUT_RENAME 0
-#define TIME_STEALING 1
+#define TIME_STEALING 0
 #define PREFERRED_MUTEX cas_mutex
 #define FF_MCS_MUTEX 1
 #define NDEBUG

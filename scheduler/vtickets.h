@@ -300,7 +300,7 @@ public:
     void stop_registration( bool wakeup = false ) { }
 
     void start_deregistration() { }
-    void stop_deregistration( full_metadata * parent ) { }
+    inline void stop_deregistration( full_metadata * parent );
 };
 
 // ----------------------------------------------------------------------
@@ -447,9 +447,10 @@ namespace obj { // reopen
 class full_metadata {
 protected:
     hashed_list<pending_metadata> * pending;
+    size_t maybe_ready;
 
 protected:
-    full_metadata() : pending( 0 ) { }
+full_metadata() : pending( 0 ), maybe_ready( 0 ) { }
     ~full_metadata() { delete pending; }
 
 public:
@@ -460,13 +461,25 @@ public:
 
     pending_metadata *
     get_ready_task() {
-	return pending ? pending->get_ready() : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    rdy = pending->get_ready();
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
     pending_metadata *
     get_ready_task_after( task_metadata * prev ) {
-	depth_t prev_depth = prev->get_depth();
-	return pending ? pending->get_ready( prev_depth ) : 0;
+	pending_metadata * rdy = 0;
+	if( pending && gate_scan() ) { // no scan if nothing's there for sure
+	    depth_t prev_depth = prev->get_depth();
+	    rdy = pending->get_ready( prev_depth );
+	    if( rdy ) // maybe there's more
+		enable_scan();
+	}
+	return rdy;
     }
 
 #ifdef UBENCH_HOOKS
@@ -482,7 +495,20 @@ private:
 	    pending = new hashed_list<pending_metadata>;
     }
 
+    bool gate_scan() {
+	if( !maybe_ready )
+	    return false;
+	return __sync_bool_compare_and_swap( &maybe_ready, true, false );
+    }
+public:
+    void enable_scan() {
+	maybe_ready = true;
+    }
 };
+
+void task_metadata::stop_deregistration( full_metadata * parent ) {
+    parent->enable_scan();
+}
 
 // ----------------------------------------------------------------------
 // Generic fully-serial dependency handling traits
