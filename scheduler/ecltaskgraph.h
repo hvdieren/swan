@@ -305,10 +305,12 @@ private:
 
 	Youngest() : g( g_NUM ), some_tasks( 0 ) { }
 
+    private:
 	bool new_group( group_t grp ) const {
 	    // TODO: Optimize by representing group_t as bit_mask?
 	    return ( grp == g_write || g != grp ) && g != g_NUM;
 	}
+    public:
 	bool match_group( group_t grp ) const {
 	    // This condition is markedly simpler than in other task graphs
 	    // because we reset the group type to undefined (g_NUM) whenever
@@ -317,6 +319,10 @@ private:
 	}
 	void open_group( group_t grp ) { g = grp; }
 
+	// TODO: remove some_tasks variable by setting g to g_NUM?
+	// If g == g_NUM -> no tasks, else at least one task
+	// And also introduce g_empty to cover this, makes has_tasks()
+	// faster by comparing against 0
 	void add_task() { some_tasks = true; }
 	void clr_tasks() { some_tasks = false; }
 	bool has_tasks() const { return some_tasks; }
@@ -325,6 +331,7 @@ private:
 	void unlock() { mutex.unlock(); }
     };
 
+    // TODO: two lock variables on the same cache line...
     Oldest oldest;
     Youngest youngest;
     size_t num_gens;
@@ -391,6 +398,10 @@ public:
 
 private:
     bool may_interfere() const volatile { return num_gens <= 2; }
+    // NOTE: push and pop of generations not always occuring under mutual
+    // exclusion.
+    // TODO: specialize cases where mutual exclusion is guaranteed (e.g.
+    // num_gens == 0 during add_task)
     size_t pop_generation() volatile {
 	assert( num_gens > 0 && "pop when no generations exist" );
 	return __sync_fetch_and_add( &num_gens, -1 );
@@ -621,7 +632,16 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // Are we holding a lock on youngest?
     bool has_youngest = false;
 
+    assert( num_gens > 0 );
+
+    // TODO: is this correct: lock is not required for dec if num_gens > 1.
+    // Only if num_gens == 1, can oldest.num_tasks be incremented and
+    // interfere with this code.
     oldest.lock();
+
+    // TODO: make a MCS lock with deferred actions (tell someone else to do
+    // this work, probably just a dec). Is it possible to merge nodes?
+    // How alloc/dealloc?
 
     // Decrement the number of tasks in the oldest generation.
     // NOTE: performance optimization: atomic-- is more expensive than atomic++
@@ -631,6 +651,9 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	oldest.unlock();
 	return;
     }
+
+    // TODO: specialize to case where num_gens == 1 -> no need to do
+    // anything special; assert task list is empty and return immediately.
 
     // Lock only the wakeup end of the list if free of interference, or
     // lock both ends of the list if there may be interference between
@@ -714,6 +737,7 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
     tags->st_task = t; // TODO: duplicate store?
 
     if( num_gens == 0 ) { // Empty, tasks fly straight through
+	// TODO: there cannot be a wakeup, so no need to have locks
 	assert( has_oldest && "empty and not locked from both sides" );
 	// Update oldest
 	oldest.num_tasks++;
@@ -725,6 +749,7 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	// Count generations
 	push_generation();
     } else if( num_gens == 1 ) { // One generation, tasks fly straight through
+	// TODO: no need to lock if youngest.match_group()
 	// errs() << std::endl;
 	assert( has_oldest && "one generation and not locked from both sides" );
 	assert( youngest.has_tasks() && "youngest not empty if 1 generation" );
