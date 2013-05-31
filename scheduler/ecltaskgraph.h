@@ -66,16 +66,16 @@ namespace obj {
 // Auxiliary type
 // ----------------------------------------------------------------------
 enum group_t {
-    g_empty = 0,
-    g_read,
-    g_write,
+    g_empty = 1,
+    g_read = 2,
+    g_write = 4,
 #if OBJECT_COMMUTATIVITY
-    g_commut,
+    g_commut = 8,
 #endif
 #if OBJECT_REDUCTION
-    g_reduct,
+    g_reduct = 16,
 #endif
-    g_NUM
+    not_g_write = 31-(int)g_write
 };
 
 inline
@@ -92,7 +92,7 @@ operator << ( std::ostream & os, group_t g ) {
     case g_reduct: return os << "reduct";
 #endif
     default:
-    case g_NUM: return os << "<NUM>";
+    return os << "<error>";
     }
 }
 
@@ -225,23 +225,22 @@ private:
     };
     struct Youngest {
 	group_t g;
-	// bool some_tasks;
 	mutex_t mutex;
 
-	// Youngest() : g( g_NUM ), some_tasks( 0 ) { }
 	Youngest() : g( g_empty ) { }
 
-	// bool new_group( group_t grp ) const {
-	    // TODO: Optimize by representing group_t as bit_mask?
-	    // return ( grp == g_write || g != grp ) && g != g_NUM;
-	// }
 	bool match_group( group_t grp ) const {
 	    // This condition is markedly simpler than in other task graphs
 	    // because we reset the group type to empty (g_empty) whenever
 	    // the youngest generation runs empty.
-	    return ( grp != g_write && g == grp ) || g == g_empty;
-	    // return ( g != g_write ) & ( (g == grp) | (g == g_empty) );
-	    // return !new_group( grp ) || !has_tasks();
+	    // return ( grp != g_write && g == grp ) || g == g_empty;
+	    // return ( (grp & g_write) == 0 && (g & grp) != 0 )
+		// || (g & g_empty) != 0;
+	    // return ( (g & grp & ~g_write) != 0 ) || (g & g_empty) != 0;
+	    // return ( g & ((grp & ~g_write) | g_empty) ) != 0;
+	    // This boils down to a single testb instruction when inlined
+	    // and grp is known.
+	    return ( g & ((grp | g_empty) & not_g_write ) ) != 0;
 	}
 	void open_group( group_t grp ) { g = grp; }
 
@@ -296,7 +295,7 @@ public:
     bool has_writers() const { return num_gens > 0; } // youngest.has_tasks(); }
 
     // This is really a ready check: can we launch with the previous gang?
-    bool match_group( group_t grp ) const {
+    bool ini_ready( group_t grp ) const {
 	return ( num_gens == 1 && youngest.match_group( grp ) )
 	    || num_gens == 0;
     }
@@ -766,7 +765,7 @@ struct serial_dep_traits {
     bool arg_ini_ready( const obj_instance<ecltg_metadata> & obj, group_t g ) {
 	const ecltg_metadata * md = obj.get_version()->get_metadata();
 	// errs() << "0 ini_ready serial: " << *md << " g=" << g << "\n";
-	bool x = md->match_group( g );
+	bool x = md->ini_ready( g );
 	// errs() << "1 ini_ready serial: " << *md << " x=" << x << "\n";
 	return x;
     }
@@ -886,7 +885,7 @@ struct dep_traits<ecltg_metadata, task_metadata, cinoutdep> {
     static bool
     arg_ini_ready( cinoutdep<T> & obj ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	if( md->match_group( g_commut ) ) {
+	if( md->ini_ready( g_commut ) ) {
 	    if( md->commutative_try_acquire() )
 		return true;
 	}
