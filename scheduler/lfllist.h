@@ -677,7 +677,7 @@ private:
 	occ_mutex.unlock( &node );
     }
     void update_bounds_found( size_t h ) {
-	if( h != min_occ )
+	if( h != min_occ || !table[h].empty() )
 	    return;
 
 	mcs_mutex::node node;
