@@ -223,6 +223,11 @@ private:
     mutex_t mutex;
     mutex_t cmutex;
 
+    void sanity_check() const {
+	assert( task_set[0].begin() == task_set[0].end() || task_set[0].front()->next != task_set[0].front() );
+	assert( task_set[1].begin() == task_set[1].end() || task_set[1].front()->next != task_set[1].front() );
+    }
+
 public:
     ctg_metadata() : cur( 0 ) {
 	// errs() << "ctg_metadata create: " << this << "\n";
@@ -238,8 +243,18 @@ public:
 
     // External inferface
     bool rename_is_active() const { return has_tasks(); }
-    bool rename_has_readers() const { return has_readers(); }
-    bool rename_has_writers() const { return has_writers(); }
+    bool rename_has_readers() {
+	lock();
+	bool c = has_readers();
+	unlock();
+	return c;
+    }
+    bool rename_has_writers() {
+	lock();
+	bool c = has_writers();
+	unlock();
+	return c;
+    }
 
     bool new_group( group_t g ) const { return g == g_write || group[cur] != g; }
     bool match_group( group_t g ) const {
@@ -250,13 +265,18 @@ public:
 
     // Register users of this object.
     void add_task( task_metadata * t, group_t g, gen_tags * tags ) { // requires lock on this
+	assert( mutex.test_lock() );
+	sanity_check();
 	// errs() << "obj " << this << " add task " << t << " g=" << g
 	// << " cur=" << group[cur] << "\n";
 	if( new_group( g ) ) {
-	    if( has_tasks( cur ) ) {
-		cur = 1 - cur;
-		task_set[cur].clear();
-	    }
+	    // NOTE: only switching task sets here if the current one is empty
+	    // may create both groups with g_read; More importantly, it can create
+	    // serious bugs - a task_set list with loops resulting in deadlock.
+	    // if( has_tasks( cur ) ) {
+	    cur = 1 - cur;
+	    task_set[cur].clear();
+	    // }
 	    group[cur] = g;
 	}
 #if OBJECT_TASKGRAPH == 5
@@ -265,10 +285,12 @@ public:
 	tags->task = t;
 	task_set[cur].push_back( tags );
 #endif
+	sanity_check();
     }
 
     // Only intended for output, so g == g_write
     void force_task( task_metadata * t, gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	assert( !has_tasks( cur ) );
 	cur = 0;
 	group[0] = g_write;
@@ -279,6 +301,7 @@ public:
 	tags->task = t;
 	task_set[0].push_back( tags );
 #endif
+	sanity_check();
     }
 
     // Erase links if we are about to destroy a task
@@ -294,8 +317,10 @@ private:
 #else
 	    task_set[idx].erase( I );
 #endif
+	sanity_check();
 	    return true;
 	}
+	sanity_check();
 	return false;
     }
 public:
@@ -309,6 +334,7 @@ public:
     }
 #else // OBJECT_TASKGRAPH == 9
     void del_task( task_metadata * fr, group_t g, gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	if( g == g_write ) {
 	    // If we delete a writer, we may have two consecutive write
 	    // generations, which means we may have to erase from both lists.
@@ -323,7 +349,7 @@ public:
 	    else // if( group[1] == g ) -- del w/o knowing list head if needed
 		task_set[1].erase( dl_list<gen_tags>::iterator( tags ) );
 	}
-	    
+	sanity_check();
     }
 #endif
 
@@ -352,8 +378,10 @@ public:
 public:
     void replace_task( task_metadata * from, task_metadata * to, group_t g,
 		       gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	assert( tags->task == from && "generation list error" );
 	tags->task = to;
+	sanity_check();
     }
 #endif
 
@@ -361,6 +389,7 @@ public:
 private:
     bool has_tasks( int idx ) const {
 #if ERASE_NULL
+	assert( mutex.test_lock() );
 	for( auto I=task_set[idx].begin(), E=task_set[idx].end(); I != E; ++I )
 	    if( *I )
 		return true;
@@ -579,6 +608,7 @@ ctg_metadata::link_task( task_metadata * fr ) {
 	t->add_edge( fr ); // requires lock on t, not on fr
 	t->unlock();
     }
+	sanity_check();
 } 
 
 // ----------------------------------------------------------------------
