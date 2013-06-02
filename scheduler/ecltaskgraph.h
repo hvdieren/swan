@@ -25,6 +25,10 @@
  * between tasks are explicitly maintained. They are not gathered
  * on a single dependee list per task, but they are kept on a task
  * list per generation. The scheme supports commutativity and reductions.
+ *
+ * TODO:
+ * Should we consider a single (coarse) lock version, which would be faster
+ * with 2 or less generations, and slower with deep task graphs?
  */
 #ifndef ECLTASKGRAPH_H
 #define ECLTASKGRAPH_H
@@ -32,11 +36,12 @@
 #include <cstdint>
 #include <iostream>
 
-#if ( OBJECT_TASKGRAPH != 13 && OBJECT_TASKGRAPH != 14 )
-#error This file should only be sourced for OBJECT_TASKGRAPH in {13,14}
+#if ( OBJECT_TASKGRAPH < 13 || OBJECT_TASKGRAPH > 15 )
+#error This file should only be sourced for OBJECT_TASKGRAPH in {13,14,15}
 #endif
 
-#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 14 )
+#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 14 || OBJECT_TASKGRAPH == 15 )
+#define SINGLE_LOCK  ( OBJECT_TASKGRAPH == 15 )
 
 // Per-object users list through gen_tags is currently only supported
 // as an embedded list.
@@ -209,9 +214,10 @@ namespace obj { // reopen
 // ecltg_metadata: dependency-tracking metadata (not versioning)
 // ----------------------------------------------------------------------
 class ecltg_metadata {
-    typedef cas_mutex_v<uint8_t> mutex_t;
+    typedef cas_mutex_v<uint32_t> mutex_t;
 
 private:
+    // Note: with SINGLE_LOCK, we always use the oldest.lock().
     struct Oldest {
 	size_t num_tasks;
 	mutex_t mutex;
@@ -225,7 +231,9 @@ private:
     };
     struct Youngest {
 	group_t g;
+#if !SINGLE_LOCK
 	mutex_t mutex;
+#endif // SINGLE_LOCK
 
 	Youngest() : g( g_empty ) { }
 
@@ -248,8 +256,10 @@ private:
 	void clr_tasks() { g = g_empty; } // some_tasks = false; }
 	bool has_tasks() const { return g != g_empty; } // return some_tasks; }
 
+#if !SINGLE_LOCK
 	void lock() { mutex.lock(); }
 	void unlock() { mutex.unlock(); }
+#endif // SINGLE_LOCK
     };
 
     Oldest oldest;
@@ -325,10 +335,6 @@ private:
 	return __sync_fetch_and_add( &num_gens, -1 );
     }
     void push_generation() volatile { __sync_fetch_and_add( &num_gens, 1 ); }
-
-    // Locking
-    // void lock() { mutex.lock(); }
-    // void unlock() { mutex.unlock(); }
 };
 
 // Some debugging support. Const-ness of printed argument is a C++ library
@@ -544,8 +550,10 @@ task_metadata::create( full_metadata * ff ) {
 
 void
 ecltg_metadata::wakeup( taskgraph * graph ) {
+#if !SINGLE_LOCK
     // Are we holding a lock on youngest?
     bool has_youngest = false;
+#endif // SINGLE_LOCK
 
     oldest.lock();
 
@@ -561,14 +569,18 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // Specialized case. Race on num_gens as we don't have a lock
     // on youngest yet, but num_gens can go up only.
     if( num_gens == 1 ) {
+#if !SINGLE_LOCK
 	has_youngest = true;
 	youngest.lock();
+#endif // SINGLE_LOCK
 	if( num_gens == 1 ) {
 	    assert( !tasks.front() && "tasks should be empty if 1 generation" );
 	    pop_generation();
 	    youngest.clr_tasks();
 
+#if !SINGLE_LOCK
 	    youngest.unlock();
+#endif // SINGLE_LOCK
 	    oldest.unlock();
 	    return;
 	}
@@ -581,13 +593,17 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // can only go up between the call to may_interfere() and taking the
     // lock, so we are safe, perhaps taking the lock when not striclty
     // necessary.
+#if !SINGLE_LOCK
     else if( may_interfere() ) {
 	has_youngest = true;
 	youngest.lock();
     }
+#endif // SINGLE_LOCK
 
     gen_tags * head = tasks.front();
+#if !SINGLE_LOCK
     assert( (head || has_youngest) && "youngest not locked but list empty" );
+#endif // SINGLE_LOCK
     gen_tags * i_next = 0;
     unsigned new_tasks = 0;
     for( gen_tags * i=head; i; i=i_next ) {
@@ -639,13 +655,17 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
 
     oldest.unlock();
+#if !SINGLE_LOCK
     if( has_youngest )
 	youngest.unlock();
+#endif // SINGLE_LOCK
 }
 
 void
 ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
+#if !SINGLE_LOCK
     bool has_oldest = false;
+#endif // SINGLE_LOCK
 
     // Set pointer to task in argument's tags storage
     tags->st_task = t;
@@ -658,11 +678,15 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
     // lock on youngest that it is required to take. Put differently,
     // num_gens <= 1 is the pure condition for interference, except we
     // take num_gens <= 2 to block out wakeup()'s and avoid races.
+#if SINGLE_LOCK
+    oldest.lock();
+#else
     if( may_interfere() ) {
 	has_oldest = true;
 	oldest.lock();
     }
     youngest.lock();
+#endif // !SINGLE_LOCK
 
     if( num_gens == 0 ) { // Empty, tasks fly straight through
 	// NOTE: There cannot be a concurrent wakeup, and there cannot be
@@ -684,7 +708,9 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	// NOTE: Taking a lock on oldest suffices to enforce the
 	// synchronization between add_task() (issue, serially) and wakeup()
 	// (concurrent), provided we have num_gens right.
+#if !SINGLE_LOCK
 	assert( has_oldest && "Must have lock on oldest when num_gens==1" );
+#endif
 
 	if( !youngest.match_group( g ) ) {	// Update youngest
 	    assert( may_interfere() && "condition inlined and specialized" );
@@ -732,9 +758,13 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
     }
 
+#if SINGLE_LOCK
+    oldest.unlock();
+#else
     if( has_oldest )
 	oldest.unlock();
     youngest.unlock();
+#endif // SINGLE_LOCK
 }
 
 void
