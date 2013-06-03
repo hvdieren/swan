@@ -271,6 +271,9 @@ enum exp_enum {
     exp_object_reduction,
     exp_truedep,
     exp_cholesky,
+    exp_mmul_ijk,
+    exp_mmul_ikj,
+    exp_mmul_kij,
     exp_NUM
 };
 
@@ -287,7 +290,10 @@ const char * const experiment_desc[exp_NUM] = {
     "scalar reduction in/out dependency",
     "object reduction in/out dependency",
     "true dependency",
-    "cholesky structure"
+    "cholesky structure",
+    "matmul ijk structure",
+    "matmul ikj structure",
+    "matmul kij structure",
 };
 
 const char * const experiment_arg[exp_NUM] = {
@@ -303,7 +309,10 @@ const char * const experiment_arg[exp_NUM] = {
     "scalred",
     "objred",
     "truedep",
-    "cholesky"
+    "cholesky",
+    "mmulijk",
+    "mmulikj",
+    "mmulkij"
 };
 
 exp_enum decode( const char * arg ) {
@@ -429,6 +438,69 @@ par_cholesky( unsigned int niters, unsigned int DIM, object_t<T> * obj ) {
 		spawn( taskWithTwoArgs<T, indep, inoutdep>,
 		       (indep<T>)obj[j+DIM*j], (inoutdep<T>)obj[i+DIM*j] );
 		++num_tasks;
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_ijk( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int i=0; i < DIM; ++i ) {
+	    for( unsigned int j=0; j < DIM; ++j ) {
+		for( unsigned int k=0; k < DIM; ++k ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_ikj( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int i=0; i < DIM; ++i ) {
+	    for( unsigned int k=0; k < DIM; ++k ) {
+		for( unsigned int j=0; j < DIM; ++j ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_kij( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int k=0; k < DIM; ++k ) {
+	    for( unsigned int i=0; i < DIM; ++i ) {
+		for( unsigned int j=0; j < DIM; ++j ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
 	    }
 	}
 	ssync();
@@ -622,6 +694,24 @@ double experiment_cholesky( unsigned int & num_tasks, unsigned int niters,
     return read_time( &diff );
 }
 
+template<typename T>
+double experiment_matmul( unsigned int & num_tasks, unsigned int niters,
+			  unsigned int order, unsigned int DIM,
+			  object_t<T> * obj ) {
+    time_val_t start, end, diff;
+
+    get_time( &start );
+    if( order == 0 )
+	num_tasks = run( par_matmul_ijk<T>, niters, DIM, obj );
+    else if( order == 1 )
+	num_tasks = run( par_matmul_ikj<T>, niters, DIM, obj );
+    else if( order == 2 )
+	num_tasks = run( par_matmul_kij<T>, niters, DIM, obj );
+    get_time( &end );
+    sub_time( &end, &start, &diff );
+    return read_time( &diff );
+}
+
 double reference( unsigned int niters, void (*fn)() ) {
     time_val_t start, end, diff;
 
@@ -739,6 +829,39 @@ int main( int argc, char* argv[] ) {
 	}
 	unsigned int num_iters = num_tasks;
 	elapsed = experiment_cholesky<int>( num_tasks, num_iters, batch1, param ); 
+	break;
+    }
+    case exp_mmul_ijk:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_ijk] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 0, batch1, param ); 
+	break;
+    }
+    case exp_mmul_ikj:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_ikj] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 1, batch1, param ); 
+	break;
+    }
+    case exp_mmul_kij:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_kij] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 2, batch1, param ); 
 	break;
     }
     case exp_atomic_inc:
