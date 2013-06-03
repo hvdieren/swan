@@ -165,6 +165,45 @@ void taskWithArg( DepTy<T> arg ) {
     global_sink += x;
 }
 
+template<typename T, template<typename U> class DepTy1,
+	 template<typename U> class DepTy2>
+void taskWithTwoArgs( DepTy1<T> arg1, DepTy2<T> arg2 ) {
+// Do something ...
+    int x = 0;
+    int fibo=g_maxfibo;
+    // for( int i=0; i<g_maxfibo; ++i )
+    // x += leaf_call( fibonacci, i );
+#ifdef DELAY_DEVIATION
+    if(g_deviation != 0) {
+	fibo = (unsigned int)gsl_ran_gaussian_ziggurat(rand_generator, g_deviation)
+								     + g_maxfibo;
+	if (fibo < 0) { fibo=0; }
+    }
+#endif
+    x += leaf_call( fibonacci, (int)fibo );
+    global_sink += x;
+}
+
+template<typename T, template<typename U> class DepTy1,
+	 template<typename U> class DepTy2,
+	 template<typename U> class DepTy3>
+void taskWithThreeArgs( DepTy1<T> arg1, DepTy2<T> arg2, DepTy3<T> arg3 ) {
+// Do something ...
+    int x = 0;
+    int fibo=g_maxfibo;
+    // for( int i=0; i<g_maxfibo; ++i )
+    // x += leaf_call( fibonacci, i );
+#ifdef DELAY_DEVIATION
+    if(g_deviation != 0) {
+	fibo = (unsigned int)gsl_ran_gaussian_ziggurat(rand_generator, g_deviation)
+								     + g_maxfibo;
+	if (fibo < 0) { fibo=0; }
+    }
+#endif
+    x += leaf_call( fibonacci, (int)fibo );
+    global_sink += x;
+}
+
 void taskref() {
     int x = 0;
     // for( int i=0; i<g_maxfibo; ++i )
@@ -231,6 +270,7 @@ enum exp_enum {
     exp_scalar_reduction,
     exp_object_reduction,
     exp_truedep,
+    exp_cholesky,
     exp_NUM
 };
 
@@ -246,7 +286,8 @@ const char * const experiment_desc[exp_NUM] = {
     "commutative in/out dependency",
     "scalar reduction in/out dependency",
     "object reduction in/out dependency",
-    "true dependency"
+    "true dependency",
+    "cholesky structure"
 };
 
 const char * const experiment_arg[exp_NUM] = {
@@ -261,7 +302,8 @@ const char * const experiment_arg[exp_NUM] = {
     "cinoutdep",
     "scalred",
     "objred",
-    "truedep"
+    "truedep",
+    "cholesky"
 };
 
 exp_enum decode( const char * arg ) {
@@ -361,6 +403,38 @@ struct fake_dependency {
 #endif
     }
 };
+
+template<typename T>
+unsigned int
+par_cholesky( unsigned int niters, unsigned int DIM, object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int j=0; j < DIM; ++j ) {
+	    for( unsigned int k=0; k < j; ++k ) {
+		for( unsigned int i=j+1; i < DIM; ++i ) {
+		    spawn( taskWithThreeArgs<T, indep, indep, inoutdep>,
+			   (indep<T>)obj[i+DIM*k], (indep<T>)obj[j+DIM*k],
+			   (inoutdep<T>)obj[i+DIM*j] );
+		    ++num_tasks;
+		}
+	    }
+	    for( unsigned int i=0; i < j; ++i ) {
+		spawn( taskWithTwoArgs<T, indep, inoutdep>,
+		       (indep<T>)obj[j+DIM*i], (inoutdep<T>)obj[j+DIM*j] );
+		++num_tasks;
+	    }
+	    spawn( taskWithArg<T, inoutdep>, (inoutdep<T>)obj[j+DIM*j] );
+	    ++num_tasks;
+	    for( unsigned int i=j+1; i < DIM; ++i ) {
+		spawn( taskWithTwoArgs<T, indep, inoutdep>,
+		       (indep<T>)obj[j+DIM*j], (inoutdep<T>)obj[i+DIM*j] );
+		++num_tasks;
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
 
 template<typename M, typename T, template<typename U> class DepTy>
 void par_region4( unsigned int niters, unsigned int nobj,
@@ -536,6 +610,18 @@ double experiment( unsigned int niters, void (*fn)(T) ) {
     return read_time( &diff );
 }
 
+template<typename T>
+double experiment_cholesky( unsigned int & num_tasks, unsigned int niters,
+			    unsigned int DIM, object_t<T> * obj ) {
+    time_val_t start, end, diff;
+
+    get_time( &start );
+    num_tasks = run( par_cholesky<T>, niters, DIM, obj );
+    get_time( &end );
+    sub_time( &end, &start, &diff );
+    return read_time( &diff );
+}
+
 double reference( unsigned int niters, void (*fn)() ) {
     time_val_t start, end, diff;
 
@@ -644,6 +730,17 @@ int main( int argc, char* argv[] ) {
 	elapsed = experiment<int, truedep>(
 	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
+    case exp_cholesky:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_cholesky] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_cholesky<int>( num_tasks, num_iters, batch1, param ); 
+	break;
+    }
     case exp_atomic_inc:
     {
 	time_val_t start, end, diff;
