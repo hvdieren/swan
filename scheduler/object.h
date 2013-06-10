@@ -935,8 +935,8 @@ public:
     template<typename T>
     static
     typename std::enable_if<!std::is_array<T>::value,obj_version<metadata_t> *>::type
-    create( size_t n, obj_instance<metadata_t> * obj_ ) {
-	size_t nbytes = n * size_struct<T>::value;
+    create( size_t nbytes, obj_instance<metadata_t> * obj_ ) {
+	// size_t nbytes = n * size_struct<T>::value;
 	obj_version<metadata_t> * v
 	    = new obj_version<metadata_t>( nbytes, obj_, typeinfo::create<T>() );
 	typeinfo::construct<T>( v->get_ptr() );
@@ -945,13 +945,13 @@ public:
     template<typename T>
     static
     typename std::enable_if<std::is_array<T>::value,obj_version<metadata_t> *>::type
-    create( size_t n, obj_instance<metadata_t> * obj_ ) {
+    create( size_t nbytes, obj_instance<metadata_t> * obj_ ) {
 	// NOTE: destructor not called properly!
-	size_t nbytes = n * size_struct<T>::value;
+	// size_t nbytes = n * size_struct<T>::value;
 	obj_version<metadata_t> * v
 	    = new obj_version<metadata_t>( nbytes, obj_, typeinfo::create<T>() );
 	typeinfo_array::construct<T>( v->get_ptr(),
-				      reinterpret_cast<char *>(v->get_ptr())+n,
+				      reinterpret_cast<char *>(v->get_ptr())+nbytes,
 				      size_struct<typename std::remove_all_extents<T>::type>::value );
 	return v;
     }
@@ -1037,6 +1037,10 @@ public:
 	size_t osize = size;      // Save in case del_ref() frees this
 	// TODO: could reset reduction info here: doing reduction is now
 	// redundant: if it hasn't been done already, it won't be read.
+	// NOTE: Are we free of data races here between a thread consulting
+	// the pointer and this del_ref? Yes, we should be because del_ref
+	// will not drop to zero here: we are holding references to both
+	// the new and old versions in the rename code.
 	del_ref();                // The renamed instance no longer points here
 	return create<T>( osize, obj );   // Create a clone of ourselves
     }
@@ -2204,6 +2208,10 @@ struct reduction_tags_base : public all_tags_base {
 #else
 #if OBJECT_TASKGRAPH >= 13 && OBJECT_TASKGRAPH <= 15
 #include "ecltaskgraph.h"
+#else
+#if OBJECT_TASKGRAPH == 16
+#include "ltickets.h"
+#endif
 #endif
 #endif
 #endif
@@ -2245,7 +2253,8 @@ private:
 public:
     explicit object_t(size_t n = 1) {
 	static_assert( !(OMod & obj_recast), "constructor only allowed if..." );
-	this->version = obj_version<obj_metadata>::create<T>(n, this);
+	size_t nbytes = n * size_struct<T>::value;
+	this->version = obj_version<obj_metadata>::create<T>(nbytes, this);
     }
 #if 0 // needed?
     object_t( const object_t<T, OMod> &o ) {

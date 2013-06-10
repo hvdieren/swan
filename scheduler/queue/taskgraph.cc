@@ -24,7 +24,7 @@ namespace obj {
 
 // We do not use this specialization of a taskgraph in any of the tickets
 // schemes.
-#if OBJECT_TASKGRAPH != 1 && OBJECT_TASKGRAPH != 8 && OBJECT_TASKGRAPH != 11
+#if OBJECT_TASKGRAPH != 1 && OBJECT_TASKGRAPH != 8 && OBJECT_TASKGRAPH != 11 && OBJECT_TASKGRAPH != 16
 void queue_metadata::add_task( task_metadata * t, queue_tags * tags ) {
     lock();
     tags->st_task = t;
