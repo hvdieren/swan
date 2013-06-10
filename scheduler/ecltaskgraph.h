@@ -609,9 +609,9 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     for( gen_tags * i=head; i; i=i_next ) {
 	task_metadata * t = i->st_task;
 	++new_tasks;
+	i_next = i->it_next;
 	if( t->del_incoming() )
 	    graph->add_ready_task( pending_metadata::get_from_task( t ) );
-	i_next = i->it_next;
 	if( i->is_last_in_generation() )
 	    break;
     }
@@ -643,8 +643,10 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	//           more tasks in it (i_next == 0), but because !empty,
 	//           there is 1 generation and youngest.some_tasks should
 	//           remain set.
+#if !SINGLE_LOCK
 	assert( has_youngest
 		&& "Youngest generation not locked and list becomes empty" );
+#endif
 	assert( num_gens <= 1
 		&& "Few generations present when depleting youngest" );
 	tasks.clear();
@@ -693,7 +695,9 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 	// concurrent add_task()'s, so no need to have locks, except we
 	// need the lock on oldest to wait until the latest wakeup() has
 	// finished.
+#if !SINGLE_LOCK
 	assert( has_oldest && "Must have lock on oldest when num_gens==0" );
+#endif
 
 	// Update oldest
 	oldest.num_tasks++;
@@ -753,7 +757,9 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 
 	// assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
 	// && "Either no generations or oldest and youngest diff has_tasks" );
+#if !SINGLE_LOCK
 	assert( (has_oldest || !may_interfere()) && "interference invariant" );
+#endif
 	assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
 	assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
     }
