@@ -48,15 +48,24 @@ int stage_a( int i, outdep<float> ab ) {
     iolock();
     errs() << "stage A: f=" << *ab.get_version() << ", val=" << (float)ab << '\n';
     iounlock();
+    usleep( 1 );
     return 0;
 }
 
 int stage_b( indep<float> ab, outdep<int> bc ) {
-    bc = int((float)ab);
+    static int seen[100] = { 0 };
+    int i = int((float)ab);
+    bc = i;
     iolock();
     errs() << "stage B: f=" << *ab.get_version() << ", val=" << (float)ab << "\n";
     errs() << "         i=" << *bc.get_version() << ", val=" << (int)bc << "\n";
     iounlock();
+    if( seen[i] != 0 ) {
+	fprintf( stderr, "ERROR: B: value %d sent multiple times!\n", i );
+	fflush( stderr );
+	abort();
+    }
+    seen[i] = 1;
     return 0;
 }
 
@@ -67,9 +76,9 @@ int stage_c( inoutdep<int> bc ) {
     errs() << "stage C: i=" << *bc.get_version() << ", val=" << (int)bc << '\n';
     iounlock();
     if( seen[i] != 0 ) {
-	fprintf( stderr, "ERROR: value %d sent multiple times!\n", i );
+	fprintf( stderr, "ERROR: C: value %d sent multiple times!\n", i );
 	fflush( stderr );
-	exit( 1 );
+	abort();
     }
     seen[i] = 1;
     return 0;
@@ -92,6 +101,7 @@ void apipe( int n ) {
 	// iolock(); errs() << "Between C and A\n"; iounlock();
     }
     ssync();
+    errs() << "apipe after sync" << std::endl;
 }
 
 int main( int argc, char * argv[] ) {
