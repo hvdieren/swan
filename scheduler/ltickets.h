@@ -20,21 +20,12 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* tickets.h
- * This file implements a ticket-based task graph where edges between tasks
- * are not explicitly maintained.
- *
- * @note
- *   The implementation differs slightly from that described in the PACT'11
- *   paper as both readers and writers are incremented for an outdep. The
- *   reasoning to this is that is cheaper to increment a counter during issue
- *   and release than it is to perform additional control flow during release
- *   to avoid those counter increments.
- *   Furthermore, we propose to remove the increment of the readers counter
- *   for an in/out dep because it is redundant.
+/* ltickets.h
+ * This file implements a ticket-based task graph where pendign tasks
+ * are kept on lists as in ecltaskgraph.
  */
-#ifndef TICKETS_H
-#define TICKETS_H
+#ifndef LTICKETS_H
+#define LTICKETS_H
 
 #include <cstdint>
 #include <iostream>
@@ -44,6 +35,7 @@
 #include "swan/lfllist.h"
 #include "swan/lock.h"
 #include "swan/functor/tkt_ready.h"
+#include "swan/taskgraph/ready_list_tg.h"
 
 namespace obj {
 
@@ -53,9 +45,104 @@ namespace obj {
 typedef uint64_t depth_t;
 
 // ----------------------------------------------------------------------
-// tkt_metadata: dependency-tracking metadata (not versioning)
+// link_metadata: task graph metadata per stored frame
 // ----------------------------------------------------------------------
-class tkt_metadata {
+class pending_metadata;
+
+class link_metadata {
+    link_metadata * prev, * next; // no need to initialize
+    friend class dl_list_traits<link_metadata>;
+};
+
+//----------------------------------------------------------------------
+// Traits for accessing elements stored in a dl_list<>, in global
+// namespace.
+//----------------------------------------------------------------------
+} // end namespace obj because the traits class must be in global namespace
+
+template<>
+struct dl_list_traits<obj::link_metadata> {
+    typedef obj::link_metadata T;
+    typedef obj::link_metadata ValueType;
+
+    // not implemented -- static size_t get_depth( T * elm );
+    // not implemented -- static bool is_ready( T * elm );
+
+    static void set_prev( T * elm, T * prev ) { elm->prev = prev; }
+    static T * get_prev( T const * elm ) { return elm->prev; }
+    static void set_next( T * elm, T * next ) { elm->next = next; }
+    static T * get_next( T const * elm ) { return elm->next; }
+
+    static ValueType * get_value( T const * elm ) {
+	return const_cast<ValueType *>( elm ); // cheat
+    }
+};
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+class pending_metadata;
+
+typedef ::taskgraph<pending_metadata, link_metadata,
+		    dl_head_list<link_metadata> > taskgraph;
+
+// ----------------------------------------------------------------------
+// list_tags: tag storage for all dependency usage types
+// ----------------------------------------------------------------------
+class task_metadata;
+class ltkt_metadata;
+
+// list_tags stores the accessed generation and links the task on the task list.
+// Required for all types
+class list_tags {
+    typedef uint32_t tag_t; // links to ltkt_metadata::tag_t
+
+    tag_t rd_tag;
+    tag_t wr_tag;
+#if OBJECT_COMMUTATIVITY
+    tag_t c_tag;
+#endif
+#if OBJECT_REDUCTION
+    tag_t r_tag;
+#endif
+
+    list_tags * it_next;
+    task_metadata * st_task;
+
+    friend class serial_dep_traits;
+    template<typename MetaData, typename Task, template<typename U> class DepTy>
+    friend class dep_traits;
+    friend class ltkt_metadata;
+    friend class sl_list_traits<list_tags>;
+
+public:
+    inline bool arg_is_ready( ltkt_metadata * ltkt );
+    inline bool is_current_generation( ltkt_metadata * ltkt );
+
+    inline void copy_tags( ltkt_metadata * ltkt );
+};
+
+} // end namespace obj because the traits class must be in global namespace
+
+template<>
+struct sl_list_traits<obj::list_tags> {
+    typedef obj::list_tags T;
+    typedef obj::task_metadata ValueType;
+
+    static void set_next( T * elm, T * next ) { elm->it_next = next; }
+    static T * get_next( T const * elm ) { return elm->it_next; }
+
+    static ValueType * get_value( T const * elm ) { return elm->st_task; }
+};
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
+// ltkt_metadata: dependency-tracking metadata (not versioning)
+// ----------------------------------------------------------------------
+class ltkt_metadata {
 public:
     struct fifo_like {
 	typedef uint32_t ctr_t;
@@ -96,9 +183,12 @@ private:
 #endif
     depth_t depth;                // depth in task graph
 
+    sl_list<list_tags> tasks;     // all pending tasks not on ready list
+    cas_mutex tmutex;
+
 public:
-    tkt_metadata() : depth( 0 ) { }
-    ~tkt_metadata() {
+    ltkt_metadata() : depth( 0 ) { }
+    ~ltkt_metadata() {
 	assert( readers.empty()
 		&& "Must have zero readers when destructing obj_version" );
 	assert( writers.empty()
@@ -180,8 +270,62 @@ public:
     void update_depth_ubench( depth_t d ) { depth = d; }
 #endif
 
-    friend std::ostream & operator << ( std::ostream & os, const tkt_metadata & md );
+    inline void add_task( task_metadata * t, list_tags * tags );
+    inline void wakeup( taskgraph * tg );
+
+    friend std::ostream & operator << ( std::ostream & os, const ltkt_metadata & md );
 };
+
+void list_tags::copy_tags( ltkt_metadata * md ) {
+    rd_tag  = md->get_reader_tag();
+    wr_tag  = md->get_writer_tag();
+#if OBJECT_COMMUTATIVITY
+    c_tag  = md->get_commutative_tag();
+#endif
+#if OBJECT_REDUCTION
+    r_tag  = md->get_reduction_tag();
+#endif
+}
+
+bool list_tags::arg_is_ready( ltkt_metadata * md ) {
+    // TODO: depends on annotation! - else everything serialized!
+    bool r = md->chk_reader_tag( rd_tag )
+#if OBJECT_COMMUTATIVITY
+	& md->chk_commutative_tag( c_tag )
+#endif
+#if OBJECT_REDUCTION
+	& md->chk_reduction_tag( r_tag )
+#endif
+	& md->chk_writer_tag( wr_tag );
+    errs() << "arg is ready on md=" << *md
+	   << " with rd=" << rd_tag
+	   << " with c=" << c_tag
+	   << " with r=" << r_tag
+	   << " with wr=" << wr_tag
+	   << ": " << r << std::endl;
+    return r;
+}
+
+bool list_tags::is_current_generation( ltkt_metadata * md ) {
+    size_t num_checked = 4;
+    if( md->chk_reader_tag( rd_tag ) )
+	--num_checked;
+    if( md->chk_writer_tag( rd_tag ) )
+	--num_checked;
+#if OBJECT_COMMUTATIVITY
+    if( md->chk_commutative_tag( c_tag ) )
+	--num_checked;
+#else
+    --num_checked;
+#endif
+#if OBJECT_REDUCTION
+    if( md->chk_reduction_tag( r_tag ) )
+	--num_checked;
+#else
+    --num_checked;
+#endif
+    return num_checked <= 1; // 3 tags equal, one differs.
+}
 
 class token_metadata {
 public:
@@ -263,12 +407,12 @@ public:
 
 // Some debugging support
 inline std::ostream &
-operator << ( std::ostream & os, const tkt_metadata::fifo_like & f ) {
+operator << ( std::ostream & os, const ltkt_metadata::fifo_like & f ) {
     return os << '{' << f.head << ", " << f.tail << '}';
 }
 
-inline std::ostream & operator << ( std::ostream & os, const tkt_metadata & md ) {
-    os << "ticket_md={readers=" << md.readers
+inline std::ostream & operator << ( std::ostream & os, const ltkt_metadata & md ) {
+    os << "lticket_md={" << &md << ", readers=" << md.readers
        << ", writers=" << md.writers
 #if OBJECT_COMMUTATIVITY
        << ", commutative=" << md.commutative
@@ -332,20 +476,25 @@ static inline void arg_update_depth_fn( Task * fr, task_data_t & td ) {
 class full_metadata;
 
 class task_metadata : public task_data_t {
+    size_t incoming_count;
     depth_t depth;
+    taskgraph * graph;
 
 protected:
     // Default constructor
-    task_metadata() { }
+    task_metadata() : incoming_count( 0 ), graph( 0 ) {
+	// errs() << "task " << this << " created" << std::endl;
+ }
+    	// ~task_metadata() { errs() << "task " << this << " finished" << std::endl; };
     // Constructor for creating stack frame from pending frame
-    void create_from_pending( task_metadata * fr, full_metadata * ) {
-	depth = fr->depth;
-    }
-    void convert_to_full( full_metadata * ) { }
+    inline void create_from_pending( task_metadata * fr, full_metadata * );
+    inline void convert_to_full( full_metadata * );
 
 public:
+    taskgraph * get_graph() { return graph; }
+
     template<typename... Tn>
-    void create( full_metadata * ff ) { }
+    inline void create( full_metadata * ff );
 
     void reset_depth() { depth = 0; }
     depth_t get_depth() const { return depth; }
@@ -353,36 +502,37 @@ public:
 	depth = std::max( depth, d+1 );
     }
 
+    // Ready counter
+    void add_incoming() {
+		// errs() << this << " add_incoming was " << incoming_count << std::endl;
+	__sync_fetch_and_add( &incoming_count, 1 );
+    }
+    bool del_incoming() {
+		// errs() << this << " del_incoming was " << incoming_count << std::endl;
+	return __sync_fetch_and_add( &incoming_count, -1 ) == 1;
+    }
+
     // Stubs required for the taskgraph variant, here meaningless.
     template<typename... Tn>
     void start_registration() {
 #if STORED_ANNOTATIONS
-	arg_update_depth_fn<task_metadata, tkt_metadata>( this, get_task_data() );
+	arg_update_depth_fn<task_metadata, ltkt_metadata>( this, get_task_data() );
 #else
-	arg_update_depth_fn<task_metadata, tkt_metadata, Tn...>(
+	arg_update_depth_fn<task_metadata, ltkt_metadata, Tn...>(
 	    this, get_task_data() );
 #endif
+	add_incoming();
     }
-    void stop_registration( bool wakeup = false ) { }
+    inline void stop_registration( bool wakeup = false );
 
     void start_deregistration() { }
     inline void stop_deregistration( full_metadata * parent );
 };
 
 // ----------------------------------------------------------------------
-// link_metadata: task graph metadata per stored frame
-// ----------------------------------------------------------------------
-class pending_metadata;
-
-class link_metadata {
-    pending_metadata * prev, * next; // no need to initialize
-    friend class dl_list_traits<pending_metadata>;
-};
-
-// ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
 // ----------------------------------------------------------------------
-class pending_metadata : public task_metadata, private link_metadata {
+class pending_metadata : public task_metadata, public link_metadata {
 #if !STORED_ANNOTATIONS
     typedef bool (*ready_fn_t)( const task_data_t & );
 
@@ -400,7 +550,7 @@ public:
     template<typename... Tn>
     void create( full_metadata * ff ) {
 #if !STORED_ANNOTATIONS
-	ready_fn = &arg_ready_fn<tkt_metadata, task_metadata, Tn...>;
+	ready_fn = &arg_ready_fn<ltkt_metadata, task_metadata, Tn...>;
 #endif
 	task_metadata::create<Tn...>( ff );
     }
@@ -411,7 +561,7 @@ public:
 	++num_tkt_evals;
 #endif // PROFILE_WORKER
 #if STORED_ANNOTATIONS
-	return arg_ready_fn<tkt_metadata, task_metadata>( get_task_data() );
+	return arg_ready_fn<ltkt_metadata, task_metadata>( get_task_data() );
 #else
 	return ready_fn && (*ready_fn)( get_task_data() );
 #endif
@@ -433,13 +583,23 @@ public:
     get_task_md( const pending_metadata * fr ) {
 	return static_cast<const obj::task_metadata *>( fr );
     }
+
+    static inline
+    pending_metadata * get_from_task( task_metadata * task ) {
+	return static_cast<pending_metadata *>( task );
+    }
+    static inline
+    pending_metadata * get_from_link( link_metadata * link ) {
+	return static_cast<pending_metadata *>( link );
+    }
 };
 
+#if 0
 //----------------------------------------------------------------------
 // Traits for accessing elements stored in a dl_list<>, in global
 // namespace.
 //----------------------------------------------------------------------
-
+class task_metadata;
 } // end namespace obj because the traits class must be in global namespace
 
 template<>
@@ -447,7 +607,7 @@ struct dl_list_traits<obj::pending_metadata> {
     typedef obj::pending_metadata T;
     typedef obj::pending_metadata ValueType;
 
-    static size_t get_depth( T const * elm ) { return TF( elm )->get_depth(); }
+    static size_t get_depth( T const * elm ) { return 0; } // TF( elm )->get_depth(); }
     static bool is_ready( T const * elm ) { return elm->is_ready(); }
 
     static void set_prev( T * elm, T * prev ) { LF( elm )->prev = prev; }
@@ -465,123 +625,162 @@ private:
 };
 
 namespace obj { // reopen
+#endif
+
+// ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+} // end namespace obj
+
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::link_metadata, dl_head_list<obj::link_metadata> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::link_metadata * lnk ) {
+	return obj::pending_metadata::get_from_link( lnk );
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return true; // TODO: pnd->acquire();
+    }
+};
+
+namespace obj { // reopen
 
 // ----------------------------------------------------------------------
 // full_metadata: task graph metadata per full frame
 // ----------------------------------------------------------------------
 class full_metadata {
 protected:
-    resizing_hashed_list<pending_metadata> * pending;
-    size_t maybe_ready;
+    taskgraph graph;
 
 protected:
-    full_metadata() : pending( 0 ), maybe_ready( 0 ) { }
-    ~full_metadata() { delete pending; }
+    full_metadata() { }
 
 public:
-    void push_pending( pending_metadata * frame ) {
-	allocate_pending();
-	pending->prepend( frame );
-	// TODO: It is not ideal to place the enable_scan() call here.
-	// But for some reason, a call during release gets missed and
-	// this is a very safe place to re-enable the scan.
-	// This may also be a race, as there is no synchronization between
-	// release and get_ready_task() - release may set the flag but it
-	// may be unobserved, or the ready task may not be found yet?
-	enable_scan();
+    void push_pending( pending_metadata * frame ) { }
+
+    pending_metadata * get_ready_task() {
+	pending_metadata * t = graph.get_ready_task();
+		// errs() << "get ready: " << t << std::endl;
+	return t;
     }
 
-    pending_metadata *
-    get_ready_task() {
-	pending_metadata * rdy = 0;
-	if( pending && gate_scan() ) { // no scan if nothing's there for sure
-	    rdy = pending->get_ready();
-	    if( rdy ) // maybe there's more
-		enable_scan();
-	}
-	return rdy;
+    pending_metadata * get_ready_task_after( task_metadata * ) {
+	return get_ready_task();
     }
 
-    pending_metadata *
-    get_ready_task_after( task_metadata * prev ) {
-	pending_metadata * rdy = 0;
-	if( pending && gate_scan() ) { // no scan if nothing's there for sure
-	    depth_t prev_depth = prev->get_depth();
-	    rdy = pending->get_ready( prev_depth );
-	    if( rdy ) // maybe there's more
-		enable_scan();
-	}
-	return rdy;
-    }
-
-#ifdef UBENCH_HOOKS
-    void reset() {
-	if( pending )
-	    pending->reset();
-    }
-#endif
-
-private:
-    void allocate_pending() {
-	if( !pending ) {
-	    // errs() << "ALLOC PENDING\n";
-	    pending = new resizing_hashed_list<pending_metadata>;
-	}
-    }
-
-    bool gate_scan() {
-	if( !maybe_ready )
-	    return false;
-	return __sync_bool_compare_and_swap( &maybe_ready, true, false );
-    }
-public:
-    void enable_scan() {
-	maybe_ready = true;
-    }
+    taskgraph * get_graph() { return &graph; }
 };
 
-void task_metadata::stop_deregistration( full_metadata * parent ) {
-    parent->enable_scan();
+// ----------------------------------------------------------------------
+// Member function implementations with cyclic dependencies on class
+// definitions.
+// ----------------------------------------------------------------------
+void
+task_metadata::create_from_pending( task_metadata * from, full_metadata * ff ) {
+    graph = ff->get_graph();
+    depth = from->depth;
 }
+
+void
+task_metadata::convert_to_full( full_metadata * ff ) {
+    graph = ff->get_graph();
+    assert( graph != 0 && "create_from_pending with null graph" );
+}
+
+template<typename... Tn>
+void
+task_metadata::create( full_metadata * ff ) {
+    graph = ff->get_graph();
+#if !STORED_ANNOTATIONS
+    // acquire_fn = &arg_acquire_fn<ecltg_metadata,Tn...>;
+    // errs() << "set graph in " << this << " to " << graph << "\n";
+#endif
+}
+
+void task_metadata::stop_registration( bool wakeup ) {
+    if( del_incoming() && wakeup )
+	graph->add_ready_task( pending_metadata::get_from_task( this ) );
+}
+
+void task_metadata::stop_deregistration( full_metadata * parent ) { }
+
+#define PQRTL(x) ((x)!=0?(x)->st_task:((task_metadata*)0))
+
+void ltkt_metadata::
+add_task( task_metadata * t, list_tags * tags ) {
+    tags->st_task = t;
+
+    tmutex.lock();
+    if( !tags->arg_is_ready( this ) ) {
+	t->add_incoming();
+	tasks.push_back( tags );
+		// errs() << "task list " << this << ": head=" << PQRTL(tasks.front()) << " tail=" << PQRTL(tasks.back()) << std::endl;
+    }
+    tmutex.unlock();
+}
+
+void ltkt_metadata::wakeup( taskgraph * graph ) {
+    tmutex.lock();
+
+    	// errs() << "wakeup of md=" << this << ": " << *this << std::endl;
+
+    if( tasks.empty() ) {
+	tmutex.unlock();
+	return;
+    }
+
+    	// errs() << "task list " << this << ": head=" << PQRTL(tasks.front()) << " tail=" << PQRTL(tasks.back()) << std::endl;
+
+    list_tags * head = tasks.front();
+    list_tags * i_next = head;
+    for( list_tags * i=head; i; i=i_next ) {
+	if( !i->is_current_generation( this ) ) // based on tail counters
+	    break;
+	task_metadata * t = i->st_task;
+	i_next = i->it_next;
+	if( t->del_incoming() ) {
+	    	// errs() << "task " << t << " ready" << std::endl;
+	    graph->add_ready_task( pending_metadata::get_from_task( t ) );
+	}
+    }
+
+    if( i_next )
+	tasks.fastforward( i_next );
+    else
+	tasks.clear();
+
+    	// errs() << "task list " << this << ": head=" << PQRTL(tasks.front()) << " tail=" << PQRTL(tasks.back()) << std::endl;
+
+    tmutex.unlock();
+}
+
 
 // ----------------------------------------------------------------------
 // Generic fully-serial dependency handling traits
 // ----------------------------------------------------------------------
 
 // A fully serialized version
-class serial_dep_tags {
-protected:
+class serial_dep_tags : public list_tags {
     friend class serial_dep_traits;
-    tkt_metadata::tag_t rd_tag;
-    tkt_metadata::tag_t wr_tag;
-#if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
-#endif
-#if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
-#endif
 };
 
 struct serial_dep_traits {
     static
     void arg_issue( task_metadata * fr,
-		    obj_instance<tkt_metadata> & obj,
+		    obj_instance<ltkt_metadata> & obj,
 		    serial_dep_tags * tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
-	tags->rd_tag  = md->get_reader_tag();
-	tags->wr_tag  = md->get_writer_tag();
-#if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
-#endif
-#if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
-#endif
+	ltkt_metadata * md = obj.get_version()->get_metadata();
+	tags->copy_tags( md );
 	md->add_writer();
+	md->add_task( fr, tags );
 	md->update_depth( fr->get_depth() );
     }
     static
-    bool arg_ready( obj_instance<tkt_metadata> obj, serial_dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
+    bool arg_ready( obj_instance<ltkt_metadata> obj, serial_dep_tags & tags ) {
+	ltkt_metadata * md = obj.get_version()->get_metadata();
 	return md->chk_reader_tag( tags.rd_tag )
 #if OBJECT_COMMUTATIVITY
 	    & md->chk_commutative_tag( tags.c_tag )
@@ -592,8 +791,8 @@ struct serial_dep_traits {
 	    & md->chk_writer_tag( tags.wr_tag );
     }
     static
-    bool arg_ini_ready( const obj_instance<tkt_metadata> obj ) {
-	const tkt_metadata * md = obj.get_version()->get_metadata();
+    bool arg_ini_ready( const obj_instance<ltkt_metadata> obj ) {
+	const ltkt_metadata * md = obj.get_version()->get_metadata();
 	return !md->has_readers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -604,9 +803,10 @@ struct serial_dep_traits {
 	    & !md->has_writers();
     }
     static
-    void arg_release( obj_instance<tkt_metadata> obj ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
+    void arg_release( task_metadata * fr, obj_instance<ltkt_metadata> obj ) {
+	ltkt_metadata * md = obj.get_version()->get_metadata();
 	md->del_writer();
+	md->wakeup( fr->get_graph() );
     }
 };
 
@@ -617,16 +817,18 @@ struct serial_dep_traits {
 class function_tags : public function_tags_base { };
 
 // Input dependency tags
-class indep_tags : public indep_tags_base {
+class indep_tags : public indep_tags_base, public list_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
+/*
+    ltkt_metadata::tag_t wr_tag;
 #if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
+    ltkt_metadata::tag_t c_tag;
 #endif
 #if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
+    ltkt_metadata::tag_t r_tag;
 #endif
+*/
 };
 
 // Output dependency tags require fully serialized tags in the worst case
@@ -643,60 +845,64 @@ class inoutdep_tags : public inoutdep_tags_base, public serial_dep_tags {
 
 // Commutative input/output dependency tags
 #if OBJECT_COMMUTATIVITY
-class cinoutdep_tags : public cinoutdep_tags_base {
+class cinoutdep_tags : public cinoutdep_tags_base, public list_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
-    tkt_metadata::tag_t rd_tag;
+/*
+    ltkt_metadata::tag_t wr_tag;
+    ltkt_metadata::tag_t rd_tag;
 #if OBJECT_REDUCTION
-    tkt_metadata::tag_t r_tag;
+    ltkt_metadata::tag_t r_tag;
 #endif
+*/
 };
 #endif
 
 // Reduction dependency tags
 #if OBJECT_REDUCTION
-class reduction_tags : public reduction_tags_base<tkt_metadata> {
+class reduction_tags : public reduction_tags_base<ltkt_metadata>, public list_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t wr_tag;
-    tkt_metadata::tag_t rd_tag;
+/*
+    ltkt_metadata::tag_t wr_tag;
+    ltkt_metadata::tag_t rd_tag;
 #if OBJECT_COMMUTATIVITY
-    tkt_metadata::tag_t c_tag;
+    ltkt_metadata::tag_t c_tag;
 #endif
+*/
 };
 #endif
 
 // Popdep (input) dependency tags - fully serialized with other pop and pushpop
-class popdep_tags : public popdep_tags_base<tkt_metadata> {
+class popdep_tags : public popdep_tags_base<ltkt_metadata>, public list_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t rd_tag;
+    // ltkt_metadata::tag_t rd_tag;
 
 public:
-    popdep_tags( queue_version<tkt_metadata> * parent )
+    popdep_tags( queue_version<ltkt_metadata> * parent )
 	: popdep_tags_base( parent ) { }
 };
 
 // Pushpopdep (input/output) dependency tags - fully serialized with other
 // pop and pushpop
-class pushpopdep_tags : public pushpopdep_tags_base<tkt_metadata> {
+class pushpopdep_tags : public pushpopdep_tags_base<ltkt_metadata>, public list_tags {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
-    tkt_metadata::tag_t rd_tag;
+    // ltkt_metadata::tag_t rd_tag;
 
 public:
-    pushpopdep_tags( queue_version<tkt_metadata> * parent )
+    pushpopdep_tags( queue_version<ltkt_metadata> * parent )
 	: pushpopdep_tags_base( parent ) { }
 };
 
 // Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base<tkt_metadata> {
+class pushdep_tags : public pushdep_tags_base<ltkt_metadata> {
     template<typename MetaData, typename Task, template<typename T> class DepTy>
     friend class dep_traits;
 
 public:
-    pushdep_tags( queue_version<tkt_metadata> * parent )
+    pushdep_tags( queue_version<ltkt_metadata> * parent )
 	: pushdep_tags_base( parent ) { }
 };
 
@@ -706,24 +912,18 @@ public:
 //----------------------------------------------------------------------
 // indep traits for objects
 template<>
-struct dep_traits<tkt_metadata, task_metadata, indep> {
+struct dep_traits<ltkt_metadata, task_metadata, indep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, indep<T> & obj_ext,
 			   typename indep<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->wr_tag  = md->get_writer_tag();
-#if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
-#endif
-#if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
-#endif
+	ltkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->copy_tags( md );
 	md->add_reader();
     }
     template<typename T>
     static
     bool arg_ready( indep<T> & obj_int, typename indep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj_int.get_version()->get_metadata();
+	ltkt_metadata * md = obj_int.get_version()->get_metadata();
 	bool r = md->chk_writer_tag( tags.wr_tag )
 #if OBJECT_COMMUTATIVITY
 	    & md->chk_commutative_tag( tags.c_tag )
@@ -738,7 +938,7 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     template<typename T>
     static
     bool arg_ini_ready( const indep<T> & obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	const ltkt_metadata * md = obj_ext.get_version()->get_metadata();
 	return !md->has_writers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -752,8 +952,9 @@ struct dep_traits<tkt_metadata, task_metadata, indep> {
     static
     void arg_release( task_metadata * fr, indep<T> & obj,
 		      typename indep<T>::dep_tags & tags ) {
-	obj.get_version()->get_metadata()->del_reader();
-	// errs() << "release indep\n";
+	ltkt_metadata * md = obj.get_version()->get_metadata();
+	md->del_reader();
+	md->wakeup( fr->get_graph() );
     }
 };
 
@@ -764,7 +965,7 @@ struct dep_traits<token_metadata, task_metadata, indep> {
     static void arg_issue( task_metadata * fr, indep<T> & obj_ext,
 			   typename indep<T>::dep_tags * tags ) {
 	token_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->wr_tag  = md->get_writer_tag();
+	tags->copy_tags( md );
 	md->add_reader();
     }
     template<typename T>
@@ -783,14 +984,16 @@ struct dep_traits<token_metadata, task_metadata, indep> {
     static
     void arg_release( task_metadata * fr, indep<T> & obj,
 		      typename indep<T>::dep_tags & tags ) {
-	obj.get_version()->get_metadata()->del_reader();
+	ltkt_metadata * md = obj.get_version()->get_metadata();
+	md->del_reader();
+	md->wakeup( fr->get_graph() );
     }
 };
 
 
 // output dependency traits for objects
 template<>
-struct dep_traits<tkt_metadata, task_metadata, outdep> {
+struct dep_traits<ltkt_metadata, task_metadata, outdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, outdep<T> & obj_ext,
@@ -814,13 +1017,13 @@ struct dep_traits<tkt_metadata, task_metadata, outdep> {
     static
     void arg_release( task_metadata * fr, outdep<T> & obj,
 		      typename outdep<T>::dep_tags & tags ) {
-	serial_dep_traits::arg_release( obj );
+	serial_dep_traits::arg_release( fr, obj );
     }
 };
 
 // inout dependency traits for objects
 template<>
-struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
+struct dep_traits<ltkt_metadata, task_metadata, inoutdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, inoutdep<T> & obj_ext,
@@ -842,7 +1045,7 @@ struct dep_traits<tkt_metadata, task_metadata, inoutdep> {
     static
     void arg_release( task_metadata * fr, inoutdep<T> & obj,
 		      typename inoutdep<T>::dep_tags & tags ) {
-	serial_dep_traits::arg_release( obj );
+	serial_dep_traits::arg_release( fr, obj );
     }
 };
 
@@ -885,17 +1088,13 @@ struct dep_traits<token_metadata, task_metadata, inoutdep> {
 // cinout dependency traits
 #if OBJECT_COMMUTATIVITY
 template<>
-struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
+struct dep_traits<ltkt_metadata, task_metadata, cinoutdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, cinoutdep<T> & obj_ext,
 		    typename cinoutdep<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->rd_tag = md->get_reader_tag();
-	tags->wr_tag = md->get_writer_tag();
-#if OBJECT_REDUCTION
-	tags->r_tag  = md->get_reduction_tag();
-#endif
+	ltkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->copy_tags( md );
 	md->add_commutative();
 	// TODO: Parallel cinoutdeps have different depths!
 	md->update_depth( fr->get_depth() );
@@ -904,7 +1103,7 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
     static
     bool arg_ready( cinoutdep<T> & obj,
 		    typename cinoutdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
+	ltkt_metadata * md = obj.get_version()->get_metadata();
 	bool r = false;
 	if( md->chk_reader_tag( tags.rd_tag )
 	    & md->chk_writer_tag( tags.wr_tag )
@@ -919,7 +1118,7 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
     template<typename T>
     static
     bool arg_ini_ready( cinoutdep<T> obj_ext ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	ltkt_metadata * md = obj_ext.get_version()->get_metadata();
 	if( !md->has_readers() & !md->has_writers()
 #if OBJECT_REDUCTION
 	    & !md->has_reductions()
@@ -937,9 +1136,10 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
     static
     void arg_release( task_metadata * fr, cinoutdep<T> obj,
 		      typename cinoutdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj.get_version()->get_metadata();
+	ltkt_metadata * md = obj.get_version()->get_metadata();
 	md->del_commutative();
 	md->commutative_release();
+	md->wakeup( fr->get_graph() );
     }
 };
 #endif
@@ -947,17 +1147,13 @@ struct dep_traits<tkt_metadata, task_metadata, cinoutdep> {
 // reduction dependency traits
 #if OBJECT_REDUCTION
 template<>
-struct dep_traits<tkt_metadata, task_metadata, reduction> {
+struct dep_traits<ltkt_metadata, task_metadata, reduction> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, reduction<T> & obj_ext,
 		    typename reduction<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_ext.get_version()->get_metadata();
-	tags->rd_tag = md->get_reader_tag();
-#if OBJECT_COMMUTATIVITY
-	tags->c_tag  = md->get_commutative_tag();
-#endif
-	tags->wr_tag = md->get_writer_tag();
+	ltkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->copy_tags( md );
 	md->add_reduction();
 	// TODO: Parallel reductions have different depths!
 	md->update_depth( fr->get_depth() );
@@ -966,7 +1162,7 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
     static
     bool arg_ready( reduction<T> & obj_int,
 		    typename reduction<T>::dep_tags & tags ) {
-	tkt_metadata * md = tags.ext_version->get_metadata();
+	ltkt_metadata * md = tags.ext_version->get_metadata();
 	bool r = md->chk_reader_tag( tags.rd_tag )
 	    & md->chk_writer_tag( tags.wr_tag )
 #if OBJECT_COMMUTATIVITY
@@ -979,7 +1175,7 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
     template<typename T>
     static
     bool arg_ini_ready( reduction<T> obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	const ltkt_metadata * md = obj_ext.get_version()->get_metadata();
 	return !md->has_readers() & !md->has_writers()
 #if OBJECT_COMMUTATIVITY
 	    & !md->has_commutative()
@@ -990,46 +1186,49 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
     static
     void arg_release( task_metadata * fr, reduction<T> obj_int,
 		      typename reduction<T>::dep_tags & tags ) {
-	tkt_metadata * md = tags.ext_version->get_metadata();
+	ltkt_metadata * md = tags.ext_version->get_metadata();
 	md->del_reduction();
+	md->wakeup( fr->get_graph() );
     }
 };
 #endif
 
-// popdep traits for queues
+// popdep traits for queues -- TODO: use token_metadata instead!
 template<>
-struct dep_traits<tkt_metadata, task_metadata, popdep> {
+struct dep_traits<ltkt_metadata, task_metadata, popdep> {
     template<typename T>
     static void arg_issue( task_metadata * fr, popdep<T> & obj_int,
 			   typename popdep<T>::dep_tags * tags ) {
-	tkt_metadata * md = obj_int.get_version()->get_metadata();
-	tags->rd_tag  = md->get_reader_tag();
+	ltkt_metadata * md = obj_int.get_version()->get_metadata();
+	tags->copy_tags( md );
 	md->add_reader();
     }
     template<typename T>
     static
     bool arg_ready( popdep<T> & obj_int, typename popdep<T>::dep_tags & tags ) {
-	tkt_metadata * md = obj_int.get_version()->
+	ltkt_metadata * md = obj_int.get_version()->
 	    get_parent()->get_metadata();
 	return md->chk_reader_tag( tags.rd_tag );
     }
     template<typename T>
     static
     bool arg_ini_ready( const popdep<T> & obj_ext ) {
-	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	const ltkt_metadata * md = obj_ext.get_version()->get_metadata();
 	return !md->has_readers();
     }
     template<typename T>
     static
     void arg_release( task_metadata * fr, popdep<T> & obj_int,
 		      typename popdep<T>::dep_tags & tags ) {
+	ltkt_metadata * md = tags.ext_version->get_metadata();
 	obj_int.get_version()->get_metadata()->del_reader();
+	md->wakeup( fr->get_graph() );
     }
 };
 
 // pushdep dependency traits for queues
 template<>
-struct dep_traits<tkt_metadata, task_metadata, pushdep> {
+struct dep_traits<ltkt_metadata, task_metadata, pushdep> {
     template<typename T>
     static
     void arg_issue( task_metadata * fr, pushdep<T> & obj_int,
@@ -1053,9 +1252,9 @@ struct dep_traits<tkt_metadata, task_metadata, pushdep> {
     }
 };
 
-typedef tkt_metadata obj_metadata;
-typedef tkt_metadata queue_metadata;
+typedef ltkt_metadata obj_metadata;
+typedef ltkt_metadata queue_metadata; // could also be token_metadata!
 
 } // end of namespace obj
 
-#endif // TICKETS_H
+#endif // LTICKETS_H

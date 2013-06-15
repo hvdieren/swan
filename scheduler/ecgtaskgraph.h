@@ -36,19 +36,21 @@
 #define EDGE_CENTRIC ( OBJECT_TASKGRAPH == 6 || OBJECT_TASKGRAPH ==  7 )
 
 #if EMBED_LISTS
-#include "lfllist.h"
+#include "swan/lfllist.h"
 #else // !EMBED_LISTS
 #include <list>
 #include <vector>
 #endif
 
-#include "wf_frames.h"
-#include "lock.h"
-#include "padding.h"
-#include "alc_allocator.h"
-#include "alc_mmappol.h"
-#include "alc_flpol.h"
-#include "queue/taskgraph.h"
+#include "swan/wf_frames.h"
+#include "swan/lock.h"
+#include "swan/padding.h"
+#include "swan/alc_allocator.h"
+#include "swan/alc_mmappol.h"
+#include "swan/alc_flpol.h"
+#include "swan/queue/taskgraph.h"
+#include "swan/taskgraph/ready_list_tg.h"
+#include "swan/functor/acquire.h"
 
 namespace obj {
 
@@ -134,100 +136,12 @@ namespace obj { // reopen
 // ----------------------------------------------------------------------
 class pending_metadata;
 
-class taskgraph {
-    typedef cas_mutex mutex_t;
-
-private:
 #if EMBED_LISTS
-    dl_head_list<link_metadata> ready_list;
-#else // !EMBED_LISTS
-    std::list<pending_metadata *> ready_list;
-#endif
-    mutable mutex_t mutex;
-
-public:
-    ~taskgraph() {
-	assert( ready_list.empty() && "Pending tasks at destruction time" );
-    }
-
-    inline pending_metadata * get_ready_task();
-    inline void add_ready_task( link_metadata * fr );
-
-    // Don't need a lock in this check because it is based on polling a
-    // single variable
-    bool empty() const {
-	// lock();
-	bool ret = ready_list.empty();
-	// unlock();
-	return ret;
-    }
-
-private:
-    void lock() const { mutex.lock(); }
-    void unlock() const { mutex.unlock(); }
-};
-
-// ----------------------------------------------------------------------
-// Functor for acquiring locks (commutativity) and privatization (reductions)
-// when selecting an otherwise ready task.
-// ----------------------------------------------------------------------
-template<typename MetaData>
-struct acquire_functor {
-    // Default case is do nothing
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return true;
-    }
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-
-    // Commutativity
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    bool operator () ( cinoutdep<T> & obj,
-		       typename cinoutdep<T>::dep_tags & sa ) {
-	MetaData * md = obj.get_version()->get_metadata();
-	return md->commutative_try_acquire();
-    }
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-// An acquire and privatize function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
+typedef ::taskgraph<pending_metadata, link_metadata,
+		    dl_head_list<link_metadata> > taskgraph;
 #else
-template<typename MetaData, typename... Tn>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
+typedef ::taskgraph<pending_metadata, pending_metadata,
+		    std::list<obj::pending_metadata *> > taskgraph;
 #endif
 
 // ----------------------------------------------------------------------
@@ -652,6 +566,44 @@ public:
 };
 
 // ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+} // end namespace obj
+
+#if EMBED_LISTS
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::link_metadata, dl_head_list<obj::link_metadata> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::link_metadata * lnk ) {
+	return obj::pending_metadata::get_from_link( lnk );
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#else
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::pending_metadata,
+			std::list<obj::pending_metadata *> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::pending_metadata * lnk ) {
+	return lnk;
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#endif
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
 // full_metadata: task graph metadata per full frame
 // ----------------------------------------------------------------------
 class full_metadata {
@@ -702,43 +654,6 @@ task_metadata::create( full_metadata * ff ) {
     acquire_fn = &arg_acquire_fn<ecgtg_metadata,Tn...>;
     // errs() << "set graph in " << this << " to " << graph << "\n";
 #endif
-}
-
-pending_metadata *
-taskgraph::get_ready_task() {
-    lock();
-    pending_metadata * task = 0;
-    if( !ready_list.empty() ) {
-	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
-#if EMBED_LISTS
-	    pending_metadata * t = pending_metadata::get_from_link( *I );
-#else // !EMBED_LISTS
-	    pending_metadata * t = *I;
-#endif
-	    if( t->acquire() ) {
-		ready_list.erase( I );
-		task = t;
-		break;
-	    }
-	}
-    }
-    unlock();
-    // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
-    return task;
-}
-
-void
-taskgraph::add_ready_task( link_metadata * fr ) {
-    // Translate from task_metadata to link_metadata
-    // Can only be successfully done in case of queued_frame!
-    // errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-    lock();
-#if EMBED_LISTS
-    ready_list.push_back( fr );
-#else // !EMBED_LISTS
-    ready_list.push_back( pending_metadata::get_from_link( fr ) );
-#endif
-    unlock();
 }
 
 void

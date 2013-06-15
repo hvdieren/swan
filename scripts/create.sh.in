@@ -16,6 +16,8 @@ taskgraph_name()
 	12) echo gtkt ;;
 	13) echo l ;; # embedded lists
 	14) echo el ;; # embedded lists
+	15) echo sel ;; # embedded lists with single lock
+	16) echo ltkt ;; # tickets and lists w/ lock
     esac
 }
 
