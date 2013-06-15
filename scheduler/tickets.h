@@ -471,7 +471,7 @@ namespace obj { // reopen
 // ----------------------------------------------------------------------
 class full_metadata {
 protected:
-    hashed_list<pending_metadata> * pending;
+    resizing_hashed_list<pending_metadata> * pending;
     size_t maybe_ready;
 
 protected:
@@ -525,7 +525,7 @@ private:
     void allocate_pending() {
 	if( !pending ) {
 	    // errs() << "ALLOC PENDING\n";
-	    pending = new hashed_list<pending_metadata>;
+	    pending = new resizing_hashed_list<pending_metadata>;
 	}
     }
 
