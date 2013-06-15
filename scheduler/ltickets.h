@@ -21,8 +21,9 @@
  */
 
 /* ltickets.h
- * This file implements a ticket-based task graph where pendign tasks
+ * This file implements a ticket-based task graph where pending tasks
  * are kept on lists as in ecltaskgraph.
+ * This is not working correctly yet.
  */
 #ifndef LTICKETS_H
 #define LTICKETS_H
