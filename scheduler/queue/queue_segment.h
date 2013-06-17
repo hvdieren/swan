@@ -13,7 +13,6 @@ class queue_segment
 {
     fixed_size_queue q;
     queue_segment * next;
-    short balance;
     volatile bool producing;
     bool copied_peek;
 
@@ -22,7 +21,6 @@ class queue_segment
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
 		 + sizeof(queue_segment *)
-		 + sizeof(short)
 		 + sizeof(volatile bool)
 		 + sizeof(bool) > padding;
 
@@ -166,7 +164,6 @@ operator << ( std::ostream & os, const queue_segment & seg ) {
     return os << "Segment: @" << &seg
 	      << " producing=" << seg.producing
 	      << " next=" << seg.next
-	      << " B=" << seg.balance
 	      << ' ' << seg.q;
 }
 
