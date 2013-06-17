@@ -13,7 +13,6 @@ class queue_segment
 {
     fixed_size_queue q;
     queue_segment * next;
-    queue_segment * child[2];
     short balance;
     volatile bool producing;
     bool copied_peek;
@@ -22,7 +21,7 @@ class queue_segment
     // There is no guarantee to naturally align any element store in the queue,
     // but 16 bytes should be good performance-wise for nearly all data types.
     pad_multiple<16, sizeof(fixed_size_queue)
-		 + 3*sizeof(queue_segment *)
+		 + sizeof(queue_segment *)
 		 + sizeof(short)
 		 + sizeof(volatile bool)
 		 + sizeof(bool) > padding;
@@ -167,7 +166,6 @@ operator << ( std::ostream & os, const queue_segment & seg ) {
     return os << "Segment: @" << &seg
 	      << " producing=" << seg.producing
 	      << " next=" << seg.next
-	      << " child=" << seg.child[0] << "," << seg.child[1]
 	      << " B=" << seg.balance
 	      << ' ' << seg.q;
 }
