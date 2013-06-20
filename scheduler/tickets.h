@@ -975,6 +975,77 @@ struct dep_traits<tkt_metadata, task_metadata, reduction> {
 };
 #endif
 
+// popdep traits for queues
+template<>
+struct dep_traits<tkt_metadata, task_metadata, popdep> {
+    template<typename T>
+    static void arg_issue( task_metadata * fr, popdep<T> & obj_int,
+			   typename popdep<T>::dep_tags * tags ) {
+	popdep<T> obj_ext
+	    = popdep<T>::create( obj_int.get_version()->get_parent() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	tags->rd_tag  = md->get_reader_tag();
+	md->add_reader();
+    }
+    template<typename T>
+    static
+    bool arg_ready( popdep<T> & obj_int, typename popdep<T>::dep_tags & tags ) {
+	popdep<T> obj_ext
+	    = popdep<T>::create( obj_int.get_version()->get_parent() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return md->chk_reader_tag( tags.rd_tag );
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const popdep<T> & obj_ext ) {
+	const tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	return !md->has_readers();
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, popdep<T> & obj_int,
+		      typename popdep<T>::dep_tags & tags ) {
+	popdep<T> obj_ext
+	    = popdep<T>::create( obj_int.get_version()->get_parent() );
+	obj_ext.get_version()->get_metadata()->del_reader();
+    }
+};
+
+// pushdep dependency traits for queues
+template<>
+struct dep_traits<tkt_metadata, task_metadata, pushdep> {
+    template<typename T>
+    static
+    void arg_issue( task_metadata * fr, pushdep<T> & obj_int,
+		    typename pushdep<T>::dep_tags * tags ) {
+	pushdep<T> obj_ext
+	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	md->add_writer();
+    }
+    template<typename T>
+    static
+    bool arg_ready( pushdep<T> & obj_int,
+		    typename pushdep<T>::dep_tags & tags ) {
+	return true;
+    }
+    template<typename T>
+    static
+    bool arg_ini_ready( const pushdep<T> & obj_ext ) {
+	return true;
+    }
+    template<typename T>
+    static
+    void arg_release( task_metadata * fr, pushdep<T> & obj_int,
+		      typename pushdep<T>::dep_tags & tags ) {
+	pushdep<T> obj_ext
+	    = pushdep<T>::create( obj_int.get_version()->get_parent() );
+	tkt_metadata * md = obj_ext.get_version()->get_metadata();
+	md->del_writer();
+    }
+};
+
+
 typedef tkt_metadata obj_metadata;
 
 } // end of namespace obj

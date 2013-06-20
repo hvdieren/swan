@@ -276,6 +276,7 @@ void stack_frame::invoke( future * cresult,
     bool stolen
 	= stack_frame::prevent_inlining_dir<&stack_frame::
 	template split_stub<fc_executing, TR, Tn...> >( frame, void_func );
+
     if( likely( !stolen ) ) { // identical to try_pop() successful
 #if IMPROVED_STUBS
 	CLOBBER_CALLEE_SAVED_BUT1(); // only when prevent_inlining() is inlined?

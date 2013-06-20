@@ -4530,11 +4530,13 @@ fi;
 
 fi
 
-ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/fft/src_wf/Makefile benchmarks/lu/src_wf/Makefile benchmarks/lu/src_wfo/Makefile benchmarks/strassen/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wf/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh benchmarks/fm/src_c/Makefile benchmarks/fm/src_wfo/Makefile scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
+ac_config_files="$ac_config_files Makefile scheduler/Makefile.flags scheduler/Makefile tests/Makefile benchmarks/Makefile.wf benchmarks/bzip2f/src_cilk++/Makefile benchmarks/bzip2f/src_wf/Makefile benchmarks/bzip2f/src_wfq/Makefile benchmarks/fft/src_wf/Makefile benchmarks/lu/src_wf/Makefile benchmarks/lu/src_wfo/Makefile benchmarks/strassen/src_wf/Makefile benchmarks/jacobi/src_wfo/Makefile benchmarks/jacobi/src_wfo/create.sh benchmarks/ubench/src_wf/Makefile benchmarks/ubench/src_wf/gen.pl benchmarks/ubench/src_wf/create.sh benchmarks/matmul2/src_wfo/Makefile benchmarks/rectmul_bis/src_wf/Makefile benchmarks/rectmul_bis/src_wfo/Makefile benchmarks/rectmul_bis/src_wfo/create.sh benchmarks/cholesky2/src_wfo/Makefile benchmarks/cholesky2/src_wfo/create.sh benchmarks/sparse_lu/src_wfo/Makefile benchmarks/sparse_lu/src_wfo/create.sh benchmarks/fm/src_c/Makefile benchmarks/fm/src_wfo/Makefile scripts/create.sh util/Makefile util/Makefile.use_us util/Makefile.use_cy"
 
 ac_config_commands="$ac_config_commands exec-scripts-create.sh"
 
 ac_config_commands="$ac_config_commands exec-benchmarks-ubench-src_wf-scripts"
+
+ac_config_commands="$ac_config_commands create-swan-queue-dir"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -5235,6 +5237,9 @@ do
     "scheduler/Makefile") CONFIG_FILES="$CONFIG_FILES scheduler/Makefile" ;;
     "tests/Makefile") CONFIG_FILES="$CONFIG_FILES tests/Makefile" ;;
     "benchmarks/Makefile.wf") CONFIG_FILES="$CONFIG_FILES benchmarks/Makefile.wf" ;;
+    "benchmarks/bzip2f/src_cilk++/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_cilk++/Makefile" ;;
+    "benchmarks/bzip2f/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_wf/Makefile" ;;
+    "benchmarks/bzip2f/src_wfq/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/bzip2f/src_wfq/Makefile" ;;
     "benchmarks/fft/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/fft/src_wf/Makefile" ;;
     "benchmarks/lu/src_wf/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/lu/src_wf/Makefile" ;;
     "benchmarks/lu/src_wfo/Makefile") CONFIG_FILES="$CONFIG_FILES benchmarks/lu/src_wfo/Makefile" ;;
@@ -5260,6 +5265,7 @@ do
     "util/Makefile.use_cy") CONFIG_FILES="$CONFIG_FILES util/Makefile.use_cy" ;;
     "exec-scripts-create.sh") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-scripts-create.sh" ;;
     "exec-benchmarks-ubench-src_wf-scripts") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-benchmarks-ubench-src_wf-scripts" ;;
+    "create-swan-queue-dir") CONFIG_COMMANDS="$CONFIG_COMMANDS create-swan-queue-dir" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
   esac
@@ -5812,6 +5818,7 @@ $as_echo "$as_me: executing $ac_file commands" >&6;}
   case $ac_file$ac_mode in
     "exec-scripts-create.sh":C) chmod u+x scripts/create.sh ;;
     "exec-benchmarks-ubench-src_wf-scripts":C) chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl ;;
+    "create-swan-queue-dir":C) mkdir scheduler/queue ;;
 
   esac
 done # for ac_tag

@@ -75,6 +75,9 @@ AC_CONFIG_FILES([Makefile
 		 scheduler/Makefile
 		 tests/Makefile
 		 benchmarks/Makefile.wf
+		 benchmarks/bzip2f/src_cilk++/Makefile
+		 benchmarks/bzip2f/src_wf/Makefile
+		 benchmarks/bzip2f/src_wfq/Makefile
 		 benchmarks/fft/src_wf/Makefile
 		 benchmarks/lu/src_wf/Makefile
 		 benchmarks/lu/src_wfo/Makefile
@@ -100,4 +103,5 @@ AC_CONFIG_FILES([Makefile
                  util/Makefile.use_cy])
 AC_CONFIG_COMMANDS([exec-scripts-create.sh],[chmod u+x scripts/create.sh])
 AC_CONFIG_COMMANDS([exec-benchmarks-ubench-src_wf-scripts],[chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl])
+AC_CONFIG_COMMANDS([create-swan-queue-dir],[mkdir scheduler/queue])
 AC_OUTPUT

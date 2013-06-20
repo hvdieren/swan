@@ -49,6 +49,7 @@ template<typename T>
 class cas_mutex_v {
     typedef T value_type;
 
+public:
     // m is a 1-bit locked/unlocked field and a (eg) 63-bit counter to
     // check for ABA races.
     volatile value_type m;
