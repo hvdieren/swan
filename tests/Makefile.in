@@ -11,8 +11,8 @@ builddir = @builddir@
 top_builddir = @top_builddir@
 
 # Examples currently not working:
-# exobject exobjpass expipe_unv 
-EXAMPLES = explain exnop expipe expipe2 exargs exinoutcp exnest exgen exforeach exreduc exptrarg exrename exqstruct exq1 exq2 exstruct5 extia exqty exqpeek exqslice
+# exobject exobjpass expipe_unv exq2
+EXAMPLES = explain exnop expipe expipe2 exargs exinoutcp exnest exgen exforeach exreduc exptrarg exrename exqstruct exq1 exstruct5 extia exqty exqpeek exqslice
 
 .PHONY: all
 
