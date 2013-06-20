@@ -1,3 +1,14 @@
+top_srcdir=@top_srcdir@
+srcdir=@srcdir@
+VPATH=$(srcdir)
+top_builddir=@top_builddir@
+
+PROG=bzip2
+
+include $(top_srcdir)/benchmarks/Makefile.cilk++
+include $(top_builddir)/util/Makefile.use_us
+
+
 # ------------------------------------------------------------------
 # This file is part of bzip2/libbzip2, a program and library for
 # lossless, block-sorting data compression.
@@ -19,17 +30,17 @@ CC=gcc
 AR=ar
 RANLIB=ranlib
 LDFLAGS=
-CILKDIR=$(HOME)/ray/cilk
+CILKDIR=$(HOME)/cilkplus-install
 #CILKLIB=-L$(CILKDIR)/lib64
 # CILKCILK may be a C compiler, C++, or Cilk++.  Use a Cilk++ compiler
 # if CILKFLAG is set.  If CILKCILK is cilk++ (not c/c++) then CILKCXX
 # should be the g++ compiler corresponding to cilk++.
 CILKCXX=$(CILKDIR)/bin/g++
-CILKCILK=$(CILKDIR)/bin/cilk++
+CILKCILK=$(CILKDIR)/bin/g++ -fcilkplus 
 ifdef APPLE  # Define this on Darwin
-CILKLINK=-lcilkrts -lpthread
+CILKLINK=-ldl -lcilkrts -lpthread
 else
-CILKLINK=-Wl,-Bstatic -lcilkrts -Wl,-Bdynamic -lpthread
+CILKLINK=-Wl,-Bstatic -ldl -lcilkrts -Wl,-Bdynamic -lpthread
 endif
 
 BIGFILES=-D_FILE_OFFSET_BITS=64
@@ -99,24 +110,24 @@ libbz2.a: $(OBJS)
 
 check: test cilktest
 test: bzip2
-	@cat words1
-	./bzip2 -1  < sample1.ref > sample1.rb2
-	./bzip2 -2  < sample2.ref > sample2.rb2
-	./bzip2 -3  < sample3.ref > sample3.rb2
-	./bzip2 -d  < sample1.bz2 > sample1.tst
-	./bzip2 -d  < sample2.bz2 > sample2.tst
-	./bzip2 -ds < sample3.bz2 > sample3.tst
-	./bzip2 -1P < cilktest1 | ./bzip2 -dc > cilktest1.tst
-	cmp sample1.bz2 sample1.rb2 
-	cmp sample2.bz2 sample2.rb2
-	cmp sample3.bz2 sample3.rb2
-	cmp sample1.tst sample1.ref
-	cmp sample2.tst sample2.ref
-	cmp sample3.tst sample3.ref
-	cmp cilktest1 cilktest1.tst
-	./bzip2 -P1 < compress.c | ./bzip2 -dc | cmp - compress.c
+	@cat $(srcdir)/words1
+	./bzip2 -1  < $(srcdir)/sample1.ref > sample1.rb2
+	./bzip2 -2  < $(srcdir)/sample2.ref > sample2.rb2
+	./bzip2 -3  < $(srcdir)/sample3.ref > sample3.rb2
+	./bzip2 -d  < $(srcdir)/sample1.bz2 > sample1.tst
+	./bzip2 -d  < $(srcdir)/sample2.bz2 > sample2.tst
+	./bzip2 -ds < $(srcdir)/sample3.bz2 > sample3.tst
+	./bzip2 -1P < $(srcdir)/cilktest1 | ./bzip2 -dc > cilktest1.tst
+	cmp $(srcdir)/sample1.bz2 sample1.rb2 
+	cmp $(srcdir)/sample2.bz2 sample2.rb2
+	cmp $(srcdir)/sample3.bz2 sample3.rb2
+	cmp sample1.tst $(srcdir)/sample1.ref
+	cmp sample2.tst $(srcdir)/sample2.ref
+	cmp sample3.tst $(srcdir)/sample3.ref
+	cmp $(srcdir)/cilktest1 cilktest1.tst
+	./bzip2 -P1 < $(srcdir)/compress.c | ./bzip2 -dc | cmp - $(srcdir)/compress.c
 	./bzip2 -P1 < bzip2 | ./bzip2 -dc | cmp - bzip2
-	@cat words3
+	@cat $(srcdir)/words3
 
 cilktest: bzip2 mkruns
 	@echo "Compressing random runs in parallel"
@@ -169,25 +180,25 @@ clean:
 	sample1.tst sample2.tst sample3.tst \
 	cilktest1.tst mk251 mkruns
 
-blocksort$(OSUFFIX): blocksort.c
-	@cat words0
-	$(CC) $(CFLAGS) -c blocksort.c
-huffman$(OSUFFIX): huffman.c
-	$(CC) $(CFLAGS) -c huffman.c
-crctable$(OSUFFIX): crctable.c
-	$(CC) $(CFLAGS) -c crctable.c
-randtable$(OSUFFIX): randtable.c
-	$(CC) $(CFLAGS) -c randtable.c
-compress$(OSUFFIX): compress.c
-	$(CILKCILK) $(CFLAGS) -c compress.c
-decompress$(OSUFFIX): decompress.c
-	$(CC) $(CFLAGS) -c decompress.c
-bzlib$(OSUFFIX): bzlib.c
-	$(CC) $(CFLAGS) -c bzlib.c
-bzip2$(OSUFFIX): bzip2.c
-	$(CILKCILK) $(CFLAGS) -c bzip2.c
-bzip2recover$(OSUFFIX): bzip2recover.c
-	$(CC) $(CFLAGS) -c bzip2recover.c
+blocksort$(OSUFFIX): $(srcdir)/blocksort.c
+	@cat $(srcdir)/words0
+	$(CC) $(CFLAGS) -c $(srcdir)/blocksort.c
+huffman$(OSUFFIX): $(srcdir)/huffman.c
+	$(CC) $(CFLAGS) -c $(srcdir)/huffman.c
+crctable$(OSUFFIX): $(srcdir)/crctable.c
+	$(CC) $(CFLAGS) -c $(srcdir)/crctable.c
+randtable$(OSUFFIX): $(srcdir)/randtable.c
+	$(CC) $(CFLAGS) -c $(srcdir)/randtable.c
+compress$(OSUFFIX): $(srcdir)/compress.c
+	$(CILKCILK) $(CFLAGS) -c $(srcdir)/compress.c
+decompress$(OSUFFIX): $(srcdir)/decompress.c
+	$(CC) $(CFLAGS) -c $(srcdir)/decompress.c
+bzlib$(OSUFFIX): $(srcdir)/bzlib.c
+	$(CC) $(CFLAGS) -c $(srcdir)/bzlib.c
+bzip2$(OSUFFIX): $(srcdir)/bzip2.c
+	$(CILKCILK) $(CFLAGS) -c $(srcdir)/bzip2.c
+bzip2recover$(OSUFFIX): $(srcdir)/bzip2recover.c
+	$(CC) $(CFLAGS) -c $(srcdir)/bzip2recover.c
 
 
 DISTNAME=bzip2-1.0.5+cilk

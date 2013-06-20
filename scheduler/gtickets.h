@@ -31,6 +31,9 @@
  * and we cannot keep track of all such references before allowing reuse.
  * On the other hand, if we allow aliasing on these counters, then we will
  * reduce parallelism but not make errors.
+ *
+ * Note: this file has not been updated with support for queues. The
+ *       scheme currently fails to compile.
  */
 #ifndef GTICKETS_H
 #define GTICKETS_H
@@ -38,7 +41,7 @@
 #include <cstdint>
 #include <iostream>
 
-#include "config.h"
+#include "swan_config.h"
 #include "wf_frames.h"
 #include "lfllist.h"
 #include "lock.h"
@@ -879,6 +882,7 @@ struct dep_traits<gtkt_metadata, task_metadata, reduction> {
 #endif
 
 typedef gtkt_metadata obj_metadata;
+typedef gtkt_metadata queue_metadata;
 
 } // end of namespace obj
 

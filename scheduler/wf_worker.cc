@@ -19,7 +19,7 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <sched.h>
 #include <errno.h>
@@ -44,6 +44,15 @@
 #include "logger.h"
 
 extern worker_state * ws;
+
+#if PROFILE_WORKER
+namespace obj {
+__thread size_t num_tkt_evals;
+}
+__thread size_t num_h0_hits;
+__thread size_t num_h1_hits;
+__thread size_t num_hash_empty;
+#endif // PROFILE_WORKER
 
 worker_state *
 worker_state::get_thread_worker_state() {
@@ -73,13 +82,19 @@ worker_state::profile_worker::profile_worker() :
     INIT(provgd_steals),
     INIT(provgd_steals_fr),
     INIT(random_steals),
-    INIT(focussed_steals)
+    INIT(focussed_steals),
+    INIT(tkt_evals_release_ready),
+    INIT(tkt_evals_release_ready_fail),
+    INIT(h0_hits),
+    INIT(h1_hits),
+    INIT(hash_empty)
 #undef INIT
 {
      memset( &time_since_longjmp, 0, sizeof(time_since_longjmp) );
      memset( &time_longjmp, 0, sizeof(time_longjmp) );
      memset( &time_clueless, 0, sizeof(time_clueless) );
-     memset( &time_release_ready, 0, sizeof(time_release_ready) );
+     memset( &time_release_ready_success, 0, sizeof(time_release_ready_success) );
+     memset( &time_release_ready_fail, 0, sizeof(time_release_ready_fail) );
 }
 
 worker_state::profile_worker::~profile_worker() {
@@ -108,12 +123,21 @@ worker_state::profile_worker::summarize( const worker_state::profile_worker & w 
     SUM(provgd_steals_fr);
     SUM(random_steals);
     SUM(focussed_steals);
+    SUM(tkt_evals_release_ready);
+    SUM(tkt_evals_release_ready_fail);
+    SUM(h0_hits);
+    SUM(h1_hits);
+    SUM(hash_empty);
 #undef SUM
 
     pp_time_max( &time_since_longjmp, &w.time_since_longjmp );
     pp_time_add( &time_longjmp, &w.time_longjmp );
     pp_time_add( &time_clueless, &w.time_clueless );
-    pp_time_add( &time_release_ready, &w.time_release_ready );
+    pp_time_add( &time_release_ready_success, &w.time_release_ready_success );
+    pp_time_add( &time_release_ready_fail, &w.time_release_ready_fail );
+#if PROFILE_QUEUE
+    queue += w.queue;
+#endif // PROFILE_QUEUE
 }
 #endif
 
@@ -160,14 +184,23 @@ worker_state::profile_worker::dump_profile( size_t id ) const {
     DUMP(provgd_steals_fr);
     DUMP(random_steals);
     DUMP(focussed_steals);
+    DUMP(tkt_evals_release_ready);
+    DUMP(tkt_evals_release_ready_fail);
+    DUMP(h0_hits);
+    DUMP(h1_hits);
+    DUMP(hash_empty);
     std::cerr << '\n';
 #undef DUMP
 #define SHOW(x) pp_time_print( (pp_time_t *)&x, (char *)#x )
     SHOW( time_since_longjmp );
     SHOW( time_longjmp );
     SHOW( time_clueless );
-    SHOW( time_release_ready );
+    SHOW( time_release_ready_success );
+    SHOW( time_release_ready_fail );
 #undef SHOW
+#if PROFILE_QUEUE
+    queue.dump_profile();
+#endif // PROFILE_QUEUE
 }
 #endif
 
@@ -278,6 +311,9 @@ worker_state::random_steal() {
     // ? (island + num/inc) : (num - inc*island_size);
 
     assert( victim < nthreads && "victim out of range" );
+    // TODO: the stealable attribute does not take into
+    // account if there are ready data-flow siblings of
+    // the spawn deque top.
     if( victim == id || !ws[victim].sd.stealable() ) {
 	// backoff.update( false );
 	return;
@@ -472,12 +508,28 @@ worker_state::worker_fn() {
 	assert( child->get_frame()->get_owner() == &sd
 		&& "child initiating longjmp to us must belong to our deque" );
 #if PROFILE_WORKER
-	pp_time_start( &tls_worker_state->wprofile.time_release_ready );
+	pp_time_t timer;
+	memset( &timer, 0, sizeof(timer) );
+	pp_time_start( &timer );
+	obj::num_tkt_evals = 0;
+	num_h0_hits = 0;
+	num_h1_hits = 0;
+	num_hash_empty = 0;
 #endif
 	pending_frame * next
 	    = the_task_graph_traits::release_task_and_get_ready( child );
 #if PROFILE_WORKER
-	pp_time_end( &tls_worker_state->wprofile.time_release_ready );
+	pp_time_end( &timer );
+	if( next ) {
+	    tls_worker_state->wprofile.num_tkt_evals_release_ready += obj::num_tkt_evals;
+	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_success, &timer );
+	} else {
+	    tls_worker_state->wprofile.num_tkt_evals_release_ready_fail += obj::num_tkt_evals;
+	    pp_time_add( &tls_worker_state->wprofile.time_release_ready_fail, &timer );
+	}
+	tls_worker_state->wprofile.num_h0_hits += num_h0_hits;
+	tls_worker_state->wprofile.num_h1_hits += num_h1_hits;
+	tls_worker_state->wprofile.num_hash_empty += num_hash_empty;
 #endif
 	parent->lock( &sd );
 #if !PACT11_VERSION && 0

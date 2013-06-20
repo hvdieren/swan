@@ -97,6 +97,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/sparse_lu/src_wfo/create.sh
 		 benchmarks/fm/src_c/Makefile
 		 benchmarks/fm/src_wfo/Makefile
+		 benchmarks/fm/src_wfq/Makefile
                  scripts/create.sh
                  util/Makefile
                  util/Makefile.use_us

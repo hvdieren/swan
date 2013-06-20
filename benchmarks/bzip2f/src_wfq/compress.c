@@ -1868,7 +1868,7 @@ BZ2_compressFileWFO (FILE *in, FILE *out,
     {
         writer output(out);
         off_t bytes_in = 0;
-	obj::queue_t<EState *> queue1, queue2;
+	obj::hyperqueue<EState *> queue1, queue2;
 	chandle<int> ret;
 
 	spawn( BZ2_compressFileWFO_stage1, ret,
@@ -2038,13 +2038,15 @@ void BZ2_compressFileWFOi_stage2( obj::popdep<istate> in,
     ssync();
 }
 
-void BZ2_compressFileWFOi_stage1(int fd,
+bool BZ2_compressFileWFOi_stage1(int fd,
 				 int blockSize100k,
 				 int verbosity, 
 				 int workFactor,
 				 const off_t size,
 				 unsigned char * addr,
-				 obj::pushdep<istate> queue ) throw()
+				 unsigned char ** addr_state,
+				 obj::pushdep<istate> queue,
+				 size_t scramble ) throw()
 {
     /* start */
 
@@ -2064,11 +2066,11 @@ void BZ2_compressFileWFOi_stage1(int fd,
            consistent with the usual amount of memory use of a
            Cilk++ program.  */
 
-        const unsigned char *base = addr;
-        const unsigned char *const limit = addr + size;
-        while (base < limit) {
+        /*const*/ unsigned char *base = *addr_state;
+        /*const*/ unsigned char *const limit = addr + size;
+        while (base < limit && scramble > 0) {
             struct EState *s = BZ2_bzCompressInitWFO(blockSize100k, verbosity, workFactor); /* freed in write block */
-            const unsigned char *last = base + block;
+            /*const*/ unsigned char *last = base + block;
             if (last >= limit) {
                 last = limit;
             } else if (last - base > 10 && last[0] == last[-1]) {
@@ -2094,8 +2096,13 @@ void BZ2_compressFileWFOi_stage1(int fd,
 	    is.last = last;
 	    queue.push( is );
             base = last;
+
+	    scramble--;
         }
+	*addr_state = base;
     }
+
+    return scramble > 0;
 }
 
 int BZ2_compressFileWFOi(int fd, FILE *out,
@@ -2139,17 +2146,25 @@ int BZ2_compressFileWFOi(int fd, FILE *out,
 
     {
         writer output(out);
-	obj::queue_t<istate> queue1;
-	obj::queue_t<EState *> queue2;
+	obj::hyperqueue<istate> queue1;
+	obj::hyperqueue<EState *> queue2;
 
-	spawn( BZ2_compressFileWFOi_stage1, fd, blockSize100k, verbosity, 
-	       workFactor, size, addr, (obj::pushdep<istate>) queue1 );
+	unsigned char * addr1 = addr;
 
-	spawn( BZ2_compressFileWFOi_stage2,
-	       (obj::popdep<istate>) queue1, (obj::pushdep<EState*>) queue2 );
+	while( true ) {
+	    bool done = call( BZ2_compressFileWFOi_stage1, fd, blockSize100k,
+			      verbosity, workFactor, size, addr, &addr1,
+			      (obj::pushdep<istate>) queue1, size_t(200) );
 
-	spawn( BZ2_compressFileWFO_stage3,
-	       (obj::popdep<EState*>) queue2, &output );
+	    spawn( BZ2_compressFileWFOi_stage2,
+		   (obj::popdep<istate>) queue1, (obj::pushdep<EState*>) queue2 );
+
+	    spawn( BZ2_compressFileWFO_stage3,
+		   (obj::popdep<EState*>) queue2, &output );
+
+	    if( done )
+		break;
+	}
 
 	ssync();
 

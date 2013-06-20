@@ -14,7 +14,7 @@ target_name_ubench()
 
 . $top_builddir/scripts/create.sh
 
-( for tg in 1 5 9 10 11 ; do
+( for tg in 1 5 9 10 11 13 14 15 ; do
 	for d in 1 N1 N2 N5 N10 N20 N40 N60 ; do
 	    echo "ubench data_dep$d wf-$tg"
 	done

@@ -23,7 +23,7 @@
 #ifndef STACK_FRAME_H
 #define STACK_FRAME_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 #include <cstdint>

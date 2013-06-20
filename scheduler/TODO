@@ -1,5 +1,5 @@
-* add_ref()/del_ref() should not be called from tickets a.o. but from
-  grab/release functors in object.h
+* there is a bug in cinoutdep when executing serially: arg_ini_ready grabs
+  lock but release is never called.
 
 * cleanup functors code: all of them should be workable without the MetaData
   template type argument, as we can figure out MetaData from the DepTy.

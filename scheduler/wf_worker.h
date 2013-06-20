@@ -23,7 +23,7 @@
 #ifndef WF_WORKER_H
 #define WF_WORKER_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <unistd.h>
 #include <csetjmp>
@@ -39,8 +39,8 @@
 #include "alc_mmappol.h"
 #include "alc_flpol.h"
 
-#if PROFILE_WORKER || TIME_STEALING
-#include "pp_time.h"
+#if PROFILE_WORKER || TIME_STEALING || PROFILE_QUEUE
+#include "swan/../util/pp_time.h"
 #endif
 
 class stack_frame;
@@ -77,6 +77,10 @@ public:
 
     void reset() { } // delay = 0; }
 };
+
+namespace obj {
+    class profile_queue;
+}
 
 class worker_state {
     // typedef exp_backoff<10,1100,1000000> backoff_t;
@@ -126,7 +130,12 @@ public:
 	pp_time_t time_since_longjmp;
 	pp_time_t time_longjmp;
 	pp_time_t time_clueless;
-	pp_time_t time_release_ready;
+	pp_time_t time_release_ready_success;
+	pp_time_t time_release_ready_fail;
+
+#if PROFILE_QUEUE
+	obj::profile_queue queue;
+#endif // PROFILE_QUEUE
 
 	size_t num_invoke;
 	size_t num_waiting;
@@ -149,6 +158,13 @@ public:
 	size_t num_provgd_steals_fr;
 	size_t num_random_steals;
 	size_t num_focussed_steals;
+
+	size_t num_tkt_evals_release_ready;
+	size_t num_tkt_evals_release_ready_fail;
+
+	size_t num_h0_hits;
+	size_t num_h1_hits;
+	size_t num_hash_empty;
 
 	profile_worker();
 	~profile_worker();

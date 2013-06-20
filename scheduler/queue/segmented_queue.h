@@ -6,39 +6,45 @@
 #include <iostream>
 #include "swan/queue/queue_segment.h"
 
+// Note: pop functionality applies to a segmented_queue where only the head
+// is known. Push may operate on segmented_queues with a head and a tail.
+// Note that there is a slight asymmetry between push and pop as concurrent
+// pushes to the same hyperqueue will push to different segments by
+// construction. Pops may occur concurrently on the same segments, as may
+// pop and push.
+
 namespace obj {
 
-class segmented_queue
-{
-private:
+class segmented_queue;
+class segmented_queue_headonly;
+class segmented_queue_pop;
+class segmented_queue_push;
+
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue & seg );
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue_push & seg );
+inline std::ostream &
+operator << ( std::ostream & os, const segmented_queue_pop & seg );
+
+class segmented_queue {
+protected:
     queue_segment * head, * tail;
-    // TODO: and probably a lock as well for prod/consumer parallelism
-    // Can we avoid the lock if the consumer will leave at least one segment,
-    // ie it will never read/modify tail, and only modify head if gaining access
-    // at which time the producer will not modify head anymore, ie, first set
-    // head to non-zero, then never touch again, and on the other side, wait
-    // until head is non-zero, only then modify
-    // (Sounds like a good match with temporal logic.)
+
+    friend class segmented_queue_pop;
 
     // head may be NULL and tail non-NULL. In this case, the list has been
     // reduced but we know that the current segmented_queue is the last such
     // one (the right-most in the reduction) and therefore any addition
     // in the queue goes to the tail and growing the segment grows the tail.
-    // if head is NULL, the segments should not be deallocated?
-    // NOTE: there may be multiple links to a tail segment. How do we update
-    // them?
+    // if head is NULL, the segments should not be deallocated.
 
 public: 
     segmented_queue() : head( 0 ), tail( 0 ) { }
-    ~segmented_queue() {
+    void erase() {
 	// Ownership is determined when both head and tail are non-NULL.
-	// errs() << "destruct qseg: head=" << head << " tail=" << tail << "\n";
-	if( head != 0 && tail != 0 ) {
-	    for( queue_segment * q=head, * q_next; q != tail; q = q_next ) {
-		q_next = q->get_next();
-		delete q;
-	    }
-	}
+	if( head != 0 && tail != 0 )
+	    head->erase_all();
     }
 
     queue_segment * get_tail() { return tail; }
@@ -47,159 +53,308 @@ public:
     const queue_segment * get_head() const { return head; }
     void set_head( queue_segment * seg ) { head = seg; }
 
-    void take( segmented_queue & from ) {
-	*this = from;
-	from.head = from.tail = 0;
+    void reset() {
+	head = tail = 0;
     }
 
-    void take_head( segmented_queue & from ) {
-	head = *const_cast<queue_segment * volatile * >( &from.head );
-	from.head = 0;
-    }
-
-    void take_tail( segmented_queue & from ) {
-	tail = from.tail;
-	from.tail = 0;
-    }
-
-    segmented_queue & reduce( segmented_queue & right ) {
-	if( !tail ) {
-	    if( !head )
-		head = right.head;
-	    tail = right.tail;
-	    right.head = 0;
-	    right.tail = 0;
-	} else if( right.head ) {
-	    // assert( right.tail );
-	    tail->set_next( right.head );
-	    tail = right.tail; // may be 0
-	    right.head = 0;
-	    right.tail = 0;
-	} else {
-	    assert( !right.tail );
-	}
-	return *this;
-    }
- 
-    // Special case of reduce for publishing queue head:
-    // We know that right.head != 0 and right.tail == 0
-    segmented_queue & reduce_trailing( segmented_queue & right ) {
-	assert( right.head != 0 && "assumption of special reduction case" );
-	assert( right.tail == 0 && "assumption of special reduction case" );
-
-	// Reduce fresh pop-user into parent's children when tail != 0
-	if( !tail ) {
-	    if( !head )
-		head = right.head;
-	    right.head = 0;
-	    right.tail = 0;
-	} else {
-	    tail->set_next( right.head ); // link to next first - race cond!
-	    tail = 0;
-	    right.head = 0;
-	}
-	return *this;
-    }
-
-    void swap( segmented_queue & right ) {
-	queue_segment * h = right.head, * t = right.tail;
-	right.head = head;
-	right.tail = tail;
-	head = h;
-	tail = t;
+    segmented_queue split() {
+	segmented_queue h;
+	h.head = head;
+	head = 0;
+	return h;
     }
 
 public:
-    void push_segment( const q_typeinfo & tinfo ) {
-	queue_segment * seg = queue_segment::create( tinfo );
-	seg->set_producing();
+    segmented_queue &
+    reduce( segmented_queue & right ) {
+	if( !tail ) {
+	    if( !head )
+		head = right.get_head();
+	    tail = right.get_tail();
+	    right.reset();
+	} else if( right.get_head() ) {
+	    tail->set_next( right.get_head() );
+	    tail = right.get_tail(); // may be 0
+	    right.reset();
+	} else {
+	    assert( !right.get_tail() );
+	}
+	return *this;
+    }
+
+    segmented_queue &
+    reduce_reverse( segmented_queue & left ) {
+	left.reduce( *this );
+	std::swap( left, *this );
+	return *this;
+    }
+
+    segmented_queue &
+    reduce_headonly( segmented_queue & right ) {
+	assert( right.get_head() && !right.get_tail() );
+
+	if( !tail ) {
+	    if( !head ) {
+		head = right.get_head();
+	    }
+	    right.reset();
+	} else {
+	    tail->set_next( right.get_head() );
+	    tail = 0;
+	    right.reset();
+	}
+	return *this;
+    }
+};
+
+class segmented_queue_headonly {
+protected:
+    queue_segment * head;
+
+public: 
+    segmented_queue_headonly() : head( 0 ) { }
+
+    queue_segment * get_tail() { return 0; }
+    queue_segment * get_head() { return head; }
+    const queue_segment * get_tail() const { return 0; }
+    const queue_segment * get_head() const { return head; }
+    void set_head( queue_segment * seg ) { head = seg; }
+
+    void reset() {
+	head = 0;
+    }
+
+    void take( segmented_queue_headonly & from ) {
+	std::swap( *this, from );
+    }
+};
+
+class segmented_queue_push : public segmented_queue {
+public: 
+    segmented_queue_push() { }
+
+    void take( segmented_queue_push & from ) {
+	std::swap( *this, from );
+    }
+
+    template<typename T>
+    void push_segment( size_t max_size, size_t peekoff, bool is_head ) {
+	queue_segment * seg
+	    = queue_segment::template create<T>( max_size, peekoff, is_head );
 	if( tail ) {
-	    tail->clr_producing();
 	    tail->set_next( seg );
-	} else // if tail == 0, then also head == 0
+	    tail->clr_producing();
+	} else {
+	    assert( !head && "if tail == 0, then also head == 0" );
+	    if( is_head )
+		seg->rewind();
 	    head = seg;
+	}
 	tail = seg;
     }
 
-public:
-    bool empty() {
+    template<typename T>
+    void push( T && value, size_t max_size, size_t peekoff ) {
+	assert( tail );
+	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
+	// then just wait a bit for the pop to catch up and avoid inserting
+	// a new segment.
+	if( tail->is_full() )
+	    push_segment<T>( max_size, peekoff, false );
+	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
+	tail->push<T>( std::move( value ) );
+    }
+
+    template<typename T>
+    void push( const T & value, size_t max_size, size_t peekoff ) {
+	assert( tail );
+	// TODO: could introduce a delay here, e.g. if concurrent pop exists,
+	// then just wait a bit for the pop to catch up and avoid inserting
+	// a new segment.
+	if( tail->is_full() )
+	    push_segment<T>( max_size, peekoff, false );
+	// errs() << "push on queue segment " << *tail << " SQ=" << *this << "\n";
+	tail->push<T>( value );
+    }
+
+    void push_bookkeeping( size_t npush ) {
+	tail->push_bookkeeping( npush );
+	// errs() << "push_bookkeeping on queue " << tail << ": " << *tail
+	       // << " SQ=" << *this << std::endl;
+    }
+
+    template<typename MetaData, typename T>
+    write_slice<MetaData,T> get_write_slice( size_t length ) {
+	// Push a fresh segment if we don't have enough room on the
+	// current one. Subtract again peek distance from length. Rationale:
+	// we have already reserved this space in the current segment.
+	if( !tail->has_space( length-tail->get_peek_dist() ) )
+	    push_segment<T>( length, tail->get_peek_dist(), false );
+	return tail->get_write_slice<MetaData,T>( length );
+    }
+};
+
+class segmented_queue_pop : public segmented_queue_headonly {
+public: 
+    segmented_queue_pop() { }
+
+private:
+    void await( size_t off ) {
 	assert( head );
 
-	// Is there anything in the queue? If so, return not empty
-	if( likely( !head->is_empty() ) )
-	    return false;
+	if( likely( !head->is_empty( off ) ) )
+	    return;
 
-	// TODO: split remainder off in non-inlineable procedure?
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().sq_await );
+#endif // PROFILE_QUEUE
+
+	// errs() << "await0 " << *this << " head=" << *head << std::endl;
 
 	// As long as nothing has appeared in the queue and the producing
 	// flag is on, we don't really know if the queue is empty or not.
-	// Spin.
+	// Spin until something appears at the next index we will read.
 	do {
-	    while( head->is_empty() && head->is_producing() ) {
-		// busy wait
-		sched_yield();
-	    }
-	    if( !head->is_empty() )
-		return false;
-	    else if( !head->is_producing() ) {
+	    assert( head );
+	    // errs() << "await " << *this << " head=" << *head << std::endl;
+
+	    if( !head->is_empty( off ) )
+		break;
+	    if( !head->is_producing() ) {
 		if( queue_segment * seg = head->get_next() ) {
 		    delete head;
 		    head = seg;
 		} else {
-		    return true;
+		    // In this case, we know the queue is empty.
+		    // This may be an error or not, depending on whether
+		    // we are polling the queue for emptiness, or trying
+		    // to pop.
+		    break;
 		}
 	    }
+	    // busy wait
+	    sched_yield();
 	} while( true );
+
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().sq_await );
+#endif // PROFILE_QUEUE
+    }
+
+public:
+/*
+    void advance_to_end( size_t length ) {
+	if( head )
+	    head->advance_to_end( length );
+    }
+*/
+
+    void take_head( segmented_queue & from ) {
+	head = from.head;
+	from.head = 0;
+    }
+
+    void take( segmented_queue_pop & from ) {
+	std::swap( *this, from );
+    }
+
+    bool empty() {
+	assert( head );
+
+	// Is there anything in the queue? If so, return not empty
+	if( likely( !head->is_empty( head->get_peek_dist() ) ) )
+	    return false;
+
+	// Spin until we are sure about emptiness (nothing more to be
+	// produced for sure).
+	await( head->get_peek_dist() );
+
+	// Now check again. This result is for sure.
+	return head->is_empty( head->get_peek_dist() );
     }
 
     template<typename T>
-    void pop( T & t ) {
-	// TODO: merge code with empty()?
+    T && pop() {
+	// Spin until the desired information appears in the queue.
+        // Require that peek-distance number of elements are available
+        // in the segment. If not, we switch to the next segment because
+        // we know they have been copied, if that segment exists.
+	await( head->get_peek_dist() );
 
-	do {
-	    while( !head || ( head->is_empty() && head->is_producing() ) ) {
-		// busy wait
-		sched_yield();
-	    }
-	    if( !head->is_empty() ) {
-		head->pop( t );
-		/*
-		errs() << "pop from queue " << head << ": value="
-		       << std::dec << t << ' ' << *head << "\n";
-		*/
-		return;
-	    }
-	    if( !head->is_producing() ) {
-		// Always retain at least one segment in the queue,
-		// because we own the head, but we do not always own the tail,
-		// so we cannot change the tail.
-		if( queue_segment * seg = head->get_next() ) {
-		    delete head;
-		    head = seg;
-		} else
-		    break; 
-	    }
-	} while( true );
-/*
-	errs() << "No more data for consumer!!! head = "<< head
-	       << " tail=" << tail
-	       << ' ' << *head <<"\n";
-	errs() << "newline\n";
-*/
-	abort();
+	// errs() << "pop from queue " << head << ": " << *head
+	// << " SQ=" << *this << std::endl;
+
+	assert( !head->is_empty( 0 ) );
+
+	return head->pop<T>();
     }
-	
-    void push( void * value, const q_typeinfo & tinfo ) {
-	if( !tail || tail->is_full() )
-	    push_segment( tinfo );
-	// errs() << "push on queue segment " << tail << "\n";
-	tail->push( value );
+
+    void pop_bookkeeping( size_t npop ) {
+	head->pop_bookkeeping( npop );
+    }
+
+    template<typename T>
+    const T & peek( size_t off ) {
+	// pop should terminate segment when all but <peekoff>
+	// last elements popped.
+	// ? take care not to block until all peek data available...?
+
+	// Spin until the desired information appears in the queue.
+#if PROFILE_QUEUE
+	pp_time_start( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
+	await( off );
+#if PROFILE_QUEUE
+	pp_time_end( &get_profile_queue().sq_peek );
+#endif // PROFILE_QUEUE
+
+	// errs() << "peek from queue " << head << ": value="
+	       // << std::dec << t << ' ' << *head
+	       // << " SQ=" << *this
+	       // << " offset=" << off
+	       // << " position=" << pos << "\n";
+
+	assert( !head->is_empty( off ) );
+	return head->peek<T>( off );
+    }
+
+    // Get access to a part of the buffer that allow to peek npeek elements
+    // and pop npop, where it is assumed that npeek >= npop, i.e., the peeked
+    // elements include the popped ones.
+    template<typename MetaData, typename T>
+    read_slice<MetaData,T> get_read_slice_upto( size_t npop_max, size_t npeek ) {
+	long npop;
+	await( 0 );
+	do { 
+	    long available = head->get_available();
+	    npop = std::min( (long)npop_max, available );
+	    if( npop > 0 )
+		break;
+	    await( 0 );
+	} while( true );
+
+	return head->get_read_slice<MetaData,T>( npop );
     }
 };
 
-inline std::ostream &
+std::ostream &
 operator << ( std::ostream & os, const segmented_queue & seg ) {
-    return os << '{' << seg.get_head() << ", " << seg.get_tail() << '}';
+    return os << '{' << seg.get_head()
+	      << ", " << seg.get_tail()
+	      << '}';
+}
+
+std::ostream &
+operator << ( std::ostream & os, const segmented_queue_push & seg ) {
+    return os << '{' << seg.get_head()
+	      << ", " << seg.get_tail()
+	      << '}';
+}
+
+std::ostream &
+operator << ( std::ostream & os, const segmented_queue_pop & seg ) {
+    return os << '{' << seg.get_head()
+	      << '}';
 }
 
 }//namespace obj

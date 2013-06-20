@@ -25,7 +25,11 @@
 /* Must be at least NUM_TAPS+1: */
 #define IN_BUFFER_LEN 10000
 
+<<<<<<< HEAD
 #define CHUNK 256
+=======
+#define CHUNK 4096
+>>>>>>> c5c5f846bd7b945e7233acf9b23a87637afaf9d4
 
 void begin(void);
 
@@ -108,12 +112,22 @@ int main(int argc, char **argv)
 void begin(void)
 {
     int i;
+<<<<<<< HEAD
     float in[NUM_TAPS+CHUNK*(DECIMATION+1)];
     LPFData lpf_data;
     EqualizerData eq_data;
     float sum;
     float lpf[2+CHUNK-1];
     float dm[64+CHUNK], dms;
+=======
+    static float in[NUM_TAPS+CHUNK*(DECIMATION+1)];
+    LPFData lpf_data;
+    EqualizerData eq_data;
+    float sum;
+    static float lpf[2+CHUNK-1];
+    static float dm[64+CHUNK];
+    float dms;
+>>>>>>> c5c5f846bd7b945e7233acf9b23a87637afaf9d4
     int dmi;
 
     init_lpf_data(&lpf_data, CUTOFF_FREQUENCY, NUM_TAPS, DECIMATION);
@@ -225,8 +239,13 @@ void begin(void)
 }
 
 // out: up to IN_BUFFER_LEN (fill as much as possible)
+<<<<<<< HEAD
 void get_float_df(obj::outdep<float[NUM_TAPS+CHUNK*(DECIMATION+1)]> c,
 		  obj::indep<float[NUM_TAPS+CHUNK*(DECIMATION+1)]> p) {
+=======
+void get_float_df(obj::outdep<float[OBJ_IN_SIZE]> c,
+		  obj::indep<float[OBJ_IN_SIZE]> p) {
+>>>>>>> c5c5f846bd7b945e7233acf9b23a87637afaf9d4
     get_float_chunk( *c, *p );
 }
 

@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /*
  * Header file to summarize all compile-time configuration switches.
  */
@@ -44,6 +44,7 @@
 #define DBG_MCS_MUTEX 0 // with is faster due to assembly code sequence generated
 #define PROFILE_WORKER 0
 #define PROFILE_WORKER_SUMMARY 0
+#define PROFILE_QUEUE 0
 #define PROFILE_SPAWN_DEQUE 0
 #define PROFILE_OBJECT 0
 #define OBJECT_INOUT_RENAME 0
@@ -64,6 +65,7 @@
 #define DBG_MCS_MUTEX 1
 #define PROFILE_WORKER 0
 #define PROFILE_WORKER_SUMMARY 1
+#define PROFILE_QUEUE 0
 #define PROFILE_SPAWN_DEQUE 0
 #define PROFILE_OBJECT 0
 #define OBJECT_INOUT_RENAME 0
@@ -190,9 +192,12 @@
  *    file = ecgtaskgraph.h
  *    currently best embedded generational/multi-generation/hypergraph
  * 12: global tickets with ROB
- * 13/14: Hypergraph idea implemented as a list with flags on the tasks
+ * 13/14/15: Hypergraph idea implemented as a list with flags on the tasks
  *     indicating when a generation ends. 13 uses distinct list nodes, 14 uses
- *     list nodes embedded in the tasks.
+ *     list nodes embedded in the tasks. 15 uses embedded lists and also a single
+ *     lock for the whole graph (oldest and youngest).
+ * 16:
+ *     file = ltickets.h
  */
 #ifndef OBJECT_TASKGRAPH
 #define OBJECT_TASKGRAPH 1
@@ -223,7 +228,7 @@
 
 /* Using HWLOC to schedule OS threads and analyze cache hierarchy
  */
-#define USE_HWLOC 0
+#define HAVE_HWLOC
 
 /* Disable techniques not present in the PACT11_VERSION of the scheduler.
  * This concerns only techniques added in the March 2011 - August 2011

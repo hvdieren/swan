@@ -12,7 +12,7 @@ typedef struct test {
 	// int value3;
 	// int value4;
 	// int value5;
-	char* str;
+	char const * str;
 	char ch1;
 	char ch2;
 	// int value6;
@@ -51,14 +51,14 @@ void rec_producer(pushdep<test> q, int pos, int i)
 
 void rec_producer_wrapper(pushdep<test> q, int pos, int i)
 {
-	//queue_t<int> q2(q);
+	//hyperqueue<int> q2(q);
 	//q2 = q;
 	call(rec_producer, (pushdep<test>)q, pos, i);
 	return;
 }
 void rec_producer_wrapper2(pushdep<test> q, int pos, int i)
 {
-	//queue_t<int> q2(q);
+	//hyperqueue<int> q2(q);
 	call(rec_producer_wrapper, (pushdep<test>)q, pos, i);
 	return;
 }
@@ -138,8 +138,8 @@ void func()
 	FILE *fp = fopen("test_structs.txt", "a");
 	for(int i = 0; i<NUM_PRODUCERS; i++)
 	{
-		queue_t<test> a;
-		queue_t<test> b;
+		hyperqueue<test> a;
+		hyperqueue<test> b;
 		//spawn(rec_producer_wrapper2, (pushdep<test>)q, i, 0);
 		call(fragment, (outdep<int>)o);
 		spawn(fragmentrefine, (indep<int>)o, (pushdep<test>)a, (inoutdep<int>)wait_ref, i);
@@ -201,10 +201,10 @@ int main()
     errs()<<"size of integer = "<<sizeof(int)<<" sizeof(char) = "<<sizeof(char)<<" sizeof test struct = "<<sizeof(test)<<" sizeof long = "<<sizeof(long)<<"\n";
 	initInput();
 	run(func);
-	//queue_t<int> q;
+	//hyperqueue<int> q;
 	//queue_version * qv;
 	//cout<<"size of q = "<<sizeof(q)<<" sizeof qversion * = "<<sizeof(qv)<<"\n";
-	//cout<<" q has default constructor = "<<std::has_trivial_default_constructor<queue_t<int>>::value<<"\n";
+	//cout<<" q has default constructor = "<<std::has_trivial_default_constructor<hyperqueue<int>>::value<<"\n";
 	errs()<<"size of integer = "<<sizeof(int)<<" sizeof(char*) = "<<sizeof(char*)<<" sizeof test struct = "<<sizeof(test)<<" sizeof long = "<<sizeof(long)<<"\n";
 	
 	return 0;

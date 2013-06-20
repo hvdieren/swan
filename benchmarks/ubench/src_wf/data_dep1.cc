@@ -165,6 +165,45 @@ void taskWithArg( DepTy<T> arg ) {
     global_sink += x;
 }
 
+template<typename T, template<typename U> class DepTy1,
+	 template<typename U> class DepTy2>
+void taskWithTwoArgs( DepTy1<T> arg1, DepTy2<T> arg2 ) {
+// Do something ...
+    int x = 0;
+    int fibo=g_maxfibo;
+    // for( int i=0; i<g_maxfibo; ++i )
+    // x += leaf_call( fibonacci, i );
+#ifdef DELAY_DEVIATION
+    if(g_deviation != 0) {
+	fibo = (unsigned int)gsl_ran_gaussian_ziggurat(rand_generator, g_deviation)
+								     + g_maxfibo;
+	if (fibo < 0) { fibo=0; }
+    }
+#endif
+    x += leaf_call( fibonacci, (int)fibo );
+    global_sink += x;
+}
+
+template<typename T, template<typename U> class DepTy1,
+	 template<typename U> class DepTy2,
+	 template<typename U> class DepTy3>
+void taskWithThreeArgs( DepTy1<T> arg1, DepTy2<T> arg2, DepTy3<T> arg3 ) {
+// Do something ...
+    int x = 0;
+    int fibo=g_maxfibo;
+    // for( int i=0; i<g_maxfibo; ++i )
+    // x += leaf_call( fibonacci, i );
+#ifdef DELAY_DEVIATION
+    if(g_deviation != 0) {
+	fibo = (unsigned int)gsl_ran_gaussian_ziggurat(rand_generator, g_deviation)
+								     + g_maxfibo;
+	if (fibo < 0) { fibo=0; }
+    }
+#endif
+    x += leaf_call( fibonacci, (int)fibo );
+    global_sink += x;
+}
+
 void taskref() {
     int x = 0;
     // for( int i=0; i<g_maxfibo; ++i )
@@ -231,6 +270,10 @@ enum exp_enum {
     exp_scalar_reduction,
     exp_object_reduction,
     exp_truedep,
+    exp_cholesky,
+    exp_mmul_ijk,
+    exp_mmul_ikj,
+    exp_mmul_kij,
     exp_NUM
 };
 
@@ -246,7 +289,11 @@ const char * const experiment_desc[exp_NUM] = {
     "commutative in/out dependency",
     "scalar reduction in/out dependency",
     "object reduction in/out dependency",
-    "true dependency"
+    "true dependency",
+    "cholesky structure",
+    "matmul ijk structure",
+    "matmul ikj structure",
+    "matmul kij structure",
 };
 
 const char * const experiment_arg[exp_NUM] = {
@@ -261,7 +308,11 @@ const char * const experiment_arg[exp_NUM] = {
     "cinoutdep",
     "scalred",
     "objred",
-    "truedep"
+    "truedep",
+    "cholesky",
+    "mmulijk",
+    "mmulikj",
+    "mmulkij"
 };
 
 exp_enum decode( const char * arg ) {
@@ -351,8 +402,8 @@ struct fake_dependency {
 	the_task_graph_traits::release_task( fr0 );
 	fr0->get_parent()->get_full()->remove_child();
 #if OBJECT_TASKGRAPH == 1 || OBJECT_TASKGRAPH == 8
-	// triggers assert in debug mode
-	io_obj.get_version()->get_metadata()->update_depth(0);
+	// update_depth() triggers assert in debug mode
+	io_obj.get_version()->get_metadata()->update_depth_ubench(0);
 	// clear out task graph (hashed lists)
 	stack_frame_traits<full_frame>::get_metadata( ff0 )->reset();
 #endif
@@ -361,6 +412,178 @@ struct fake_dependency {
 #endif
     }
 };
+
+template<typename T>
+unsigned int
+par_cholesky( unsigned int niters, unsigned int DIM, object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int j=0; j < DIM; ++j ) {
+	    for( unsigned int k=0; k < j; ++k ) {
+		for( unsigned int i=j+1; i < DIM; ++i ) {
+		    spawn( taskWithThreeArgs<T, indep, indep, inoutdep>,
+			   (indep<T>)obj[i+DIM*k], (indep<T>)obj[j+DIM*k],
+			   (inoutdep<T>)obj[i+DIM*j] );
+		    ++num_tasks;
+		}
+	    }
+	    for( unsigned int i=0; i < j; ++i ) {
+		spawn( taskWithTwoArgs<T, indep, inoutdep>,
+		       (indep<T>)obj[j+DIM*i], (inoutdep<T>)obj[j+DIM*j] );
+		++num_tasks;
+	    }
+	    spawn( taskWithArg<T, inoutdep>, (inoutdep<T>)obj[j+DIM*j] );
+	    ++num_tasks;
+	    for( unsigned int i=j+1; i < DIM; ++i ) {
+		spawn( taskWithTwoArgs<T, indep, inoutdep>,
+		       (indep<T>)obj[j+DIM*j], (inoutdep<T>)obj[i+DIM*j] );
+		++num_tasks;
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_ijk( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int i=0; i < DIM; ++i ) {
+	    for( unsigned int j=0; j < DIM; ++j ) {
+		for( unsigned int k=0; k < DIM; ++k ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_ikj( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int i=0; i < DIM; ++i ) {
+	    for( unsigned int k=0; k < DIM; ++k ) {
+		for( unsigned int j=0; j < DIM; ++j ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename T>
+unsigned int
+par_matmul_kij( unsigned int niters, unsigned int DIM,
+		object_t<T> * obj ) {
+    unsigned int num_tasks = 0;
+    for( unsigned int ni=0; ni < niters; ++ni ) {
+	for( unsigned int k=0; k < DIM; ++k ) {
+	    for( unsigned int i=0; i < DIM; ++i ) {
+		for( unsigned int j=0; j < DIM; ++j ) {
+		    // All indeps are trivial.
+		    spawn( taskWithArg<T, inoutdep>,
+			   (inoutdep<T>)obj[i*DIM+j] );
+		    ++num_tasks;
+		}
+	    }
+	}
+	ssync();
+    }
+    return num_tasks;
+}
+
+template<typename M, typename T, template<typename U> class DepTy>
+void par_region4( unsigned int niters, unsigned int nobj,
+		  unsigned int batch1, unsigned int batch2,
+		  unsigned int batchT, object_t<T> * obj ) {
+    // This code is intended to be run by only a single thread.
+    // It is kind of "hacky"
+    // auto md = (*obj).get_version()->get_metadata();
+    unsigned int i=0;
+    unsigned int b=0;
+
+    fake_dependency<T> fake_dep( obj, stack_frame::my_stack_frame() );
+    --niters;
+
+    // errs() << "v=" << obj->get_version() << "\n";
+
+    for( unsigned int j=0; j < niters; ++j ) {
+	// errs() << "j=" << j << " i=" << i << "\n";
+	if( b < batch1 )
+	    spawn( taskWithArg<T, indep>, (indep<T>)*obj );
+	else
+	    spawn( taskWithArg<M, DepTy>, (DepTy<M>)*obj );
+
+	if( ++b == batch1+batch2 )
+	    b = 0;
+
+	if( ++i == batchT ) {
+	    fake_dep.release();
+
+	    // errs() << "inl sync\n";
+	    ssync();
+
+	    fake_dep.issue();
+	    --niters;
+	    i = 0;
+	}
+    }
+
+    fake_dep.release();
+
+    // errs() << "final sync\n";
+    ssync();
+}
+
+template<typename M, typename T, template<typename U> class DepTy>
+void par_region4b( unsigned int niters, unsigned int nobj,
+		   unsigned int batch1, unsigned int batch2,
+		   unsigned int batchT, object_t<T> * obj ) {
+    // This code is intended to be run by only a single thread.
+    // It is kind of "hacky"
+    // auto md = (*obj).get_version()->get_metadata();
+    unsigned int i=0;
+    unsigned int b=0;
+
+    // errs() << "v=" << obj->get_version() << "\n";
+
+    for( unsigned int j=0; j < niters; ++j ) {
+	// errs() << "j=" << j << " i=" << i << "\n";
+	if( b < batch1 )
+	    spawn( taskWithArg<T, indep>, (indep<T>)*obj );
+	else
+	    spawn( taskWithArg<M, DepTy>, (DepTy<M>)*obj );
+
+	if( ++b == batch1+batch2 )
+	    b = 0;
+
+	if( ++i == batchT ) {
+	    // errs() << "inl sync\n";
+	    ssync();
+	    i = 0;
+	}
+    }
+
+    // errs() << "final sync\n";
+    ssync();
+}
+
 
 template<typename M, typename T, template<typename U> class DepTy>
 void par_region3( unsigned int niters, unsigned int nobj,
@@ -372,6 +595,7 @@ void par_region3( unsigned int niters, unsigned int nobj,
     unsigned int i=0;
 
     fake_dependency<T> fake_dep( obj, stack_frame::my_stack_frame() );
+    --niters;
 
     // errs() << "v=" << obj->get_version() << "\n";
 
@@ -389,6 +613,7 @@ void par_region3( unsigned int niters, unsigned int nobj,
 	    ssync();
 
 	    fake_dep.issue();
+	    --niters;
 	    i = 0;
 	}
     }
@@ -398,6 +623,7 @@ void par_region3( unsigned int niters, unsigned int nobj,
     // errs() << "final sync\n";
     ssync();
 }
+
 
 template<typename T>
 void par_region( unsigned int niters, void (*fn)(T) ) {
@@ -412,8 +638,9 @@ void ref_region( unsigned int niters, void (*fn)() ) {
 }
 
 template<typename T, template<typename U> class DepTy, typename M = T>
-double experiment( unsigned int niters, unsigned int nobj, unsigned int batch1,
-		   unsigned int batch2, object_t<T> * obj )
+double experiment( unsigned int niters, unsigned int nobj,
+		   unsigned int batch1, unsigned int batch2,
+		   unsigned int batchT, size_t prebuild, object_t<T> * obj )
     __attribute__((always_inline));
 template<typename T>
 double experiment( unsigned int niters, void (*fn)(T) )
@@ -424,13 +651,18 @@ double reference( unsigned int niters, int (*fn)() )
 template<typename T, template<typename U> class DepTy, typename M>
 double experiment( unsigned int niters, unsigned int nobj,
 		   unsigned int batch1, unsigned int batch2,
-		   object_t<T> * obj ) {
+		   unsigned int batchT, size_t prebuild, object_t<T> * obj ) {
     time_val_t start, end, diff;
 
     get_time( &start );
-    if( batch1+batch2 > 0 )
+    if( batchT > 0 ) {
+	if( prebuild )
+	    run( par_region4<M, T, DepTy>, niters, nobj, batch1, batch2, batchT, obj );
+	else
+	    run( par_region4b<M, T, DepTy>, niters, nobj, batch1, batch2, batchT, obj );
+    } else if( batch1+batch2 > 0 ) {
 	run( par_region3<M, T, DepTy>, niters, nobj, batch1, batch2, obj );
-    else if( nobj > 1 )
+    } else if( nobj > 1 )
 	run( par_region2<M, T, DepTy>, niters, nobj, obj );
     else
 	run( par_region<M, T, DepTy>, niters, obj );
@@ -445,6 +677,36 @@ double experiment( unsigned int niters, void (*fn)(T) ) {
 
     get_time( &start );
     run( par_region<T>, niters, fn );
+    get_time( &end );
+    sub_time( &end, &start, &diff );
+    return read_time( &diff );
+}
+
+template<typename T>
+double experiment_cholesky( unsigned int & num_tasks, unsigned int niters,
+			    unsigned int DIM, object_t<T> * obj ) {
+    time_val_t start, end, diff;
+
+    get_time( &start );
+    num_tasks = run( par_cholesky<T>, niters, DIM, obj );
+    get_time( &end );
+    sub_time( &end, &start, &diff );
+    return read_time( &diff );
+}
+
+template<typename T>
+double experiment_matmul( unsigned int & num_tasks, unsigned int niters,
+			  unsigned int order, unsigned int DIM,
+			  object_t<T> * obj ) {
+    time_val_t start, end, diff;
+
+    get_time( &start );
+    if( order == 0 )
+	num_tasks = run( par_matmul_ijk<T>, niters, DIM, obj );
+    else if( order == 1 )
+	num_tasks = run( par_matmul_ikj<T>, niters, DIM, obj );
+    else if( order == 2 )
+	num_tasks = run( par_matmul_kij<T>, niters, DIM, obj );
     get_time( &end );
     sub_time( &end, &start, &diff );
     return read_time( &diff );
@@ -466,7 +728,8 @@ double reference( unsigned int niters, void (*fn)() ) {
 int main( int argc, char* argv[] ) {
     unsigned int j;
     exp_enum exp_type = exp_NUM;
-    unsigned int num_tasks = 0, num_objects = 0, batch1 = 0, batch2 = 0;
+    unsigned int num_tasks = 0, num_objects = 0, batch1 = 0, batch2 = 0,
+	batchT = 0, prebuild = 0;
     double elapsed = 0;
 
     // Correct syntax is:
@@ -476,8 +739,16 @@ int main( int argc, char* argv[] ) {
 	exp_type   = decode( argv[1] );
 	num_tasks = atoi( argv[2] );
 	num_objects  = atoi( argv[3] );
-	if( sscanf( argv[4], "%d:%d", &batch1, &batch2 ) != 2 )
-	    exp_type = exp_NUM; // failure code
+	if( sscanf( argv[4], "%d:%d:%d:%d", &batch1, &batch2, &batchT,
+		    &prebuild ) != 4 ) {
+	    if( sscanf( argv[4], "%d:%d:%d", &batch1, &batch2, &batchT )
+		!= 3 ) {
+		if( sscanf( argv[4], "%d:%d", &batch1, &batch2 ) != 2 )
+		    exp_type = exp_NUM; // failure code
+		batchT = 0;
+	    }
+	    prebuild = batchT > 0;
+	}
 	g_maxfibo  = atoi( argv[5] );
 	if(argc > 6) {
 	    g_deviation = atoi(argv[6]);
@@ -495,9 +766,10 @@ int main( int argc, char* argv[] ) {
 	exit(1);
     }
 
-    printf( "%s tasks=%u objects=%u batch=%d:%d workload=%u deviation=%u\n",
+    printf( "%s tasks=%u objects=%u batch=%d:%d:%d:%d workload=%u "
+	    "deviation=%u\n",
 	    experiment_desc[exp_type], num_tasks, num_objects,
-	    batch1, batch2, g_maxfibo, g_deviation );
+	    batch1, batch2, batchT, prebuild, g_maxfibo, g_deviation );
 
     //Set up enviroment for GSL (random number generator with gaussian distro)
 #if DELAY_DEVIATION
@@ -518,36 +790,80 @@ int main( int argc, char* argv[] ) {
 	break;
     case exp_indep:
 	elapsed = experiment<int, indep>(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
     case exp_outdep:
 	elapsed = experiment<int, outdep>(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
     case exp_inoutdep:
 	elapsed = experiment<int, inoutdep>(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
 #if OBJECT_COMMUTATIVITY
     case exp_cinoutdep:
 	elapsed = experiment<int, cinoutdep>(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
 #endif
 #if OBJECT_REDUCTION
     case exp_scalar_reduction:
 	elapsed = experiment<int, reduction, add_monad<int> >(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
     case exp_object_reduction:
 	elapsed = experiment<int, reduction, madd_monad<int> >(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
 #endif
     case exp_truedep:
 	elapsed = experiment<int, truedep>(
-	    num_tasks, num_objects, batch1, batch2, param );
+	    num_tasks, num_objects, batch1, batch2, batchT, prebuild, param );
 	break;
+    case exp_cholesky:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_cholesky] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_cholesky<int>( num_tasks, num_iters, batch1, param ); 
+	break;
+    }
+    case exp_mmul_ijk:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_ijk] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 0, batch1, param ); 
+	break;
+    }
+    case exp_mmul_ikj:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_ikj] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 1, batch1, param ); 
+	break;
+    }
+    case exp_mmul_kij:
+    {
+	if( batch1*batch1 > num_objects ) {
+	    fprintf(stderr, "\t %8s : too few objects for dimensions (batch1)\n",
+		    experiment_arg[(int)exp_mmul_kij] );
+	    exit(1);
+	}
+	unsigned int num_iters = num_tasks;
+	elapsed = experiment_matmul<int>( num_tasks, num_iters, 2, batch1, param ); 
+	break;
+    }
     case exp_atomic_inc:
     {
 	time_val_t start, end, diff;

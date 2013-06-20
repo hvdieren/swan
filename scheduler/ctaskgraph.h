@@ -1,3 +1,4 @@
+// -*- c++ -*-
 /*
  * Copyright (C) 2011 Hans Vandierendonck (hvandierendonck@acm.org)
  * Copyright (C) 2011 George Tzenakis (tzenakis@ics.forth.gr)
@@ -19,7 +20,6 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// -*- c++ -*-
 /* ctaskgraph.h
  * This file implements an explicit task graph where edges between tasks
  * are explicitly maintained. It supports commutativity and reductions, but
@@ -30,13 +30,19 @@
 
 #include <cstdint>
 #include <iostream>
+
+#include "swan/wf_frames.h"
+#include "swan/lock.h"
+#include "swan/queue/taskgraph.h"
+#include "swan/taskgraph/ready_list_tg.h"
+#include "swan/functor/acquire.h"
+
+#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 9 )
+
+#if EMBED_LISTS
+#include "swan/lfllist.h"
+#else
 #include <list>
-
-#include "wf_frames.h"
-#include "lock.h"
-
-#if OBJECT_TASKGRAPH == 9
-#include "lfllist.h"
 #endif
 
 // ERASE_NULL: When erasing a reader from the readers list, don't unlink,
@@ -80,9 +86,9 @@ operator << ( std::ostream & os, group_t g ) {
 // ----------------------------------------------------------------------
 // tags to link task on generation's task list
 // ----------------------------------------------------------------------
-#if OBJECT_TASKGRAPH == 5
+#if !EMBED_LISTS
 class gen_tags { };
-#else //  OBJECT_TASKGRAPH == 9
+#else //  EMBED_LISTS
 class task_metadata;
 
 class gen_tags {
@@ -113,45 +119,6 @@ struct dl_list_traits<obj::gen_tags> {
 
 namespace obj { // reopen
 #endif
-
-// ----------------------------------------------------------------------
-// taskgraph: task graph roots in ready_list
-// ----------------------------------------------------------------------
-class pending_metadata;
-
-class taskgraph {
-    typedef cas_mutex mutex_t;
-
-private:
-    std::list<pending_metadata *> ready_list; // implement using prev/next in link_md?
-    mutable mutex_t mutex;
-
-public:
-    ~taskgraph() {
-	assert( ready_list.empty() && "Pending tasks at destruction time" );
-    }
-
-    inline pending_metadata * get_ready_task();
-
-    void add_ready_task( pending_metadata * fr ) {
-	// errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-	lock();
-	ready_list.push_back( fr );
-	unlock();
-    }
-
-    bool empty() const {
-	lock();
-	bool ret = ready_list.empty();
-	unlock();
-	return ret;
-    }
-
-private:
-    void lock() const { mutex.lock(); }
-    void unlock() const { mutex.unlock(); }
-};
-
 
 // ----------------------------------------------------------------------
 // Functor for replacing the pointers to a pending frame with pointers
@@ -238,70 +205,6 @@ static inline void arg_replace_fn( Task * from, Task * to, task_data_t & td ) {
 #endif
 
 // ----------------------------------------------------------------------
-// Functor for acquiring locks (commutativity) and privatization (reductions)
-// when selecting an otherwise ready task.
-// ----------------------------------------------------------------------
-template<typename MetaData>
-struct acquire_functor {
-    // Default case is do nothing
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return true;
-    }
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-
-    // Commutativity
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    bool operator () ( cinoutdep<T> & obj,
-		       typename cinoutdep<T>::dep_tags & sa ) {
-	MetaData * md = obj.get_version()->get_metadata();
-	return md->commutative_try_acquire();
-    }
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-// An acquire and privatize function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
-#else
-template<typename MetaData, typename... Tn>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
-#endif
-
-
-// ----------------------------------------------------------------------
 // ctg_metadata: dependency-tracking metadata (not versioning)
 // ----------------------------------------------------------------------
 class task_metadata;
@@ -320,6 +223,11 @@ private:
     mutex_t mutex;
     mutex_t cmutex;
 
+    void sanity_check() const {
+	assert( task_set[0].begin() == task_set[0].end() || task_set[0].front()->next != task_set[0].front() );
+	assert( task_set[1].begin() == task_set[1].end() || task_set[1].front()->next != task_set[1].front() );
+    }
+
 public:
     ctg_metadata() : cur( 0 ) {
 	// errs() << "ctg_metadata create: " << this << "\n";
@@ -335,8 +243,18 @@ public:
 
     // External inferface
     bool rename_is_active() const { return has_tasks(); }
-    bool rename_has_readers() const { return has_readers(); }
-    bool rename_has_writers() const { return has_writers(); }
+    bool rename_has_readers() {
+	lock();
+	bool c = has_readers();
+	unlock();
+	return c;
+    }
+    bool rename_has_writers() {
+	lock();
+	bool c = has_writers();
+	unlock();
+	return c;
+    }
 
     bool new_group( group_t g ) const { return g == g_write || group[cur] != g; }
     bool match_group( group_t g ) const {
@@ -347,13 +265,18 @@ public:
 
     // Register users of this object.
     void add_task( task_metadata * t, group_t g, gen_tags * tags ) { // requires lock on this
+	assert( mutex.test_lock() );
+	sanity_check();
 	// errs() << "obj " << this << " add task " << t << " g=" << g
 	// << " cur=" << group[cur] << "\n";
 	if( new_group( g ) ) {
-	    if( has_tasks( cur ) ) {
-		cur = 1 - cur;
-		task_set[cur].clear();
-	    }
+	    // NOTE: only switching task sets here if the current one is empty
+	    // may create both groups with g_read; More importantly, it can create
+	    // serious bugs - a task_set list with loops resulting in deadlock.
+	    // if( has_tasks( cur ) ) {
+	    cur = 1 - cur;
+	    task_set[cur].clear();
+	    // }
 	    group[cur] = g;
 	}
 #if OBJECT_TASKGRAPH == 5
@@ -362,10 +285,12 @@ public:
 	tags->task = t;
 	task_set[cur].push_back( tags );
 #endif
+	sanity_check();
     }
 
     // Only intended for output, so g == g_write
     void force_task( task_metadata * t, gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	assert( !has_tasks( cur ) );
 	cur = 0;
 	group[0] = g_write;
@@ -376,6 +301,7 @@ public:
 	tags->task = t;
 	task_set[0].push_back( tags );
 #endif
+	sanity_check();
     }
 
     // Erase links if we are about to destroy a task
@@ -391,8 +317,10 @@ private:
 #else
 	    task_set[idx].erase( I );
 #endif
+	sanity_check();
 	    return true;
 	}
+	sanity_check();
 	return false;
     }
 public:
@@ -406,6 +334,7 @@ public:
     }
 #else // OBJECT_TASKGRAPH == 9
     void del_task( task_metadata * fr, group_t g, gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	if( g == g_write ) {
 	    // If we delete a writer, we may have two consecutive write
 	    // generations, which means we may have to erase from both lists.
@@ -420,7 +349,7 @@ public:
 	    else // if( group[1] == g ) -- del w/o knowing list head if needed
 		task_set[1].erase( dl_list<gen_tags>::iterator( tags ) );
 	}
-	    
+	sanity_check();
     }
 #endif
 
@@ -449,8 +378,10 @@ public:
 public:
     void replace_task( task_metadata * from, task_metadata * to, group_t g,
 		       gen_tags * tags ) {
+	assert( mutex.test_lock() );
 	assert( tags->task == from && "generation list error" );
 	tags->task = to;
+	sanity_check();
     }
 #endif
 
@@ -458,6 +389,7 @@ public:
 private:
     bool has_tasks( int idx ) const {
 #if ERASE_NULL
+	assert( mutex.test_lock() );
 	for( auto I=task_set[idx].begin(), E=task_set[idx].end(); I != E; ++I )
 	    if( *I )
 		return true;
@@ -499,36 +431,64 @@ operator << ( std::ostream & os, const ctg_metadata & md_const ) {
 }
 
 // ----------------------------------------------------------------------
-// full_metadata: task graph metadata per full frame
+// link_metadata: task graph metadata per stored frame
 // ----------------------------------------------------------------------
-class full_metadata {
-    taskgraph graph;
-
-protected:
-    full_metadata() { }
-
-public:
-    // This functionality is implemented through arg_issue of the arguments
-    void push_pending( pending_metadata * frame ) { }
-
-    pending_metadata * get_ready_task() {
-	return graph.get_ready_task();
-    }
-    pending_metadata * get_ready_task_after( task_metadata * prev ) {
-	return graph.get_ready_task();
-    }
-
-    taskgraph * get_graph() { return &graph; }
-
-    // void lock() { graph.lock(); }
-    // void unlock() { graph.unlock(); }
+class link_metadata {
+#if EMBED_LISTS
+    link_metadata * prev, * next;
+    friend class dl_list_traits<link_metadata>;
+#endif
 };
+
+//----------------------------------------------------------------------
+// Traits for accessing elements stored in a dl_list<>, in global
+// namespace.
+//----------------------------------------------------------------------
+
+} // end namespace obj because the traits class must be in global namespace
+
+#if EMBED_LISTS
+template<>
+struct dl_list_traits<obj::link_metadata> {
+    typedef obj::link_metadata T;
+    typedef obj::link_metadata ValueType;
+
+    // not implemented -- static size_t get_depth( T * elm );
+    // not implemented -- static bool is_ready( T * elm );
+
+    static void set_prev( T * elm, T * prev ) { elm->prev = prev; }
+    static T * get_prev( T const * elm ) { return elm->prev; }
+    static void set_next( T * elm, T * next ) { elm->next = next; }
+    static T * get_next( T const * elm ) { return elm->next; }
+
+    static ValueType * get_value( T const * elm ) {
+	return const_cast<ValueType *>( elm ); // cheat
+    }
+};
+#endif
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+class pending_metadata;
+
+#if EMBED_LISTS
+typedef ::taskgraph<pending_metadata, link_metadata,
+		    dl_head_list<link_metadata> > taskgraph;
+#else
+typedef ::taskgraph<pending_metadata, pending_metadata,
+		    std::list<obj::pending_metadata *> > taskgraph;
+#endif
 
 // ----------------------------------------------------------------------
 // task_metadata: dependency-tracking metadata for tasks (pending and stack)
 //     We require the list of objects that are held by this task. This is
 //     obtained through the actual argument list of the task.
 // ----------------------------------------------------------------------
+class full_metadata;
+
 class task_metadata : public task_data_t {
     typedef cas_mutex mutex_t;
 #if !STORED_ANNOTATIONS
@@ -560,44 +520,12 @@ protected:
 	// errs() << "task_metadata delete: " << this << '\n';
     }
     // Constructor for creating stack frame from pending frame
-    void create_from_pending( task_metadata * from, full_metadata * ff ) {
-	graph = ff->get_graph();
-	assert( graph != 0 && "create_from_pending with null graph" );
-	// errs() << "task_metadata create " << this << " from pending " << from << " graph " << graph << "\n";
-
-	// First change the task pointer for each argument's dependency list,
-	// then assign all outgoing dependencies from <from> to us.
-	lock();
-#if STORED_ANNOTATIONS
-	arg_replace_fn<ctg_metadata,task_metadata>( from, this, get_task_data() );
-#else
-	assert( from->replace_fn && "Don't have a replace frame function" );
-	(*from->replace_fn)( from, this, get_task_data() );
-#endif
-
-	assert( deps.empty() );
-	from->lock();
-	deps.swap( from->deps );
-	from->unlock();
-	unlock();
-    }
-
-    void convert_to_full( full_metadata * ff ) {
-	graph = ff->get_graph();
-	assert( graph != 0 && "create_from_pending with null graph" );
-    }
+    inline void create_from_pending( task_metadata * from, full_metadata * ff );
+    inline void convert_to_full( full_metadata * ff );
 
 public:
     template<typename... Tn>
-    void create( full_metadata * ff ) {
-	graph = ff->get_graph();
-	// assert( graph != 0 && "Create with null graph" );
-#if !STORED_ANNOTATIONS
-	replace_fn = &arg_replace_fn<ctg_metadata,task_metadata,Tn...>;
-	acquire_fn = &arg_acquire_fn<ctg_metadata,Tn...>;
-#endif
-	// errs() << "set graph in " << this << " to " << graph << "\n";
-    }
+    inline void create( full_metadata * ff );
 
 public:
     // Add edge: Always first increment incoming count, then add edge.
@@ -610,6 +538,8 @@ public:
 	assert( mutex.test_lock() );
 	deps.push_back( to );
     }
+
+    taskgraph * get_graph() { return graph; }
 
     // Locking
     void lock() { mutex.lock(); }
@@ -660,7 +590,9 @@ public:
     }
 
     void start_deregistration() { }
-    void stop_deregistration() { lock(); wakeup_deps(); unlock(); }
+    void stop_deregistration( full_metadata * parent ) {
+	lock(); wakeup_deps(); unlock();
+    }
 };
 
 void
@@ -676,13 +608,8 @@ ctg_metadata::link_task( task_metadata * fr ) {
 	t->add_edge( fr ); // requires lock on t, not on fr
 	t->unlock();
     }
-}
-
-// ----------------------------------------------------------------------
-// link_metadata: task graph metadata per stored frame
-// ----------------------------------------------------------------------
-class link_metadata {
-};
+	sanity_check();
+} 
 
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
@@ -693,25 +620,113 @@ public:
     pending_metadata * get_from_task( task_metadata * task ) {
 	return static_cast<pending_metadata *>( task );
     }
+    static inline
+    pending_metadata * get_from_link( link_metadata * link ) {
+	return static_cast<pending_metadata *>( link );
+    }
 };
 
-pending_metadata *
-taskgraph::get_ready_task() {
-    lock();
-    pending_metadata * task = 0;
-    if( !ready_list.empty() ) {
-	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
-	    pending_metadata * t = *I;
-	    if( t->acquire() ) {
-		ready_list.erase( I );
-		task = t;
-		break;
-	    }
-	}
+// ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+} // end namespace obj
+
+#if EMBED_LISTS
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::link_metadata, dl_head_list<obj::link_metadata> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::link_metadata * lnk ) {
+	return obj::pending_metadata::get_from_link( lnk );
     }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#else
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::pending_metadata,
+			std::list<obj::pending_metadata *> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::pending_metadata * lnk ) {
+	return lnk;
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#endif
+
+namespace obj { // reopen
+
+// ----------------------------------------------------------------------
+// full_metadata: task graph metadata per full frame
+// ----------------------------------------------------------------------
+class full_metadata {
+    taskgraph graph;
+
+protected:
+    full_metadata() { }
+
+public:
+    // This functionality is implemented through arg_issue of the arguments
+    void push_pending( pending_metadata * frame ) { }
+
+    pending_metadata * get_ready_task() {
+	return graph.get_ready_task();
+    }
+    pending_metadata * get_ready_task_after( task_metadata * prev ) {
+	return graph.get_ready_task();
+    }
+
+    taskgraph * get_graph() { return &graph; }
+
+    // void lock() { graph.lock(); }
+    // void unlock() { graph.unlock(); }
+};
+
+void
+task_metadata::create_from_pending( task_metadata * from, full_metadata * ff ) {
+    graph = ff->get_graph();
+    assert( graph != 0 && "create_from_pending with null graph" );
+    // errs() << "task_metadata create " << this << " from pending " << from << " graph " << graph << "\n";
+
+    // First change the task pointer for each argument's dependency list,
+    // then assign all outgoing dependencies from <from> to us.
+    lock();
+#if STORED_ANNOTATIONS
+    arg_replace_fn<ctg_metadata,task_metadata>( from, this, get_task_data() );
+#else
+    assert( from->replace_fn && "Don't have a replace frame function" );
+    (*from->replace_fn)( from, this, get_task_data() );
+#endif
+
+    assert( deps.empty() );
+    from->lock();
+    deps.swap( from->deps );
+    from->unlock();
     unlock();
-    // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
-    return task;
+}
+
+void task_metadata::convert_to_full( full_metadata * ff ) {
+    graph = ff->get_graph();
+    assert( graph != 0 && "create_from_pending with null graph" );
+}
+
+template<typename... Tn>
+void task_metadata::create( full_metadata * ff ) {
+    graph = ff->get_graph();
+    // assert( graph != 0 && "Create with null graph" );
+#if !STORED_ANNOTATIONS
+    replace_fn = &arg_replace_fn<ctg_metadata,task_metadata,Tn...>;
+    acquire_fn = &arg_acquire_fn<ctg_metadata,Tn...>;
+#endif
+    // errs() << "set graph in " << this << " to " << graph << "\n";
 }
 
 void

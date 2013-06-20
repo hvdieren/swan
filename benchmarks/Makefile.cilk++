@@ -33,4 +33,4 @@ CXXFLAGS+=-O4 $(OPT) -fno-omit-frame-pointer -pthread
 CFLAGS+=-O4 $(OPT) -fno-omit-frame-pointer -pthread
 LDLIBS+=
 
-CXX=$(HOME)/cilk/bin/cilk++
+CXX=$(HOME)/cilkplus-install/bin/g++

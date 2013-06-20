@@ -19,7 +19,7 @@
  * along with Swan.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "swan_config.h"
 
 #include "wf_stack_frame.h"
 #include "wf_spawn_deque.h"

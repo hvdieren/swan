@@ -46,8 +46,15 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #endif
-#ifdef __cilkplusplus
-#include <cilk.h>
+#ifdef __linux
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+#ifdef __cilk
+#include <cilk/cilk.h>
+#include <cilk/cilk_api.h>
+#include <cilk/reducer.h>
 #endif
 
 extern "C"
@@ -834,6 +841,14 @@ private:
     void write(const unsigned char *, unsigned int, bitblock);
 };
 
+extern "C++"
+struct writer_monoid : public cilk::monoid_base<writer>
+{
+    static void reduce( void * left, void * right ) {
+	static_cast<value_type*>( left )->reduce( static_cast<value_type*>( right ) );
+    }
+};
+
 writer::writer(FILE *out)
   /* A 32 bit header precedes construction of this object */
   : out(out), carry(), total(32), crc(0), failed(false)
@@ -964,8 +979,9 @@ void writer::reduce(writer *right)
     return;
 }
 
-#ifdef __cilkplusplus
-typedef cilk::hyperobject<writer> hyper_writer;
+#ifdef __cilk
+//typedef cilk::hyperobject<writer> hyper_writer;
+typedef cilk::reducer<writer_monoid> hyper_writer;
 #define VIEW(x) (x)()
 #else
 typedef writer hyper_writer;

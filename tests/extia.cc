@@ -20,20 +20,38 @@
  */
 
 // -*- c++ -*-
-#ifndef POKE_H
-#define POKE_H
+#include <cstdlib>
+#include <cstring>
+#include <cassert>
 
-inline void poke(void)  __attribute__((always_inline));
+#include <iostream>
 
-inline void poke(void) {
-    void * g_esp, * g_ebp, * g_ebx;
-    GET_BP( g_ebp );
-    GET_SP( g_esp );
-    GET_PR( g_ebx );
+#include <unistd.h>
 
-    std::cerr << "poke esp: " << g_esp << "\n"
-	      << "poke ebp: " << g_ebp << "\n"
-	      << "poke ebx: " << g_ebx << "\n";
+#include "wf_interface.h"
+
+int * work0() __attribute__((noinline));
+void * work1() __attribute__((noinline));
+
+int * work0() {
+    obj::typeinfo_array tinfo = obj::typeinfo_array::create<int *>();
+
+    int * ptr = new int [1024];
+
+    obj::typeinfo_array::construct<int *>( &ptr[0], &ptr[1024],
+					   sizeof(int) );
+
+    return ptr;
 }
 
-#endif // POKE_H
+void * work1() { 
+    obj::queue_segment * seg = obj::queue_segment::create<int *>(
+	0, 1023, 0 );
+    return (void *)seg;
+}
+
+int my_main( int argc, char * argv[] ) {
+    work0();
+    work1();
+    return 0;
+}

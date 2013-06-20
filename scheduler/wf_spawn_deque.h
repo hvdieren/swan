@@ -23,7 +23,7 @@
 #ifndef SPAWN_DEQUE_H
 #define SPAWN_DEQUE_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 
@@ -32,8 +32,10 @@
 #include "lock.h"
 
 #if TIME_STEALING
-#include "pp_time.h"
+#include "swan/../util/pp_time.h"
 #endif
+
+class spawn_deque;
 
 struct call_stack {
     stack_frame * head;

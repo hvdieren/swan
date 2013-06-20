@@ -25,6 +25,10 @@
  * between tasks are explicitly maintained. They are not gathered
  * on a single dependee list per task, but they are kept on a task
  * list per generation. The scheme supports commutativity and reductions.
+ *
+ * TODO:
+ * Should we consider a single (coarse) lock version, which would be faster
+ * with 2 or less generations, and slower with deep task graphs?
  */
 #ifndef ECLTASKGRAPH_H
 #define ECLTASKGRAPH_H
@@ -32,21 +36,34 @@
 #include <cstdint>
 #include <iostream>
 
-#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 13 || OBJECT_TASKGRAPH == 14 )
+#if ( OBJECT_TASKGRAPH < 13 || OBJECT_TASKGRAPH > 15 )
+#error This file should only be sourced for OBJECT_TASKGRAPH in {13,14,15}
+#endif
 
-#if EMBED_LISTS
+#define EMBED_LISTS  ( OBJECT_TASKGRAPH == 14 || OBJECT_TASKGRAPH == 15 )
+#define SINGLE_LOCK  ( OBJECT_TASKGRAPH == 15 )
+
+// Per-object users list through gen_tags is currently only supported
+// as an embedded list.
+#define EMBED_USER_LIST 1
+
+#if EMBED_LISTS || EMBED_USER_LIST
 #include "lfllist.h"
+#include <list>
 #else // !EMBED_LISTS
 #include <list>
 #include <vector>
 #endif
 
-#include "wf_frames.h"
-#include "lock.h"
-#include "padding.h"
-#include "alc_allocator.h"
-#include "alc_mmappol.h"
-#include "alc_flpol.h"
+#include "swan/wf_frames.h"
+#include "swan/lock.h"
+#include "swan/padding.h"
+#include "swan/alc_allocator.h"
+#include "swan/alc_mmappol.h"
+#include "swan/alc_flpol.h"
+#include "swan/queue/taskgraph.h"
+#include "swan/taskgraph/ready_list_tg.h"
+#include "swan/functor/acquire.h"
 
 namespace obj {
 
@@ -54,21 +71,23 @@ namespace obj {
 // Auxiliary type
 // ----------------------------------------------------------------------
 enum group_t {
-    g_read,
-    g_write,
+    g_empty = 1,
+    g_read = 2,
+    g_write = 4,
 #if OBJECT_COMMUTATIVITY
-    g_commut,
+    g_commut = 8,
 #endif
 #if OBJECT_REDUCTION
-    g_reduct,
+    g_reduct = 16,
 #endif
-    g_NUM
+    not_g_write = 31-(int)g_write
 };
 
 inline
 std::ostream &
 operator << ( std::ostream & os, group_t g ) {
     switch( g ) {
+    case g_empty: return os << "empty";
     case g_read: return os << "read";
     case g_write: return os << "write";
 #if OBJECT_COMMUTATIVITY
@@ -78,7 +97,7 @@ operator << ( std::ostream & os, group_t g ) {
     case g_reduct: return os << "reduct";
 #endif
     default:
-    case g_NUM: return os << "<NUM>";
+    return os << "<error>";
     }
 }
 
@@ -127,105 +146,18 @@ struct dl_list_traits<obj::link_metadata> {
 #endif
 
 namespace obj { // reopen
+
 // ----------------------------------------------------------------------
 // taskgraph: task graph roots in ready_list
 // ----------------------------------------------------------------------
 class pending_metadata;
 
-class taskgraph {
-    typedef cas_mutex mutex_t;
-
-private:
 #if EMBED_LISTS
-    dl_head_list<link_metadata> ready_list;
-#else // !EMBED_LISTS
-    std::list<pending_metadata *> ready_list;
-#endif
-    mutable mutex_t mutex;
-
-public:
-    ~taskgraph() {
-	assert( ready_list.empty() && "Pending tasks at destruction time" );
-    }
-
-    inline pending_metadata * get_ready_task();
-    inline void add_ready_task( link_metadata * fr );
-
-    // Don't need a lock in this check because it is based on polling a
-    // single variable
-    bool empty() const {
-	// lock();
-	bool ret = ready_list.empty();
-	// unlock();
-	return ret;
-    }
-
-private:
-    void lock() const { mutex.lock(); }
-    void unlock() const { mutex.unlock(); }
-};
-
-// ----------------------------------------------------------------------
-// Functor for acquiring locks (commutativity) and privatization (reductions)
-// when selecting an otherwise ready task.
-// ----------------------------------------------------------------------
-template<typename MetaData>
-struct acquire_functor {
-    // Default case is do nothing
-    template<typename T, template<typename U> class DepTy>
-    bool operator () ( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) {
-	return true;
-    }
-    template<typename T, template<typename U> class DepTy>
-    void undo( DepTy<T> & obj, typename DepTy<T>::dep_tags & sa ) { }
-
-    // Commutativity
-#if OBJECT_COMMUTATIVITY
-    template<typename T>
-    bool operator () ( cinoutdep<T> & obj,
-		       typename cinoutdep<T>::dep_tags & sa ) {
-	MetaData * md = obj.get_version()->get_metadata();
-	return md->commutative_try_acquire();
-    }
-    template<typename T>
-    void undo( cinoutdep<T> & obj, typename cinoutdep<T>::dep_tags & sa ) {
-	obj.get_version()->get_metadata()->commutative_release();
-    }
-#endif
-};
-
-// An acquire and privatize function
-#if STORED_ANNOTATIONS
-template<typename MetaData>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    size_t nargs = td.get_num_args();
-    if( arg_apply_stored_fn( fn, nargs, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_stored_ufn( ffn, nargs, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_stored_ufn( pfn, nargs, args, tags );
-	return true;
-    }
-    return false;
-}
+typedef ::taskgraph<pending_metadata, link_metadata,
+		    dl_head_list<link_metadata> > taskgraph;
 #else
-template<typename MetaData, typename... Tn>
-static inline bool arg_acquire_fn( task_data_t & td ) {
-    acquire_functor<MetaData> fn;
-    char * args = td.get_args_ptr();
-    char * tags = td.get_tags_ptr();
-    if( arg_apply_fn<acquire_functor<MetaData>,Tn...>( fn, args, tags ) ) {
-	finalize_functor<MetaData> ffn( td );
-	arg_apply_ufn<finalize_functor<MetaData>,Tn...>( ffn, args, tags );
-	privatize_functor<MetaData> pfn;
-	arg_apply_ufn<privatize_functor<MetaData>,Tn...>( pfn, args, tags );
-	return true;
-    }
-    return false;
-}
+typedef ::taskgraph<pending_metadata, pending_metadata,
+		    std::list<obj::pending_metadata *> > taskgraph;
 #endif
 
 // ----------------------------------------------------------------------
@@ -237,12 +169,11 @@ class ecltg_metadata;
 // gen_tags stores the accessed generation and links the task on the task list.
 // Required for all types
 class gen_tags {
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     gen_tags * it_next;
     task_metadata * st_task;
 #endif
-    // ecltg_metadata * obj_md; -- implied, this is the argument!
-    bool last_in_gen;
+    size_t last_in_gen; // OPT: bool, size_t for alignment
 
     void clr_last_in_generation() { last_in_gen = false; }
     void set_last_in_generation() { last_in_gen = true; }
@@ -252,14 +183,14 @@ class gen_tags {
     template<typename MetaData, typename Task, template<typename U> class DepTy>
     friend class dep_traits;
     friend class ecltg_metadata;
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     friend class sl_list_traits<gen_tags>;
 #endif
 };
 
 } // end namespace obj because the traits class must be in global namespace
 
-#if EMBED_LISTS
+#if EMBED_USER_LIST
 template<>
 struct sl_list_traits<obj::gen_tags> {
     typedef obj::gen_tags T;
@@ -283,9 +214,10 @@ namespace obj { // reopen
 // ecltg_metadata: dependency-tracking metadata (not versioning)
 // ----------------------------------------------------------------------
 class ecltg_metadata {
-    typedef cas_mutex_v<uint8_t> mutex_t;
+    typedef cas_mutex_v<uint32_t> mutex_t;
 
 private:
+    // Note: with SINGLE_LOCK, we always use the oldest.lock().
     struct Oldest {
 	size_t num_tasks;
 	mutex_t mutex;
@@ -299,40 +231,53 @@ private:
     };
     struct Youngest {
 	group_t g;
-	bool some_tasks;
+#if !SINGLE_LOCK
 	mutex_t mutex;
+#endif // SINGLE_LOCK
 
-	Youngest() : g( g_NUM ), some_tasks( 0 ) { }
+	Youngest() : g( g_empty ) { }
 
-	bool new_group( group_t grp ) const {
-	    // TODO: Optimize by representing group_t as bit_mask?
-	    return ( grp == g_write || g != grp ) && g != g_NUM;
-	}
 	bool match_group( group_t grp ) const {
 	    // This condition is markedly simpler than in other task graphs
-	    // because we reset the group type to undefined (g_NUM) whenever
+	    // because we reset the group type to empty (g_empty) whenever
 	    // the youngest generation runs empty.
-	    return !new_group( grp );
+	    // return ( grp != g_write && g == grp ) || g == g_empty;
+	    // return ( (grp & g_write) == 0 && (g & grp) != 0 )
+		// || (g & g_empty) != 0;
+	    // return ( (g & grp & ~g_write) != 0 ) || (g & g_empty) != 0;
+	    // return ( g & ((grp & ~g_write) | g_empty) ) != 0;
+	    // This boils down to a single testb instruction when inlined
+	    // and grp is known.
+	    return ( g & ((grp | g_empty) & not_g_write ) ) != 0;
 	}
 	void open_group( group_t grp ) { g = grp; }
 
-	void add_task() { some_tasks = true; }
-	void clr_tasks() { some_tasks = false; }
-	bool has_tasks() const { return some_tasks; }
+	// TODO: remove some_tasks variable by setting g to g_NUM?
+	// If g == g_NUM -> no tasks, else at least one task
+	// And also introduce g_empty to cover this, makes has_tasks()
+	// faster by comparing against 0
+	void add_task() { } // some_tasks = true; }
+	void clr_tasks() { g = g_empty; } // some_tasks = false; }
+	bool has_tasks() const { return g != g_empty; } // return some_tasks; }
 
+#if !SINGLE_LOCK
 	void lock() { mutex.lock(); }
 	void unlock() { mutex.unlock(); }
+#endif // SINGLE_LOCK
     };
 
+    // TODO: two lock variables on the same cache line...
     Oldest oldest;
+    // pad_multiple<CACHE_ALIGNMENT, sizeof(Oldest)> padding;
     Youngest youngest;
     size_t num_gens;
 
-#if EMBED_LISTS
-    sl_list<gen_tags> tasks; // set of readers after the writer
-#else // !EMBED_LISTS
-    std::vector<task_metadata *> tasks; // set of readers after the writer
+#if EMBED_USER_LIST
+    typedef sl_list<gen_tags> task_list_type;
+#else // !EMBED_USER_LIST
+    typedef std::vector<task_metadata *> task_list_type;
 #endif
+    task_list_type tasks; // set of readers after the writer
 
     // To implement commutativity
     mutex_t cmutex;
@@ -360,47 +305,20 @@ public:
 	return num_gens > 0;
     }
 
-    // Register users of this object.
-/*
-    bool new_group( group_t g ) const { return g == g_write || gen->group != g;}
-    void open_group( group_t g ) {
-	if( new_group( g ) && gen->has_tasks() ) {
-	    if( prev ) prev->del_ref();
-	    prev = gen;
-	    gen = new generation( g );
-	    prev->set_next_generation( gen );
-	} else // if( gen->group != g )
-	    gen->group = g;
-    }
-    void force_group() { // only intended for outdep, so g == g_write
-	assert( !gen->has_tasks() );
-	gen->group = g_write;
-    }
-    bool match_group( group_t g ) const {
-	// An empty gen implies always an empty prev
-	// Thus, applying distribution allows us to simplify
-	// the last term
-	// return ( !new_group( g ) || !gen->has_tasks() )
-	    // && ( !prev || !prev->has_tasks() );
-	return ( !new_group( g ) && ( !prev || !prev->has_tasks() ) ) || !gen->has_tasks();
-    }
-*/
-
     // Dependency queries on current generation
     bool has_readers() const { return num_gens > 0; } // youngest.has_tasks(); }
     bool has_writers() const { return num_gens > 0; } // youngest.has_tasks(); }
 
     // This is really a ready check: can we launch with the previous gang?
-    // If has_one_generation(), need to check has_tasks() as well,
-    // else just check youngest.
-    bool match_group( group_t grp ) const {
-	return num_gens == 0 || youngest.match_group(grp);
+    bool ini_ready( group_t grp ) const {
+	return ( num_gens == 1 && youngest.match_group( grp ) )
+	    || num_gens == 0;
     }
 
     // Dependency queries on readers
-#if EMBED_LISTS
+#if EMBED_USER_LIST
     typedef sl_list<gen_tags>::const_iterator task_iterator;
-#else // !EMBED_LISTS
+#else // !EMBED_USER_LIST
     typedef std::vector<task_metadata *>::const_iterator task_iterator;
 #endif
     task_iterator task_begin() const { return tasks.begin(); }
@@ -417,16 +335,15 @@ public:
 
 private:
     bool may_interfere() const volatile { return num_gens <= 2; }
-    bool has_one_generation() const volatile { return num_gens <= 1; }
+    // NOTE: push and pop of generations not always occuring under mutual
+    // exclusion.
+    // TODO: specialize cases where mutual exclusion is guaranteed (e.g.
+    // num_gens == 0 during add_task)
     size_t pop_generation() volatile {
 	assert( num_gens > 0 && "pop when no generations exist" );
 	return __sync_fetch_and_add( &num_gens, -1 );
     }
     void push_generation() volatile { __sync_fetch_and_add( &num_gens, 1 ); }
-
-    // Locking
-    // void lock() { mutex.lock(); }
-    // void unlock() { mutex.unlock(); }
 };
 
 // Some debugging support. Const-ness of printed argument is a C++ library
@@ -437,7 +354,7 @@ operator << ( std::ostream & os, const ecltg_metadata & md_const ) {
     os << "taskgraph_md={this=" << &md_const
        << " o.num_tasks=" << md.oldest.num_tasks
        << " y.g=" << md.youngest.g
-       << " y.some=" << md.youngest.some_tasks
+       << " y.has=" << md.youngest.has_tasks()
        << " num_gens=" << md.num_gens
        << " front=" << md.tasks.front()
        << " back=" << md.tasks.back()
@@ -534,17 +451,8 @@ public:
     }
 
     void start_deregistration() { }
-    void stop_deregistration() { }
+    void stop_deregistration( full_metadata * parent ) { }
 };
-
-#if 0
-void
-generation::link_tasks( task_metadata * fr ) {
-    // errs() << "link task " << fr << " " << get_num_tasks() << " inc\n";
-    if( has_tasks() )
-	fr->add_incoming( 1 );
-}
-#endif
 
 // ----------------------------------------------------------------------
 // pending_metadata: task graph metadata per pending frame
@@ -560,6 +468,44 @@ public:
 	return static_cast<pending_metadata *>( link );
     }
 };
+
+// ----------------------------------------------------------------------
+// taskgraph: task graph roots in ready_list
+// ----------------------------------------------------------------------
+} // end namespace obj
+
+#if EMBED_LISTS
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::link_metadata, dl_head_list<obj::link_metadata> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::link_metadata * lnk ) {
+	return obj::pending_metadata::get_from_link( lnk );
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#else
+template<>
+struct taskgraph_traits<obj::pending_metadata, obj::pending_metadata,
+			std::list<obj::pending_metadata *> > {
+    typedef obj::pending_metadata task_type;
+    typedef obj::link_metadata stored_task_type;
+
+    static obj::pending_metadata * get_task( obj::pending_metadata * lnk ) {
+	return lnk;
+    }
+
+    static bool acquire( obj::pending_metadata * pnd ) {
+	return pnd->acquire();
+    }
+};
+#endif
+
+namespace obj { // reopen
 
 // ----------------------------------------------------------------------
 // full_metadata: task graph metadata per full frame
@@ -582,9 +528,6 @@ public:
     }
 
     taskgraph * get_graph() { return &graph; }
-
-    // void lock() { graph.lock(); }
-    // void unlock() { graph.unlock(); }
 };
 
 // ----------------------------------------------------------------------
@@ -614,76 +557,79 @@ task_metadata::create( full_metadata * ff ) {
 #endif
 }
 
-pending_metadata *
-taskgraph::get_ready_task() {
-    lock();
-    pending_metadata * task = 0;
-    if( !ready_list.empty() ) {
-	for( auto I=ready_list.begin(), E=ready_list.end(); I != E; ++I ) {
-#if EMBED_LISTS
-	    pending_metadata * t = pending_metadata::get_from_link( *I );
-#else // !EMBED_LISTS
-	    pending_metadata * t = *I;
-#endif
-	    if( t->acquire() ) {
-		ready_list.erase( I );
-		task = t;
-		break;
-	    }
-	}
-    }
-    unlock();
-    // errs() << "get_ready_task from TG " << this << ": " << task << "\n";
-    return task;
-}
-
-void
-taskgraph::add_ready_task( link_metadata * fr ) {
-    // Translate from task_metadata to link_metadata
-    // Can only be successfully done in case of queued_frame!
-    // errs() << "add_ready_task to TG " << this << ": " << fr << "\n";
-    lock();
-#if EMBED_LISTS
-    ready_list.push_back( fr );
-#else // !EMBED_LISTS
-    ready_list.push_back( pending_metadata::get_from_link( fr ) );
-#endif
-    unlock();
-}
-
 void
 ecltg_metadata::wakeup( taskgraph * graph ) {
+#if !SINGLE_LOCK
+    // Are we holding a lock on youngest?
     bool has_youngest = false;
+#endif // SINGLE_LOCK
 
-    // Decrement the number of tasks in the oldest generation and avoid locks
-    // if they are no required.
+    assert( num_gens > 0 );
+
+    // TODO: is this correct: lock is not required for dec if num_gens > 1.
+    // Only if num_gens == 1, can oldest.num_tasks be incremented and
+    // interfere with this code.
+    oldest.lock();
+
+    // TODO: make a MCS lock with deferred actions (tell someone else to do
+    // this work, probably just a dec). Is it possible to merge nodes?
+    // How alloc/dealloc?
+
+    // Decrement the number of tasks in the oldest generation.
     // NOTE: performance optimization: atomic-- is more expensive than atomic++
     // while only one of the two directions must be a hardware atomic. Hence,
     // change the counter to count negative number of tasks.
-    if( __sync_fetch_and_add( &oldest.num_tasks, -1 ) > 1 )
+    if( --oldest.num_tasks > 0 ) {
+	oldest.unlock();
 	return;
+    }
+
+    // Specialized case. Race on num_gens as we don't have a lock
+    // on youngest yet, but num_gens can go up only.
+    if( num_gens == 1 ) {
+#if !SINGLE_LOCK
+	has_youngest = true;
+	youngest.lock();
+#endif // SINGLE_LOCK
+	if( num_gens == 1 ) {
+	    assert( !tasks.front() && "tasks should be empty if 1 generation" );
+	    pop_generation();
+	    youngest.clr_tasks();
+
+#if !SINGLE_LOCK
+	    youngest.unlock();
+#endif // SINGLE_LOCK
+	    oldest.unlock();
+	    return;
+	}
+    }
 
     // Lock only the wakeup end of the list if free of interference, or
     // lock both ends of the list if there may be interference between
-    // the issue thread and wakeup threads.
-    oldest.lock();
-    if( may_interfere() ) {
+    // the issue thread and wakeup threads. There is a race on the num_gens
+    // variable, but as we are holding the oldest lock, the num_gens
+    // can only go up between the call to may_interfere() and taking the
+    // lock, so we are safe, perhaps taking the lock when not striclty
+    // necessary.
+#if !SINGLE_LOCK
+    else if( may_interfere() ) {
 	has_youngest = true;
 	youngest.lock();
     }
-
-    // errs() << "wakeup: " << * this << " has_y=" << has_youngest << std::endl;
+#endif // SINGLE_LOCK
 
     gen_tags * head = tasks.front();
+#if !SINGLE_LOCK
     assert( (head || has_youngest) && "youngest not locked but list empty" );
+#endif // SINGLE_LOCK
     gen_tags * i_next = 0;
     unsigned new_tasks = 0;
     for( gen_tags * i=head; i; i=i_next ) {
 	task_metadata * t = i->st_task;
 	++new_tasks;
+	i_next = i->it_next;
 	if( t->del_incoming() )
 	    graph->add_ready_task( pending_metadata::get_from_task( t ) );
-	i_next = i->it_next;
 	if( i->is_last_in_generation() )
 	    break;
     }
@@ -697,7 +643,7 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     // then a task issue may occur between the decrement of oldest.num_tasks
     // to 0 and obtaining both young and old locks. When this happens, we will
     // not see that oldest.num_tasks is still zero.
-    __sync_fetch_and_add( &oldest.num_tasks, new_tasks );
+    oldest.num_tasks += new_tasks;
 
     // --num_gens; protected by lock on both sides?
     // errs() << "flush..." << std::endl;
@@ -715,8 +661,10 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
 	//           more tasks in it (i_next == 0), but because !empty,
 	//           there is 1 generation and youngest.some_tasks should
 	//           remain set.
+#if !SINGLE_LOCK
 	assert( has_youngest
 		&& "Youngest generation not locked and list becomes empty" );
+#endif
 	assert( num_gens <= 1
 		&& "Few generations present when depleting youngest" );
 	tasks.clear();
@@ -727,28 +675,50 @@ ecltg_metadata::wakeup( taskgraph * graph ) {
     assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
 
     oldest.unlock();
+#if !SINGLE_LOCK
     if( has_youngest )
 	youngest.unlock();
+#endif // SINGLE_LOCK
 }
 
 void
 ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
+#if !SINGLE_LOCK
     bool has_oldest = false;
+#endif // SINGLE_LOCK
 
+    // Set pointer to task in argument's tags storage
+    tags->st_task = t;
+
+    // Note: potential race: (1) may_interfere() says no, (2) any number
+    // of wakeups and pop_generation's to make may_interfere() true,
+    // (3) error due to lack of synchronization.
+    // may_interfere() returns true for num_gens == 2, so if this were
+    // to happen, the last (detrimental) wakeup() would block on the
+    // lock on youngest that it is required to take. Put differently,
+    // num_gens <= 1 is the pure condition for interference, except we
+    // take num_gens <= 2 to block out wakeup()'s and avoid races.
+#if SINGLE_LOCK
+    oldest.lock();
+#else
     if( may_interfere() ) {
 	has_oldest = true;
 	oldest.lock();
     }
     youngest.lock();
-
-    // errs() << "add_task: " << *this << " has_o=" << has_oldest << std::endl;
-
-    tags->st_task = t; // TODO: duplicate store?
+#endif // !SINGLE_LOCK
 
     if( num_gens == 0 ) { // Empty, tasks fly straight through
-	assert( has_oldest && "empty and not locked from both sides" );
+	// NOTE: There cannot be a concurrent wakeup, and there cannot be
+	// concurrent add_task()'s, so no need to have locks, except we
+	// need the lock on oldest to wait until the latest wakeup() has
+	// finished.
+#if !SINGLE_LOCK
+	assert( has_oldest && "Must have lock on oldest when num_gens==0" );
+#endif
+
 	// Update oldest
-	__sync_fetch_and_add( &oldest.num_tasks, 1 );
+	oldest.num_tasks++;
 
 	// Update youngest
 	youngest.open_group( g );
@@ -756,77 +726,70 @@ ecltg_metadata::add_task( task_metadata * t, gen_tags * tags, group_t g ) {
 
 	// Count generations
 	push_generation();
-    } else if( num_gens == 1 ) { // One generation, tasks fly straight through
-	// errs() << std::endl;
-	assert( has_oldest && "one generation and not locked from both sides" );
-	assert( youngest.has_tasks() && "youngest not empty if 1 generation" );
-	// oldest.num_tasks will be decremented before entering the critical
-	// section. Therefore, we cannot trust on its value.
-	// assert( oldest.has_tasks() && "oldest not empty if 1 generation" );
+    } else if( num_gens == 1 ) {
+	// NOTE: Taking a lock on oldest suffices to enforce the
+	// synchronization between add_task() (issue, serially) and wakeup()
+	// (concurrent), provided we have num_gens right.
+#if !SINGLE_LOCK
+	assert( has_oldest && "Must have lock on oldest when num_gens==1" );
+#endif
 
-	// Update youngest
-	if( !youngest.match_group( g ) ) {
+	if( !youngest.match_group( g ) ) {	// Update youngest
+	    assert( may_interfere() && "condition inlined and specialized" );
+
+	    assert( youngest.has_tasks()
+		    && "youngest not empty if 1 generation" );
+
 	    youngest.open_group( g );
 	    youngest.add_task();
-	    // Update num_gens
-	    // if( oldest.has_tasks() ) {
-		push_generation();
-		t->add_incoming();
-		tasks.push_back( tags );
-	    // }
+	    push_generation();
+	    t->add_incoming();
+	    tasks.push_back( tags );
+
+	    assert( (oldest.has_tasks() || num_gens != 1)
+		    && "tasks require gens" );
+	    assert( (youngest.has_tasks() == (num_gens > 0))
+		    && "tasks require gens" );
 	} else {
-	    // Update oldest
-	    __sync_fetch_and_add( &oldest.num_tasks, 1 );
+	    // One generation, tasks fly straight through.
+	    // Update only oldest.
+	    oldest.num_tasks++;
 	}
-    } else if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
-	youngest.open_group( g );
-	youngest.add_task();
-	if( tasks.back() ) // should use iterators?
-	    tasks.back()->set_last_in_generation();
-	push_generation();
-	// In this case, we are assured that a wakeup will happen on the
-	// new task.
-	t->add_incoming();
-	tasks.push_back( tags );
-    } else {
-	// In this case, we are assured that a wakeup will happen on the
-	// new task.
-	t->add_incoming();
-	tasks.push_back( tags );
+    } else { // Two or more generations (at start)
+	if( !youngest.match_group( g ) ) { // Going to at least two gens -- NO? OR argue that it is always true given that num_gens > 0
+	    youngest.open_group( g );
+	    youngest.add_task();
+	    if( tasks.back() ) // should use iterators?
+		tasks.back()->set_last_in_generation();
+	    push_generation();
+	    // In this case, we are assured that a wakeup will happen on the
+	    // new task.
+	    t->add_incoming();
+	    tasks.push_back( tags );
+	} else {
+	    // In this case, we are assured that a wakeup will happen on the
+	    // new task.
+	    t->add_incoming();
+	    tasks.push_back( tags );
+	}
+
+	// assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
+	// && "Either no generations or oldest and youngest diff has_tasks" );
+#if !SINGLE_LOCK
+	assert( (has_oldest || !may_interfere()) && "interference invariant" );
+#endif
+	assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
+	assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
     }
 
-    // assert( (oldest.has_tasks() == youngest.has_tasks() || num_gens != 1)
-	    // && "Either no generations or oldest and youngest diff has_tasks" );
-    assert( (has_oldest || !may_interfere()) && "interference invariant" );
-    assert( (oldest.has_tasks() || num_gens != 1) && "tasks require gens" );
-    assert( (youngest.has_tasks() == (num_gens > 0)) && "tasks require gens" );
-
+#if SINGLE_LOCK
+    oldest.unlock();
+#else
     if( has_oldest )
 	oldest.unlock();
     youngest.unlock();
+#endif // SINGLE_LOCK
 }
-
-#if 0
-{
-    // Lock the generation because we may be waking up tasks in the same
-    // generation as the one we are adding to.
-    lock();
-    for( task_iterator I=task_begin(), E=task_end(); I != E; ++I ) {
-	task_metadata * t = *I;
-	// TODO: probably don't need to lock here because del_incoming is atomic
-	// t->lock();
-	// errs() << "task " << t << " dec_incoming " << t->get_incoming() << '\n';
-	if( t->del_incoming() ) {
-	    graph->add_ready_task( pending_metadata::get_from_task( t ) );
-	    // errs() << "task " << this << " wakes up " << t << '\n';
-	}
-	// t->unlock();
-    }
-    if( clear )
-	tasks.clear();
-    unlock();
-}
-#endif
 
 void
 task_metadata::add_to_graph() {
@@ -848,7 +811,7 @@ struct serial_dep_traits {
 		    obj_instance<ecltg_metadata> & obj,
 		    gen_tags * sa, group_t g ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	// errs() << "0 issue serial " << *md << " g=" << g << "\n";
+	// errs() << "0 issue serial " << *md << " g=" << g << " task=" << fr << "\n";
 	md->add_task( fr, sa, g );
 	// errs() << "1 issue serial " << *md << "\n";
     }
@@ -856,7 +819,7 @@ struct serial_dep_traits {
     bool arg_ini_ready( const obj_instance<ecltg_metadata> & obj, group_t g ) {
 	const ecltg_metadata * md = obj.get_version()->get_metadata();
 	// errs() << "0 ini_ready serial: " << *md << " g=" << g << "\n";
-	bool x = md->match_group( g );
+	bool x = md->ini_ready( g );
 	// errs() << "1 ini_ready serial: " << *md << " x=" << x << "\n";
 	return x;
     }
@@ -864,9 +827,9 @@ struct serial_dep_traits {
     void arg_release( task_metadata * fr, obj_instance<ecltg_metadata> & obj,
 		      gen_tags * tags, group_t g ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	// errs() << "0 wakeup serial " << *md << "\n";
+	// errs() << "0 wakeup serial " << *md << " task=" << fr << "\n";
 	md->wakeup( fr->get_graph() );
-	// errs() << "1 wakeup serial " << *md << "\n";
+	// errs() << "1 wakeup serial " << *md << " task=" << fr << "\n";
     }
 };
 
@@ -976,7 +939,7 @@ struct dep_traits<ecltg_metadata, task_metadata, cinoutdep> {
     static bool
     arg_ini_ready( cinoutdep<T> & obj ) {
 	ecltg_metadata * md = obj.get_version()->get_metadata();
-	if( md->match_group( g_commut ) ) {
+	if( md->ini_ready( g_commut ) ) {
 	    if( md->commutative_try_acquire() )
 		return true;
 	}

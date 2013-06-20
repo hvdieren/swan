@@ -23,7 +23,7 @@
 #ifndef ALC_SFLPOL_H
 #define ALC_SFLPOL_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <sys/mman.h>
 

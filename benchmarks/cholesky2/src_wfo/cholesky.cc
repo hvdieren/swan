@@ -34,6 +34,8 @@
 #include <time.h>
 #include "cblas.h"
 
+#define blasint int
+
 #include "wf_interface.h"
 #include "pp_time.h"
 

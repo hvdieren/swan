@@ -23,7 +23,7 @@
 #ifndef SETUP_STACK_H
 #define SETUP_STACK_H
 
-#include "config.h"
+#include "swan_config.h"
 
 #include <cassert>
 #include <cstdint>
@@ -168,7 +168,10 @@ stack_frame::split_stub( stack_frame * child,
     return ret;
 }
 
-#define RSP_RELATIVE_ADDRESSING 0
+// A bug is exposed with RSP_RELATIVE_ADDRESSING set to 0 for passing arguments
+// to a function with signature <void *, prefixdep, pushdep>. Bug does not 
+// happen with -O0 but it does with -O4.
+#define RSP_RELATIVE_ADDRESSING 1
 
 #if RSP_RELATIVE_ADDRESSING
 fun_constexpr size_t region_offset_rsp( size_t idx, size_t size ) {
@@ -246,7 +249,7 @@ stack_frame::split_stub_body( stack_frame * child,
 #if RSP_RELATIVE_ADDRESSING
     // Do this because it is beneficial for performance !?
     // Move to %rdi is not as good as move to %rbx.
-    __vasm__( "movq %%rsp,%0\n\t" : "=b"(region) : : );
+    // __vasm__( "movq %%rsp,%0\n\t" : "=b"(region) : : );
 #else
     if( off > 0 ) {
 	__vasm__( "movq %%rsp,%0\n\t"
@@ -279,7 +282,7 @@ stack_frame::split_stub_body( stack_frame * child,
 		  : "=D"(tmp1), "=S"(tmp2) : "b"(region), "i"(off_) : );
 #endif
 	// hidden arguments are source and destination of buffers
-	load_mem_args<Tn...>();
+	load_mem_args<Tn...>( (void*)tmp1, (void*)tmp2 );
     }
 
 #if RSP_RELATIVE_ADDRESSING

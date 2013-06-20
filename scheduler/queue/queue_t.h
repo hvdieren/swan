@@ -7,43 +7,15 @@
 
 namespace obj {
 
-typedef tkt_metadata queue_metadata;
+template<typename MetaData, typename T>
+class read_slice;
 
-struct popdep_tags_base : public all_tags_base { };
-struct pushdep_tags_base : public all_tags_base { };
-
-// Popdep (input) dependency tags - fully serialized with other popdeps
-class popdep_tags : public popdep_tags_base {
-    template<typename MetaData, typename Task, template<typename T> class DepTy>
-    friend class dep_traits;
-    queue_version<queue_metadata> queue;
-    tkt_metadata::tag_t rd_tag;
-
-public:
-    popdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, false ) { }
-
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
-};
-
-// Pushdep (output) dependency tags
-class pushdep_tags : public pushdep_tags_base, public serial_dep_tags {
-    template<typename MetaData, typename Task, template<typename T> class DepTy>
-    friend class dep_traits;
-    queue_version<queue_metadata> queue;
-
-public:
-    pushdep_tags( queue_version<queue_metadata> * parent )
-	: queue( parent, true ) { }
-
-    queue_version<queue_metadata> * get_queue_version() { return &queue; }
-};
-
-// queue_base: an instance of a queue, base class for queue_t, pushdep, popdep.
+// queue_base: an instance of a queue, base class for hyperqueue, pushdep, popdep,
+// pushpopdep.
 // This class may not have non-trival constructors nor destructors in order to
 // reap the simplified x86-64 calling conventions for small structures (the
 // only case we support), in particular for passing pushdep and popdep
-// as direct arguments. We don't support this for queue_t.
+// as direct arguments. We don't support this for hyperqueue.
 template<typename MetaData>
 class queue_base
 {
@@ -51,11 +23,14 @@ public:
     typedef MetaData metadata_t;
 
     template<typename T>
-    friend class queue_t;
+    friend class hyperqueue;
+
+    template<typename T>
+    friend class popdep;
 
 protected:
     queue_version<metadata_t> * queue_v;
-	
+
 public:
     const queue_version<metadata_t> * get_version() const { return queue_v; }
     queue_version<metadata_t> * get_version() { return queue_v; }
@@ -65,43 +40,48 @@ public:
 protected:
     queue_version<metadata_t> * get_nc_version() const { return queue_v; }
 
-    template<typename DepTy>
-    DepTy create_dep_ty() const {
-	DepTy od;
+    template<typename T, template<typename U> class DepTy>
+    DepTy<T> create_dep_ty() const {
+	DepTy<T> od;
 	od.queue_v = this->get_nc_version();
 	return od;
     }
 };
 
-// queue_t: programmer's instance of a queue
-
+// hyperqueue: programmer's instance of a queue
 template<typename T>
-class queue_t : public queue_version<queue_metadata>
+class hyperqueue : protected queue_version<queue_metadata>
 {
 public:
-    queue_t() : queue_version<queue_metadata>( q_typeinfo::create<T>() ) {
-    }
+    explicit hyperqueue( size_t size = 128, size_t peekoff = 0 )
+	: queue_version<queue_metadata>( size, peekoff,
+					 queue_version::initializer<T>() ) { }
 	
-    operator pushdep<T>() const { return create_dep_ty< pushdep<T> >(); }
-    operator popdep<T>()  const { return create_dep_ty< popdep<T> >(); }
+    operator pushdep<T>() const { return create_dep_ty< pushdep >(); }
+    operator popdep<T>()  const { return create_dep_ty< popdep >(); }
+    operator pushpopdep<T>()  const { return create_dep_ty< pushpopdep >(); }
+
+    // The hyperqueue works in push/pop mode and so supports empty, pop and push.
+    bool empty() { return queue_version<queue_metadata>::empty(); }
+
+    // This pop function does not return an rvalue because the rvalue returned
+    // by queue_version will be overwritten. Hence, we make sure here that the
+    // value is copied-over definitely.
+    T pop() { return queue_version<queue_metadata>::pop<T>(); }
+
+    void push( T && t ) { queue_version<queue_metadata>::push<T>( std::move( t ) ); }
+    void push( const T & t ) { queue_version<queue_metadata>::push<T>( t ); }
 	
-    queue_segment* privatize_segment() {
-	return *(this->queue_v->privatize_segment());
-    }
-	
-    template<typename DepTy>
-    DepTy create_dep_ty() const {
-	DepTy od;
-	od.queue_v = get_nc_version();
+private:
+    template<template<typename U> class DepTy>
+    DepTy<T> create_dep_ty() const {
+	DepTy<T> od;
+	od.queue_v = this->get_nc_version();
 	return od;
     }
 
-    // segmented_queue *get_queue() {
-	// return get_queue();
-    // }
-
 protected:
-    queue_version<metadata_t> * get_nc_version() const {
+    queue_version<queue_metadata> * get_nc_version() const {
 	return const_cast<queue_version<queue_metadata>*>(
 	    static_cast<const queue_version<queue_metadata>*>( this ) );
     }
@@ -116,69 +96,65 @@ template<typename T>
 class pushdep : public queue_base<queue_metadata>
 {
 public:
-	typedef tkt_metadata queue_tkt_metadata;
-	typedef queue_tkt_metadata metadata_t;
+    typedef queue_metadata metadata_t;
     typedef pushdep_tags dep_tags;
     typedef pushdep_type_tag _object_tag;
 	
-	// For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-
-    operator pushdep<T>() { 
-	pushdep<T> newpush;
-	// this->queue_v->set_instance((queue_base*)&newpush);
-	// newpush.set_version(this->queue_v);
-	return newpush;
-    }
-	
-    static pushdep<T> create( queue_version<metadata_t>* v ) {
+    static pushdep<T> create( queue_version<metadata_t> * v ) {
 	pushdep<T> dep;
 	dep.queue_v = v;
 	return dep;
     }
-    
-    // void push(T & value) { queue_v->push( value ); }
-    void push(T value) { queue_v->push( value ); }
-	
-/*
-    void clear_producing() {
-	// queue_segment* pqs = (this->queue_v->get_private_queue_segment());
-	// pqs->clear_producing();
+
+    void push( T && value ) { queue_v->push<T>( std::move( value ) ); }
+    void push( const T & value ) { queue_v->push<T>( value ); }
+
+    write_slice<queue_metadata, T> get_write_slice( size_t length ) {
+	return queue_v->get_write_slice<T>( length );
     }
-*/
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
 
 template<typename T>
 class popdep : public queue_base<queue_metadata>
 {
 public:
-	typedef tkt_metadata queue_tkt_metadata;
-	typedef queue_tkt_metadata metadata_t;
+    typedef queue_metadata metadata_t;
     typedef popdep_tags dep_tags;
     typedef popdep_type_tag _object_tag;
 	
-	// For concepts: need not be implemented, must be non-static and public
-    void is_object_decl(void);
-	
-    static popdep<T> create(queue_version<metadata_t>* v) {
-	popdep<T>  newpop;
+    static popdep<T> create( queue_version<metadata_t> * v ) {
+	popdep<T> newpop;
 	newpop.queue_v = v;
 	return newpop;
     }
-	
-    T pop()	{
-	T t;
-	queue_v->pop( t );
-	return t;
-    }
-	
-    bool empty() { return queue_v->empty(); }
 
-    popdep<T> operator=(popdep<T> input) {
-	this->queue_v = input.queue_v;
-	return *this;
+    read_slice<queue_metadata, T>
+    get_read_slice_upto( size_t npop_max, size_t npeek ) {
+	return queue_v->get_read_slice_upto<T>( npop_max, npeek );
     }
+	
+    // This pop function does not return an rvalue because the rvalue returned
+    // by queue_version will be overwritten. Hence, we make sure here that the
+    // value is copied-over definitely.
+    T pop() { return queue_v->pop<T>(); }
+	
+    const T & peek( size_t off ) {
+	return queue_v->peek<T>( off );
+    }
+	
+    bool empty() { return queue_base<queue_metadata>::queue_v->empty(); }
+
+public:
+    // For concepts: need not be implemented, must be non-static and public
+    void is_object_decl(void);
 };
+
+template<typename T>
+class pushpopdep;
 
 } //end namespace obj
 
@@ -194,8 +170,8 @@ namespace platform_x86_64 {
 // a compile-time error will be triggered). This approach is a low-cost
 // way to by-pass the lack of data member introspection in C++.
 template<size_t ireg, size_t freg, size_t loff, typename T>
-struct arg_passing<ireg, freg, loff, obj::queue_t<T> >
-    : arg_passing_struct1<ireg, freg, loff, obj::queue_t<T>, obj::queue_version<typename obj::queue_t<T>::metadata_t> *> {
+struct arg_passing<ireg, freg, loff, obj::hyperqueue<T> >
+    : arg_passing_struct1<ireg, freg, loff, obj::hyperqueue<T>, obj::queue_version<typename obj::hyperqueue<T>::metadata_t> *> {
 };
 
 template<size_t ireg, size_t freg, size_t loff, typename T>

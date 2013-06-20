@@ -59,7 +59,15 @@ void producer_rec( int s, int n, int step, int delay, pushdep<int> q ) {
 	   << " in " << nsteps << " steps\n";
     if( nsteps > 1 ) {
 	spawn( producer_rec, s, s+(nsteps/2)*step, step, delay, q );
-	spawn( producer_rec, s+(nsteps/2)*step, n, step, delay, q );
+	{
+	    int ss = s+(nsteps/2)*step;
+	    q.push( ss );
+	    iolock();
+	    errs() << "produce: " << ss << '\n';
+	    iounlock();
+	    usleep( delay );
+	}
+	spawn( producer_rec, s+(nsteps/2)*step+1, n, step, delay, q );
     } else
 	spawn( producer, s, std::min(step,n-s), delay, q );
     ssync();
@@ -100,7 +108,7 @@ void consumer2( int s, int n, int delay, popdep<int> q ) {
 }
 
 void zpipe( int dummy ) {
-    queue_t<int> queue;
+    hyperqueue<int> queue;
     // TODO: Add a check for emptiness in consumer!
     spawn( consumer, 0, 0, 0, (popdep<int>)queue );
     ssync();
@@ -109,7 +117,7 @@ void zpipe( int dummy ) {
 // Add variable delays to producers, delaying first producer significantly
 // compared to second, and so on.
 void apipe( int n, int producers_, int consumers_, int delay ) {
-    queue_t<int> queue;
+    hyperqueue<int> queue;
     int np, nc;
     int producers = producers_ < 0 ? -producers_ : producers_;
     int produce_rec = producers_ < 0;
