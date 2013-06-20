@@ -1,2 +1,2 @@
- Swan: a task data-flow work-stealing scheduler for multi-core processors
+ Swan: a task data-flow work-stealing scheduler for multi- and many-core processors
 
