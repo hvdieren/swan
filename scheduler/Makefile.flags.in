@@ -16,7 +16,7 @@ endif
 # top_srcdir/scheduler: *.h
 # top_builddir: auto_config.h
 # top_builddir/scheduler: mangled.h
-PKG_CFLAGS = -I$(top_srcdir) -I$(top_srcdir)/scheduler -I$(top_builddir) -I$(top_builddir)/scheduler
+PKG_CFLAGS = -I$(top_srcdir) -I$(top_srcdir)/scheduler -I$(top_srcdir)/swan -I$(top_builddir) -I$(top_builddir)/scheduler
 PKG_LIBS = -L$(top_builddir)/scheduler -lschedulers @LIBS@
 
 #ifeq (@HAVE_LIBHWLOC@,1)
