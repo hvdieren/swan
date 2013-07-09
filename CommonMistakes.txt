@@ -1,0 +1,55 @@
+This is an overview of common mistakes and how to resolve them.
+
+Error: every spawn() should be followed by a ssync() statement before returning from the function
+Solution: insert appropriate ssync() statements
+Signature: correct single-threaded execution but segmentation fault on multi-threaded execution
+Example:
+1. void f( int n ) {
+2.         if( n > 0 )
+3.              spawn( f, n-1 );
+4.}
+Fix: insert ssync() between lines 3 and 4.
+
+Error: there should be a ssync() statement between a spawn() with chandle (return value) and use of the return value
+Solution: place ssync() statement appropriately
+Signature: correct single-threaded execution but segmentation fault on multi-threaded execution
+Example:
+1. int f( int n ) {
+2.      chandle<int> r;
+3.      int rr;
+4.      spawn( f, r, n-1 );
+5.      rr = r;
+6.      ssync();
+7.      return rr;
+8. }
+Fix: interchange lines 5 and 6.
+
+Error: every Swan program should contain a run() call, or use my_main() as the entry point
+Solution: introduce either at an appropriate point
+Signature: segmentation fault
+Example:
+1. int main() {
+2.     f(10);
+3.     return 0;
+4.}
+Fix: replace line 2 with run(f, 10);
+
+Error: every chandle<> may be used at most once between any two ssync() statements, or before the first ssync() in a procedure body
+Solution: introduce multiple chandle<>'s
+Signature: erroneous results, sometimes a hang
+Example:
+1. void f( int n ) {
+2.     chandle<int> r;
+3.     spawn(f, r, n-1 );
+4.     spawn(f, r, n-2 );
+5.     ssync();
+6.     return r;
+}
+Fix:
+1. void f( int n ) {
+2.     chandle<int> r, s;
+3.     spawn(f, r, n-1 );
+4.     spawn(f, s, n-2 );
+5.     ssync();
+6.     return s;
+}
