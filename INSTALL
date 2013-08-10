@@ -1,4 +1,4 @@
-Caveat: Swan can be compiled correctly ONLY with GCC 4.6 at this stage.
+Caveat: Swan can be compiled correctly ONLY with GCC 4.6 or higher at this stage.
 
 Installation instructions:
 $ git clone or unpack tar-ball into directory swan
