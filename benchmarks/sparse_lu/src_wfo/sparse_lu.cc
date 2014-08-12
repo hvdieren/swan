@@ -206,7 +206,7 @@ void genmat ()
 }
 
 
-#pragma css task input (ref_block, to_comp) output (mse)
+// #pragma css task input (ref_block, to_comp) output (mse)
 void are_blocks_equal (float ref_block[BS][BS], float to_comp[BS][BS], float *mse)
 {
    int i,j;
@@ -241,7 +241,7 @@ void compare_mat (p_block_t X[NB][NB], p_block_t Y[NB][NB])
      }
 
 /* Alternative to put wait on */
-#pragma css finish 
+// #pragma css finish 
    printf ("\nComparison of matrices at %p and %p\n",X,Y);
    for (ii = 0; ii < NB; ii++) 
      for (jj = 0; jj < NB; jj++) 
@@ -402,7 +402,6 @@ void LU(p_block_t A[NB][NB])
 void split_mat (p_block_t LU[NB][NB],p_block_t L[NB][NB],p_block_t U[NB][NB])
 {
   int ii, jj;
-  p_block_t block;
 
   for (ii=0; ii<NB; ii++) 
      for (jj=0; jj<NB; jj++){
@@ -411,10 +410,11 @@ void split_mat (p_block_t LU[NB][NB],p_block_t L[NB][NB],p_block_t U[NB][NB])
            U[ii][ii] = allocate_clean_block(); 
            spawn(split_block,(bin)*LU[ii][ii],(bout)*L[ii][ii],(bout)*U[ii][ii]);
         } else {                                    /* copy non diagonal block to ... */
+	    p_block_t block = 0;
             if (LU[ii][jj] != NULL) {
               block = allocate_clean_block(); 
               spawn(copy_block,(bin)*LU[ii][jj],(bout)*block);
-           } else block = NULL;
+           }
            if (ii>jj) {                             /*         ...either L ... */
               L[ii][jj]=block;
               U[ii][jj]=NULL;
@@ -430,12 +430,12 @@ void split_mat (p_block_t LU[NB][NB],p_block_t L[NB][NB],p_block_t U[NB][NB])
 void copy_mat (p_block_t Src[NB][NB], p_block_t Dst[NB][NB])
 {
   int ii, jj;
-  p_block_t block;
 
   for (ii=0; ii<NB; ii++)
      for (jj=0; jj<NB; jj++)
         if (Src[ii][jj] != NULL) {
-           block = allocate_clean_block();
+           p_block_t block = 0;
+	   block = allocate_clean_block();
            spawn(copy_block,(bin)*Src[ii][jj],(bout)*block);
            Dst[ii][jj] = block;
         } else
@@ -479,7 +479,7 @@ int main(int argc, char* argv[])
    pp_time_t tm;
    memset( &tm, 0, sizeof(tm) );
 
-#pragma css start
+// #pragma css start
 
    genmat();
    D_print_mat("A", A);
@@ -503,7 +503,7 @@ int main(int argc, char* argv[])
    D_print_mat("LxU", A);
    compare_mat(origA, A);
 
-#pragma css finish
+// #pragma css finish
 
    printf("Running time  = %g %s\n", pp_time_read(&tm), pp_time_unit() );
 }
