@@ -29,7 +29,7 @@ CFLAGS+=-O4
 
 OBJS=pp_time_cy.o pp_time_us.o pp_time_marss.o
 
-ALL: libtime_us.a libtime_cy.a libtime_marss.a
+ALL: libtime_us.a libtime_cy.a libtime_marss.a getoptions.o
 
 pp_time_cy.o: CFLAGS+=-DUSE_RDTSC=1
 

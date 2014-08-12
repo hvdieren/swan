@@ -99,6 +99,7 @@ AC_CONFIG_FILES([Makefile
 		 benchmarks/fm/src_wfo/Makefile
 		 benchmarks/fm/src_wfq/Makefile
                  scripts/create.sh
+                 tutorial/Makefile
                  util/Makefile
                  util/Makefile.use_us
                  util/Makefile.use_cy])
