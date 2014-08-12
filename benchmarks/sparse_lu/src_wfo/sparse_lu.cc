@@ -70,14 +70,6 @@ p_block_t origA[NB][NB];
 p_block_t L[NB][NB];
 p_block_t U[NB][NB];
 
-long usecs (void)
-{
-  struct timeval t;
-
-  gettimeofday(&t,NULL);
-  return t.tv_sec*1000000+t.tv_usec;
-}
-
 p_block_t allocate_clean_block()
 {
   int i,j;
@@ -484,8 +476,6 @@ void sparse_matmult (p_block_t A[NB][NB], p_block_t B[NB][NB], p_block_t C[NB][N
 
 int main(int argc, char* argv[])
 {
-   long t_start,t_end;
-   double time;
    pp_time_t tm;
    memset( &tm, 0, sizeof(tm) );
 
@@ -497,11 +487,9 @@ int main(int argc, char* argv[])
    run(copy_mat,A, origA); 
    D_print_mat("reference A", origA);
 
-   t_start=usecs();
    pp_time_start( &tm );
    run( LU, A );
    pp_time_end( &tm );
-   t_end=usecs(); 
    D_print_mat("A=LxU", A);
 
    run(split_mat, A, L, U);
@@ -517,8 +505,6 @@ int main(int argc, char* argv[])
 
 #pragma css finish
 
-      time = ((double)(t_end-t_start))/1000000;
-      printf("time to compute = %f\n", time);
-      printf("Running time  = %g %s\n", pp_time_read(&tm), pp_time_unit() );
+   printf("Running time  = %g %s\n", pp_time_read(&tm), pp_time_unit() );
 }
 
