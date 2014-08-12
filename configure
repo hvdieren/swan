@@ -4538,8 +4538,6 @@ ac_config_commands="$ac_config_commands exec-benchmarks-ubench-src_wf-scripts"
 
 ac_config_commands="$ac_config_commands create-swan-queue-dir"
 
-ac_config_commands="$ac_config_commands link-swan"
-
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
 # tests run on this system so they can be shared between configure
@@ -5270,7 +5268,6 @@ do
     "exec-scripts-create.sh") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-scripts-create.sh" ;;
     "exec-benchmarks-ubench-src_wf-scripts") CONFIG_COMMANDS="$CONFIG_COMMANDS exec-benchmarks-ubench-src_wf-scripts" ;;
     "create-swan-queue-dir") CONFIG_COMMANDS="$CONFIG_COMMANDS create-swan-queue-dir" ;;
-    "link-swan") CONFIG_COMMANDS="$CONFIG_COMMANDS link-swan" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
   esac
@@ -5824,7 +5821,6 @@ $as_echo "$as_me: executing $ac_file commands" >&6;}
     "exec-scripts-create.sh":C) chmod u+x scripts/create.sh ;;
     "exec-benchmarks-ubench-src_wf-scripts":C) chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl ;;
     "create-swan-queue-dir":C) mkdir scheduler/queue ;;
-    "link-swan":C) ln -s ../scheduler swan ;;
 
   esac
 done # for ac_tag

@@ -106,5 +106,4 @@ AC_CONFIG_FILES([Makefile
 AC_CONFIG_COMMANDS([exec-scripts-create.sh],[chmod u+x scripts/create.sh])
 AC_CONFIG_COMMANDS([exec-benchmarks-ubench-src_wf-scripts],[chmod u+x benchmarks/ubench/src_wf/create.sh benchmarks/ubench/src_wf/gen.pl])
 AC_CONFIG_COMMANDS([create-swan-queue-dir],[mkdir scheduler/queue])
-AC_CONFIG_COMMANDS([link-swan],[ln -s ../scheduler swan])
 AC_OUTPUT
